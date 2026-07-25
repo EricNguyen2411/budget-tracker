@@ -1,22 +1,35 @@
-import type { Category, Transaction } from '../types'
+import { useState } from 'react'
+import type { Category, Transaction, RecurringTransaction } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth } from '../calculations'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets } from '../dashboardWidgets'
+import { isInSamePeriod } from '../budgetPeriod'
 
 interface Props {
   categories: Category[]
   transactions: Transaction[]
+  recurring: RecurringTransaction[]
   onOpenCategory: (id: string) => void
   onOpenStat: (kind: 'spent' | 'income' | 'reimbursed' | 'saved') => void
-  onOpenDateRange: (start: string, end: string) => void
+  onOpenDateRange: (title: string, start: string, end: string) => void
 }
 
-export default function Dashboard({ categories, transactions, onOpenCategory, onOpenStat, onOpenDateRange }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange }: Props) {
   const now = new Date()
   const totals = computeDashboardTotals(categories, transactions, now)
   const days = daysRemainingInMonth(now)
   const perDay = Math.max(0, totals.safeToSpend) / days
+  const [showBreakdown, setShowBreakdown] = useState(false)
+
+  const topLevelForBudget = categories.filter((c) => !c.parentId)
+  const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const netSpentSoFar = topLevelForBudget
+    .filter((c) => !c.isSavingsCategory)
+    .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
+  const billsDueThisMonth = recurring
+    .filter((r) => r.isActive && r.isExpense && isInSamePeriod(new Date(r.nextDueDate), now))
+    .reduce((sum, r) => sum + r.amount, 0)
 
   const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const budgetRows = topLevel
@@ -43,7 +56,40 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
         <span className="hero-label">Safe to Spend</span>
         <span className="hero-amount amount">{formatCurrency(totals.safeToSpend)}</span>
         <span className="hero-sub">{formatCurrency(perDay)}/day for {days} more day{days === 1 ? '' : 's'} this month</span>
+        <button style={{ color: 'var(--blue)', fontSize: 13, marginTop: 8 }} onClick={() => setShowBreakdown(true)}>How is this calculated?</button>
       </div>
+
+      {showBreakdown && (
+        <div className="modal-backdrop" onClick={() => setShowBreakdown(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">How Safe to Spend Works</span>
+              <button className="text-button text-button-primary" onClick={() => setShowBreakdown(false)}>Done</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 14 }}>Monthly Budget</span>
+                <span className="amount">{formatCurrency(totalBudget)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 14 }}>Net Spend So Far</span>
+                <span className="amount" style={{ color: 'var(--red)' }}>−{formatCurrency(netSpentSoFar)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 14 }}>Savings & Investments This Month</span>
+                <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}>
+                <span style={{ fontSize: 14 }}>Bills Due This Month</span>
+                <span className="amount" style={{ color: 'var(--amber)' }}>{formatCurrency(billsDueThisMonth)}</span>
+              </div>
+              <p className="hint" style={{ marginTop: 12 }}>
+                Safe to Spend is your Monthly Budget minus Net Spend So Far, across every spending category — savings categories and bills are tracked separately and don't reduce it directly, but are shown here so you can see the full picture at a glance.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="stat-grid">
         <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('spent')}>
@@ -152,7 +198,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
             label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
             axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
             value: d.amount,
-            onSelect: () => onOpenDateRange(localDateInputValue(d.date), localDateInputValue(d.date))
+            onSelect: () => onOpenDateRange(d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }), localDateInputValue(d.date), localDateInputValue(d.date))
           }))} height={100} />
         </div>
       )}
@@ -166,7 +212,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
               label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
               axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
               value: d.amount,
-              onSelect: () => onOpenDateRange(localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
+              onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
             }
           })} height={100} />
         </div>
@@ -181,7 +227,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
               label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
               axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
               value: d.amount,
-              onSelect: () => onOpenDateRange(localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
+              onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
             }
           })} height={100} />
         </div>

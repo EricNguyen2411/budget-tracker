@@ -20,6 +20,7 @@ import CustomRangeReport from './pages/CustomRangeReport'
 import MerchantRules from './pages/MerchantRules'
 import TypedTransactions, { type StatKind } from './pages/TypedTransactions'
 import CategoriesScreen from './pages/CategoriesScreen'
+import PeriodDetail from './pages/PeriodDetail'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
 type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories'
@@ -33,7 +34,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false)
   const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
   const [statDetail, setStatDetail] = useState<StatKind | null>(null)
-  const [dateRangeNav, setDateRangeNav] = useState<{ start: string; end: string } | null>(null)
+  const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string } | null>(null)
 
   const reload = useCallback(async () => {
     const [cats, txs, rec, lists] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists()])
@@ -102,13 +103,15 @@ export default function App() {
           onDelete={handleDeleteTransaction}
         />
       ) : dateRangeNav ? (
-        <CustomRangeReport
+        <PeriodDetail
+          title={dateRangeNav.title}
           categories={categories}
           transactions={transactions}
           onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
           onBack={() => setDateRangeNav(null)}
-          initialStart={dateRangeNav.start}
-          initialEnd={dateRangeNav.end}
+          start={dateRangeNav.start}
+          end={dateRangeNav.end}
         />
       ) : (
         <>
@@ -116,9 +119,10 @@ export default function App() {
         <Dashboard
           categories={categories}
           transactions={transactions}
+          recurring={recurring}
           onOpenCategory={(id) => setCategoryDetailId(id)}
           onOpenStat={(kind) => setStatDetail(kind)}
-          onOpenDateRange={(start, end) => setDateRangeNav({ start, end })}
+          onOpenDateRange={(title, start, end) => setDateRangeNav({ title, start, end })}
         />
       )}
       {tab === 'transactions' && (
