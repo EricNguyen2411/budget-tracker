@@ -4,18 +4,25 @@ import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant } from './merchantRules'
 
+interface AutoBackupEntry {
+  id: string
+  createdAt: string
+  json: string
+}
+
 interface BudgetDB extends DBSchema {
   categories: { key: string; value: Category }
   transactions: { key: string; value: Transaction; indexes: { 'by-date': string } }
   recurring: { key: string; value: RecurringTransaction }
   shoppingLists: { key: string; value: ShoppingList }
+  autoBackups: { key: string; value: AutoBackupEntry }
 }
 
 let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 2, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 3, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -25,6 +32,9 @@ function getDB() {
         if (oldVersion < 2) {
           db.createObjectStore('recurring', { keyPath: 'id' })
           db.createObjectStore('shoppingLists', { keyPath: 'id' })
+        }
+        if (oldVersion < 3) {
+          db.createObjectStore('autoBackups', { keyPath: 'id' })
         }
       }
     })
@@ -200,6 +210,72 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   }
 
   return { categoriesCount: categories.length, transactionsCount: transactions.length }
+}
+
+const AUTO_BACKUP_INTERVAL_HOURS = 12
+const MAX_AUTO_BACKUPS = 5
+const LAST_AUTO_BACKUP_KEY = 'budget-tracker-last-auto-backup'
+
+/**
+ * Local, automatic snapshots — a safety net against accidental deletion
+ * or a bad edit, taken periodically without you having to remember.
+ *
+ * Important honest limitation: these snapshots live in the SAME
+ * IndexedDB database as your live data, not somewhere separate. If iOS
+ * ever evicts this site's storage (the real risk this app has had since
+ * day one, being a PWA rather than a native app), the auto-backups are
+ * wiped right alongside everything else — this protects against
+ * accidental deletion or a bad edit, not against that specific platform
+ * risk. Only an actual exported file, saved outside the browser (Files,
+ * email), survives that. Auto-backup doesn't replace doing that
+ * periodically — it's a second layer, not a substitute.
+ */
+export async function performAutoBackupIfNeeded(): Promise<void> {
+  const lastRun = localStorage.getItem(LAST_AUTO_BACKUP_KEY)
+  if (lastRun) {
+    const hoursSince = (Date.now() - new Date(lastRun).getTime()) / (1000 * 60 * 60)
+    if (hoursSince < AUTO_BACKUP_INTERVAL_HOURS) return
+  }
+
+  const json = await exportBackup()
+  const db = await getDB()
+  const entry: AutoBackupEntry = { id: crypto.randomUUID(), createdAt: new Date().toISOString(), json }
+  await db.put('autoBackups', entry)
+
+  const all = await db.getAll('autoBackups')
+  if (all.length > MAX_AUTO_BACKUPS) {
+    const sorted = all.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    for (const old of sorted.slice(0, all.length - MAX_AUTO_BACKUPS)) {
+      await db.delete('autoBackups', old.id)
+    }
+  }
+
+  localStorage.setItem(LAST_AUTO_BACKUP_KEY, new Date().toISOString())
+}
+
+export async function listAutoBackups(): Promise<AutoBackupEntry[]> {
+  const db = await getDB()
+  const all = await db.getAll('autoBackups')
+  return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+export async function restoreAutoBackup(id: string): Promise<{ categoriesCount: number; transactionsCount: number }> {
+  const db = await getDB()
+  const entry = await db.get('autoBackups', id)
+  if (!entry) throw new Error('That backup could no longer be found.')
+  return importBackup(entry.json)
+}
+
+const LAST_MANUAL_BACKUP_KEY = 'budget-tracker-last-manual-backup'
+
+export function recordManualBackup() {
+  localStorage.setItem(LAST_MANUAL_BACKUP_KEY, new Date().toISOString())
+}
+
+export function daysSinceLastManualBackup(): number | null {
+  const last = localStorage.getItem(LAST_MANUAL_BACKUP_KEY)
+  if (!last) return null
+  return Math.floor((Date.now() - new Date(last).getTime()) / (1000 * 60 * 60 * 24))
 }
 
 export function exportCSV(transactions: Transaction[], categories: Category[]): string {

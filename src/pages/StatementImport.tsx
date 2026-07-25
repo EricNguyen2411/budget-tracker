@@ -29,8 +29,10 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [categoryOverrides, setCategoryOverrides] = useState<Map<string, string | null>>(new Map())
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)
 
-  function isDuplicate(r: ParsedTransaction): boolean {
-    return existingTransactions.some((t) => {
+  const [viewingDuplicateFor, setViewingDuplicateFor] = useState<ParsedTransaction | null>(null)
+
+  function matchingExisting(r: ParsedTransaction): Transaction[] {
+    return existingTransactions.filter((t) => {
       if (Math.abs(t.amount - r.amount) >= 0.01) return false
       if (t.isExpense !== r.isExpense) return false
       const sameDay = new Date(t.date).toDateString() === new Date(r.date).toDateString()
@@ -39,7 +41,43 @@ export default function StatementImport({ categories, existingTransactions, onBa
     })
   }
 
-  const duplicateIds = new Set(results.filter(isDuplicate).map((r) => r.id))
+  const duplicateIds = new Set(results.filter((r) => matchingExisting(r).length > 0).map((r) => r.id))
+
+  // Flagged but still checked by default — worth a second glance, not
+  // assumed wrong. Median taken across this batch's expense amounts.
+  const outlierIds = (() => {
+    const amounts = results.filter((r) => r.isExpense).map((r) => r.amount).sort((a, b) => a - b)
+    if (amounts.length < 5) return new Set<string>()
+    const median = amounts[Math.floor(amounts.length / 2)]
+    if (median <= 0) return new Set<string>()
+    return new Set(results.filter((r) => r.isExpense && r.amount > Math.max(median * 10, 300)).map((r) => r.id))
+  })()
+
+  const transitKeywords = ['opal', 'transportfornsw', 'transport for nsw', 'tfnsw']
+  const pendingFareIds = new Set(
+    results
+      .filter((r) => r.isExpense && r.amount <= 2 && transitKeywords.some((k) => r.note.toLowerCase().includes(k)))
+      .map((r) => r.id)
+  )
+
+  async function handlePdfFile(files: FileList | null) {
+    if (!files || files.length === 0) return
+    setStatus('scanning')
+    setResults([])
+    setSkippedRows([])
+    setScanProgress('Reading PDF\u2026')
+    try {
+      const { parsePdfStatement } = await import('../pdfParser')
+      const { transactions, skipped } = await parsePdfStatement(files[0])
+      setResults(transactions)
+      setSkippedRows(skipped)
+      setFormatsSeen(new Set())
+      setIncluded(new Set(transactions.filter((r) => matchingExisting(r).length === 0).map((r) => r.id)))
+    } catch {
+      setSkippedRows(['(Could not read that PDF)'])
+    }
+    setStatus('done')
+  }
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return
@@ -66,7 +104,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
     setResults(allResults)
     setSkippedRows(allSkipped)
     setFormatsSeen(formats)
-    setIncluded(new Set(allResults.map((r) => r.id)))
+    setIncluded(new Set(allResults.filter((r) => matchingExisting(r).length === 0).map((r) => r.id)))
     setStatus('done')
   }
 
@@ -118,9 +156,13 @@ export default function StatementImport({ categories, existingTransactions, onBa
             Scans a banking app screenshot or payment notification screenshot and pulls out transactions automatically.
             Runs entirely on your device using free OCR — accuracy won't quite match a native app, so double-check the results before importing.
           </p>
-          <label className="list-button" style={{ display: 'block', textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, padding: 12, fontWeight: 600 }}>
+          <label className="list-button" style={{ display: 'block', textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 10 }}>
             Choose Photo(s)
             <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => handleFiles(e.target.files)} />
+          </label>
+          <label className="list-button" style={{ display: 'block', textAlign: 'center', background: 'var(--surface-2)', color: 'var(--blue)', borderRadius: 10, padding: 12, fontWeight: 600 }}>
+            Choose PDF Statement
+            <input type="file" accept="application/pdf" style={{ display: 'none' }} onChange={(e) => handlePdfFile(e.target.files)} />
           </label>
         </div>
       )}
@@ -150,7 +192,21 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
           {duplicateIds.size > 0 && (
             <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--amber)' }}>
-              <span style={{ fontSize: 13, color: 'var(--amber)', fontWeight: 600 }}>{duplicateIds.size} possible duplicate{duplicateIds.size === 1 ? '' : 's'} found — still checked, marked below</span>
+              <span style={{ fontSize: 13, color: 'var(--amber)', fontWeight: 600 }}>{duplicateIds.size} possible duplicate{duplicateIds.size === 1 ? '' : 's'} found and left unchecked</span>
+            </div>
+          )}
+
+          {outlierIds.size > 0 && (
+            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--red)' }}>
+              <span style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600 }}>{outlierIds.size} unusually large amount{outlierIds.size === 1 ? '' : 's'} found</span>
+              <p className="hint" style={{ marginTop: 6 }}>Still included, but significantly bigger than the rest of this batch — worth double-checking against your bank app.</p>
+            </div>
+          )}
+
+          {pendingFareIds.size > 0 && (
+            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--teal)' }}>
+              <span style={{ fontSize: 13, color: 'var(--teal)', fontWeight: 600 }}>{pendingFareIds.size} possible pending transit fare{pendingFareIds.size === 1 ? '' : 's'}</span>
+              <p className="hint" style={{ marginTop: 6 }}>Opal/TfNSW often shows a small placeholder charge that gets corrected to the real fare later. Included for now — edit the amount once the real fare shows up, rather than leaving both.</p>
             </div>
           )}
 
@@ -163,11 +219,19 @@ export default function StatementImport({ categories, existingTransactions, onBa
                 <div key={r.id} className="transaction-row" style={{ borderBottom: i < results.length - 1 ? '1px solid var(--border)' : 'none' }}>
                   <input type="checkbox" checked={included.has(r.id)} onChange={() => toggle(r.id)} style={{ width: 18, height: 18 }} />
                   <div className="tx-info">
-                    <span className="tx-note">{r.note}</span>
+                    <span className="tx-note">
+                      {r.note}
+                      {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
+                      {pendingFareIds.has(r.id) && <span> 🚊</span>}
+                    </span>
                     <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}
-                      {duplicateIds.has(r.id) && <span style={{ color: 'var(--amber)' }}> · possible duplicate</span>}
                     </button>
+                    {duplicateIds.has(r.id) && (
+                      <button onClick={() => setViewingDuplicateFor(r)} style={{ fontSize: 12, color: 'var(--amber)', textAlign: 'left' }}>
+                        ⚠️ Possible duplicate — tap to compare
+                      </button>
+                    )}
                   </div>
                   <span className="amount tx-amount" style={{ color: r.isExpense ? 'var(--text)' : 'var(--green)' }}>
                     {r.isExpense ? '-' : '+'}{formatCurrency(r.amount)}
@@ -205,6 +269,27 @@ export default function StatementImport({ categories, existingTransactions, onBa
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+      {viewingDuplicateFor && (
+        <div className="modal-backdrop" onClick={() => setViewingDuplicateFor(null)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()} style={{ padding: 20 }}>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>This scanned row:</p>
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 14 }}>{viewingDuplicateFor.note}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(viewingDuplicateFor.date).toLocaleDateString('en-AU')}</div>
+              <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{viewingDuplicateFor.isExpense ? '-' : '+'}{formatCurrency(viewingDuplicateFor.amount)}</div>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>Looks similar to {matchingExisting(viewingDuplicateFor).length === 1 ? 'this existing transaction' : 'these existing transactions'}:</p>
+            {matchingExisting(viewingDuplicateFor).map((t) => (
+              <div className="card" key={t.id} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 14 }}>{t.note || 'Uncategorized'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(t.date).toLocaleDateString('en-AU')}</div>
+                <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{t.isExpense ? '-' : '+'}{formatCurrency(t.amount)}</div>
+              </div>
+            ))}
+            <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)', marginTop: 8 }} onClick={() => setViewingDuplicateFor(null)}>Close</button>
           </div>
         </div>
       )}

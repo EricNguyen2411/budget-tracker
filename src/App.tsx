@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
 import {
   ensureDefaultCategories, getCategories, getTransactions, createTransaction, saveTransaction, deleteTransaction,
-  getRecurring, saveRecurring, getShoppingLists
+  getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded
 } from './db'
 import { processDueRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
@@ -22,9 +22,11 @@ import TypedTransactions, { type StatKind } from './pages/TypedTransactions'
 import CategoriesScreen from './pages/CategoriesScreen'
 import PeriodDetail from './pages/PeriodDetail'
 import StatementImport from './pages/StatementImport'
+import TotalBudgetPlanner from './pages/TotalBudgetPlanner'
+import AutoBackups from './pages/AutoBackups'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -54,6 +56,7 @@ export default function App() {
       for (const r of updatedRecurring) await saveRecurring(r)
       await reload()
       setLoaded(true)
+      performAutoBackupIfNeeded()
 
       const settings = getSettings()
       const txs = await getTransactions()
@@ -151,6 +154,8 @@ export default function App() {
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'import' && <StatementImport categories={categories} existingTransactions={transactions} onBack={() => setTab('more')} onImported={reload} />}
+      {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
+      {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={reload} />}
 
       {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
         <div style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
@@ -173,8 +178,8 @@ export default function App() {
           <TargetIcon active={tab === 'budgets' && !anyOverlay} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import'].includes(tab) && !anyOverlay} />
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

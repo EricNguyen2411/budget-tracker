@@ -35,7 +35,14 @@ export default defineConfig({
         ]
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}']
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // pdfParser is dynamically imported specifically so it ISN'T
+        // downloaded by everyone on first visit — only precaching every
+        // .js file by default would silently undo that, since Workbox
+        // doesn't distinguish "loaded on startup" from "loaded on demand"
+        // without being told. It's still cached the first time someone
+        // actually opens PDF import, just not before then.
+        globIgnores: ['**/pdfParser-*.js']
       }
     })
   ]

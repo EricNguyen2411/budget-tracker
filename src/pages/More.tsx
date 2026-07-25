@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { exportBackup, importBackup, exportCSV } from '../db'
+import { exportBackup, importBackup, exportCSV, recordManualBackup, daysSinceLastManualBackup } from '../db'
 import { getSettings, updateSettings } from '../budgetPeriod'
 import { requestNotificationPermission, notificationPermissionStatus } from '../notifications'
 import DashboardSettings from './DashboardSettings'
@@ -29,6 +29,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
     a.download = `BudgetTracker_Backup_${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
+    recordManualBackup()
     setStatus('Backup downloaded.')
   }
 
@@ -97,6 +98,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
       <span className="section-heading">Tools</span>
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
         {[
+          { tab: 'budgetplanner', icon: '🧮', label: 'Total Budget Planner' },
           { tab: 'recurring', icon: '🔁', label: 'Recurring' },
           { tab: 'shopping', icon: '🛒', label: 'Shopping Lists' },
           { tab: 'report', icon: '📅', label: 'Custom Date Range Report' },
@@ -146,12 +148,19 @@ export default function More({ categories, transactions, onCategoriesChanged, on
 
       <span className="section-heading">Backup & Restore</span>
       <div className="card" style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {(() => {
+          const days = daysSinceLastManualBackup()
+          const color = days === null || days > 14 ? 'var(--red)' : days > 7 ? 'var(--amber)' : 'var(--green)'
+          const label = days === null ? 'Never backed up manually' : days === 0 ? 'Backed up today' : `Backed up ${days} day${days === 1 ? '' : 's'} ago`
+          return <p style={{ fontSize: 13, color, margin: 0, fontWeight: 600 }}>{label}</p>
+        })()}
         <button className="list-button" onClick={handleExport}>Export Full Backup</button>
         <button className="list-button" onClick={() => fileInput.current?.click()}>Restore from Backup</button>
         <input ref={fileInput} type="file" accept="application/json" style={{ display: 'none' }}
           onChange={(e) => e.target.files?.[0] && handleImportFile(e.target.files[0])} />
+        <button className="list-button" onClick={() => onNavigate('autobackups')}>View Automatic Backups</button>
         {status && <p style={{ fontSize: 13, color: status.startsWith('Import failed') ? 'var(--red)' : 'var(--green)', margin: 0 }}>{status}</p>}
-        <p className="hint">Downloads/restores a JSON file — save it somewhere safe (Files, email) periodically. There's no automatic backup yet in this web version.</p>
+        <p className="hint">Automatic local snapshots are taken periodically as a safety net against accidental deletion — but they live in the same on-device storage as your live data, so they won't survive iOS clearing this site's storage entirely. Exporting a file (Files, email) is the only backup that survives that.</p>
       </div>
 
       {PENDING_FEATURES.length > 0 && (

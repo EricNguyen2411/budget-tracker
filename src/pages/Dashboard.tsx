@@ -3,7 +3,7 @@ import type { Category, Transaction, RecurringTransaction } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth } from '../calculations'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
-import { getHiddenWidgets } from '../dashboardWidgets'
+import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
 import { isInSamePeriod } from '../budgetPeriod'
 
 interface Props {
@@ -112,139 +112,147 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
         )}
       </div>
 
-      {insights.length > 0 && !hidden.has('insights') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 10px' }}>✨ Insights</span>
-          {insights.map((insight, i) => (
-            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: i > 0 ? 10 : 0 }}>
-              <span>{insight.icon}</span>
-              <span style={{ fontSize: 13, lineHeight: 1.4 }}>{insight.text}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {goalCategories.length > 0 && !hidden.has('goals') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 10px' }}>🎯 Savings Goals</span>
-          {goalCategories.map((c) => {
-            const fraction = goalProgressFraction(c, transactions)
-            const progress = goalProgress(c, transactions)
-            const projected = fraction < 1 ? projectedGoalCompletionDate(c, transactions, now) : null
-            return (
-              <button key={c.id} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(c.id)}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                  <span>{c.icon} {c.name}</span>
-                  <span style={{ color: fraction >= 1 ? 'var(--green)' : 'var(--text-dim)' }}>
-                    {fraction >= 1 ? 'Reached!' : `${Math.round(fraction * 100)}%`}
-                  </span>
+      {(() => {
+        const widgetElements: Partial<Record<WidgetId, React.ReactNode>> = {
+          insights: insights.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 10px' }}>✨ Insights</span>
+              {insights.map((insight, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: i > 0 ? 10 : 0 }}>
+                  <span>{insight.icon}</span>
+                  <span style={{ fontSize: 13, lineHeight: 1.4 }}>{insight.text}</span>
                 </div>
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: fraction >= 1 ? 'var(--green)' : c.color }} />
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
-                  <span className="amount">{formatCurrency(progress)} of {formatCurrency(c.goalTargetAmount)}</span>
-                  {projected && <span>~{projected.toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })}</span>}
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {budgetRows.length > 0 && !hidden.has('budgetVsActual') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading">Budget vs Actual</span>
-          {budgetRows.map(({ category, spent, budget }) => {
-            const fraction = Math.min(1, spent / budget)
-            const over = spent > budget
-            return (
-              <button key={category.id} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(category.id)}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                  <span>{category.icon} {category.name}</span>
-                  <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(spent)} / {formatCurrency(budget)}</span>
-                </div>
-                <div className="progress-track">
-                  <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: over ? 'var(--red)' : category.color }} />
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {pieSlices.length > 0 && !hidden.has('categoryPie') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 12px' }}>Spending by Category</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-            <DonutChart slices={pieSlices.map((s) => ({ label: s.name, value: s.amount, color: s.color }))} />
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {pieSlices.slice(0, 6).map((s) => (
-                <button key={s.categoryId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, width: '100%', textAlign: 'left' }} onClick={() => onOpenCategory(s.categoryId)}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                  <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(s.amount)}</span>
-                </button>
               ))}
             </div>
-          </div>
-        </div>
-      )}
+          ),
 
-      {dailySpend.some((d) => d.amount > 0) && !hidden.has('last14Days') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 12px' }}>Last 14 Days</span>
-          <BarChart data={dailySpend.map((d) => ({
-            label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
-            axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
-            value: d.amount,
-            onSelect: () => onOpenDateRange(d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }), localDateInputValue(d.date), localDateInputValue(d.date))
-          }))} height={100} />
-        </div>
-      )}
-
-      {monthlyTrend.some((d) => d.amount > 0) && !hidden.has('monthlyTrend') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 12px' }}>Monthly Trend</span>
-          <BarChart data={monthlyTrend.map((d) => {
-            const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
-            return {
-              label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
-              axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
-              value: d.amount,
-              onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
-            }
-          })} height={100} />
-        </div>
-      )}
-
-      {netSavingsTrend.some((d) => d.amount !== 0) && !hidden.has('netSavingsTrend') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 12px' }}>Net Savings Trend</span>
-          <BarChart data={netSavingsTrend.map((d) => {
-            const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
-            return {
-              label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
-              axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
-              value: d.amount,
-              onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
-            }
-          })} height={100} />
-        </div>
-      )}
-
-      {topMerchants.length > 0 && !hidden.has('topMerchants') && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <span className="section-heading" style={{ margin: '0 0 12px' }}>Top Merchants This Month</span>
-          {topMerchants.map((m, i) => (
-            <div key={m.note} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
-              <span style={{ color: 'var(--text-faint)', fontSize: 13, width: 16 }}>{i + 1}</span>
-              <span style={{ flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.note}</span>
-              <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(m.amount)}</span>
+          goals: goalCategories.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 10px' }}>🎯 Savings Goals</span>
+              {goalCategories.map((c) => {
+                const fraction = goalProgressFraction(c, transactions)
+                const progress = goalProgress(c, transactions)
+                const projected = fraction < 1 ? projectedGoalCompletionDate(c, transactions, now) : null
+                return (
+                  <button key={c.id} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(c.id)}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
+                      <span>{c.icon} {c.name}</span>
+                      <span style={{ color: fraction >= 1 ? 'var(--green)' : 'var(--text-dim)' }}>
+                        {fraction >= 1 ? 'Reached!' : `${Math.round(fraction * 100)}%`}
+                      </span>
+                    </div>
+                    <div className="progress-track">
+                      <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: fraction >= 1 ? 'var(--green)' : c.color }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+                      <span className="amount">{formatCurrency(progress)} of {formatCurrency(c.goalTargetAmount)}</span>
+                      {projected && <span>~{projected.toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })}</span>}
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-          ))}
-        </div>
-      )}
+          ),
+
+          budgetVsActual: budgetRows.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading">Budget vs Actual</span>
+              {budgetRows.map(({ category, spent, budget }) => {
+                const fraction = Math.min(1, spent / budget)
+                const over = spent > budget
+                return (
+                  <button key={category.id} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(category.id)}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
+                      <span>{category.icon} {category.name}</span>
+                      <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(spent)} / {formatCurrency(budget)}</span>
+                    </div>
+                    <div className="progress-track">
+                      <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: over ? 'var(--red)' : category.color }} />
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          ),
+
+          categoryPie: pieSlices.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 12px' }}>Spending by Category</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                <DonutChart slices={pieSlices.map((s) => ({ label: s.name, value: s.amount, color: s.color }))} />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {pieSlices.slice(0, 6).map((s) => (
+                    <button key={s.categoryId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, width: '100%', textAlign: 'left' }} onClick={() => onOpenCategory(s.categoryId)}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                      <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(s.amount)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ),
+
+          last14Days: dailySpend.some((d) => d.amount > 0) && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 12px' }}>Last 14 Days</span>
+              <BarChart data={dailySpend.map((d) => ({
+                label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
+                axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
+                value: d.amount,
+                onSelect: () => onOpenDateRange(d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }), localDateInputValue(d.date), localDateInputValue(d.date))
+              }))} height={100} />
+            </div>
+          ),
+
+          monthlyTrend: monthlyTrend.some((d) => d.amount > 0) && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 12px' }}>Monthly Trend</span>
+              <BarChart data={monthlyTrend.map((d) => {
+                const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
+                return {
+                  label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
+                  axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
+                  value: d.amount,
+                  onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
+                }
+              })} height={100} />
+            </div>
+          ),
+
+          netSavingsTrend: netSavingsTrend.some((d) => d.amount !== 0) && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 12px' }}>Net Savings Trend</span>
+              <BarChart data={netSavingsTrend.map((d) => {
+                const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
+                return {
+                  label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
+                  axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
+                  value: d.amount,
+                  onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
+                }
+              })} height={100} />
+            </div>
+          ),
+
+          topMerchants: topMerchants.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <span className="section-heading" style={{ margin: '0 0 12px' }}>Top Merchants This Month</span>
+              {topMerchants.map((m, i) => (
+                <div key={m.note} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                  <span style={{ color: 'var(--text-faint)', fontSize: 13, width: 16 }}>{i + 1}</span>
+                  <span style={{ flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.note}</span>
+                  <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(m.amount)}</span>
+                </div>
+              ))}
+            </div>
+          )
+        }
+
+        return getWidgetOrder()
+          .filter((id) => !hidden.has(id) && widgetElements[id])
+          .map((id) => <div key={id}>{widgetElements[id]}</div>)
+      })()}
     </div>
   )
 }

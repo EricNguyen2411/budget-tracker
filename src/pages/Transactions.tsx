@@ -3,6 +3,7 @@ import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import TransactionEditor from '../components/TransactionEditor'
+import SwipeableRow from '../components/SwipeableRow'
 import { PlusIcon } from '../icons'
 
 interface Props {
@@ -134,26 +135,27 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               const category = t.categoryId ? categoryById.get(t.categoryId) : undefined
               const amount = netAmount(t, transactions)
               return (
-                <button
-                  key={t.id}
-                  className="transaction-row"
-                  style={{ borderBottom: i < group.transactions.length - 1 ? '1px solid var(--border)' : 'none' }}
-                  onClick={() => selectMode ? toggleSelect(t.id) : setEditing(t)}
-                >
-                  {selectMode && (
-                    <input type="checkbox" checked={selectedIds.has(t.id)} readOnly style={{ width: 18, height: 18 }} />
-                  )}
-                  <div className="tx-icon" style={{ background: (category?.color ?? '#5C6167') + '33' }}>
-                    {category?.icon ?? '❓'}
-                  </div>
-                  <div className="tx-info">
-                    <span className="tx-note">{t.note || category?.name || 'Uncategorized'}</span>
-                    <span className="tx-category">{category?.name ?? 'Uncategorized'}</span>
-                  </div>
-                  <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-                    {t.isExpense ? '-' : '+'}{formatCurrency(amount)}
-                  </span>
-                </button>
+                <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
+                  <button
+                    className="transaction-row"
+                    style={{ width: '100%', borderBottom: i < group.transactions.length - 1 ? '1px solid var(--border)' : 'none' }}
+                    onClick={() => selectMode ? toggleSelect(t.id) : setEditing(t)}
+                  >
+                    {selectMode && (
+                      <input type="checkbox" checked={selectedIds.has(t.id)} readOnly style={{ width: 18, height: 18 }} />
+                    )}
+                    <div className="tx-icon" style={{ background: (category?.color ?? '#5C6167') + '33' }}>
+                      {category?.icon ?? '❓'}
+                    </div>
+                    <div className="tx-info">
+                      <span className="tx-note">{t.note || category?.name || 'Uncategorized'}</span>
+                      <span className="tx-category">{category?.name ?? 'Uncategorized'}</span>
+                    </div>
+                    <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+                      {t.isExpense ? '-' : '+'}{formatCurrency(amount)}
+                    </span>
+                  </button>
+                </SwipeableRow>
               )
             })}
           </div>
