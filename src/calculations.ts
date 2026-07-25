@@ -234,8 +234,12 @@ export interface MerchantTotal {
   amount: number
 }
 
-export function topMerchantsThisMonth(transactions: Transaction[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
-  const thisMonth = transactions.filter((t) => t.isExpense && isInSamePeriod(new Date(t.date), referenceDate) && t.note.trim())
+export function topMerchantsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
+  const thisMonth = transactions.filter((t) => {
+    if (!t.isExpense || !t.note.trim() || !isInSamePeriod(new Date(t.date), referenceDate)) return false
+    const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+    return !cat?.isSavingsCategory
+  })
   const map = new Map<string, number>()
   for (const t of thisMonth) {
     const key = t.note.trim()

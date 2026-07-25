@@ -21,9 +21,10 @@ import MerchantRules from './pages/MerchantRules'
 import TypedTransactions, { type StatKind } from './pages/TypedTransactions'
 import CategoriesScreen from './pages/CategoriesScreen'
 import PeriodDetail from './pages/PeriodDetail'
+import StatementImport from './pages/StatementImport'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -149,6 +150,7 @@ export default function App() {
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
+      {tab === 'import' && <StatementImport categories={categories} existingTransactions={transactions} onBack={() => setTab('more')} onImported={reload} />}
 
       {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
         <div style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
@@ -171,8 +173,8 @@ export default function App() {
           <TargetIcon active={tab === 'budgets' && !anyOverlay} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories'].includes(tab) && !anyOverlay} />
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

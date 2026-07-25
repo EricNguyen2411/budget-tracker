@@ -46,7 +46,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const monthlyTrend = last6PeriodsSpend(categories, transactions, now)
   const netSavingsTrend = last6PeriodsNetSavings(categories, transactions, now)
   const hidden = getHiddenWidgets()
-  const topMerchants = topMerchantsThisMonth(transactions, now)
+  const topMerchants = topMerchantsThisMonth(transactions, categories, now)
 
   return (
     <div className="screen">

@@ -12,9 +12,7 @@ interface Props {
   onNavigate: (tab: string) => void
 }
 
-const PENDING_FEATURES = [
-  'Statement/receipt photo import (OCR) — different tech stack entirely (browser OCR vs. Apple Vision), planned as its own focused build'
-]
+const PENDING_FEATURES: string[] = []
 
 export default function More({ categories, transactions, onCategoriesChanged, onNavigate }: Props) {
   const [status, setStatus] = useState<string | null>(null)
@@ -77,6 +75,10 @@ export default function More({ categories, transactions, onCategoriesChanged, on
   return (
     <div className="screen">
       <h1 className="screen-title">More</h1>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <button className="list-button" style={{ fontWeight: 600 }} onClick={() => onNavigate('import')}>📷 Import Statement (Photo)</button>
+      </div>
 
       <span className="section-heading">Settings</span>
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
@@ -152,12 +154,16 @@ export default function More({ categories, transactions, onCategoriesChanged, on
         <p className="hint">Downloads/restores a JSON file — save it somewhere safe (Files, email) periodically. There's no automatic backup yet in this web version.</p>
       </div>
 
-      <span className="section-heading">Not built yet in this version</span>
-      <div className="card">
-        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-dim)', fontSize: 13, lineHeight: 1.8 }}>
-          {PENDING_FEATURES.map((f) => <li key={f}>{f}</li>)}
-        </ul>
-      </div>
+      {PENDING_FEATURES.length > 0 && (
+        <>
+          <span className="section-heading">Not built yet in this version</span>
+          <div className="card">
+            <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-dim)', fontSize: 13, lineHeight: 1.8 }}>
+              {PENDING_FEATURES.map((f) => <li key={f}>{f}</li>)}
+            </ul>
+          </div>
+        </>
+      )}
     </div>
   )
 }
