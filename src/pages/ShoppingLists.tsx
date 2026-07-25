@@ -53,7 +53,7 @@ export default function ShoppingLists({ lists, categories, transactions, onChang
       })}
       <div className="card" style={{ marginTop: 8, display: 'flex', gap: 8 }}>
         <input placeholder="New list name" value={newListName} onChange={(e) => setNewListName(e.target.value)} style={{ flex: 1 }} />
-        <button style={{ color: 'var(--green)', fontWeight: 600, padding: '0 8px' }} onClick={addList}>Add</button>
+        <button style={{ color: 'var(--blue)', fontWeight: 600, padding: '0 8px' }} onClick={addList}>Add</button>
       </div>
     </div>
   )
@@ -160,10 +160,10 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
       <div className="card" style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         <input placeholder="Item" value={itemName} onChange={(e) => setItemName(e.target.value)} style={{ flex: 2 }} />
         <input placeholder="Price" type="number" inputMode="decimal" value={itemPrice} onChange={(e) => setItemPrice(e.target.value)} style={{ flex: 1 }} />
-        <button style={{ color: 'var(--green)', fontWeight: 600, padding: '0 8px' }} onClick={addItem}>Add</button>
+        <button style={{ color: 'var(--blue)', fontWeight: 600, padding: '0 8px' }} onClick={addItem}>Add</button>
       </div>
 
-      <button className="list-button" style={{ width: '100%', textAlign: 'center', background: 'var(--green)', color: '#0B0D10', borderRadius: 10, padding: 12, fontWeight: 600 }} onClick={completeTrip}>
+      <button className="list-button" style={{ width: '100%', textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 10, padding: 12, fontWeight: 600 }} onClick={completeTrip}>
         Complete Trip → Log {formatCurrency(runningTotal)}
       </button>
     </div>

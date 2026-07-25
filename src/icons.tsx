@@ -1,6 +1,6 @@
 type IconProps = { active?: boolean }
 
-const stroke = (active?: boolean) => (active ? 'var(--green)' : 'currentColor')
+const stroke = (active?: boolean) => (active ? 'var(--blue)' : 'currentColor')
 
 export function DashboardIcon({ active }: IconProps) {
   return (

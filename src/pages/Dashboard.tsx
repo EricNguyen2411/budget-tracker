@@ -51,12 +51,12 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
         </div>
         <div className="card stat-card">
           <span className="stat-label">Reimbursed</span>
-          <span className="stat-value amount" style={{ color: 'var(--blue)' }}>{formatCurrency(totals.reimbursed)}</span>
+          <span className="stat-value amount" style={{ color: 'var(--teal)' }}>{formatCurrency(totals.reimbursed)}</span>
         </div>
         {totals.saved > 0 && (
           <div className="card stat-card">
             <span className="stat-label">Saved</span>
-            <span className="stat-value amount" style={{ color: 'var(--green)' }}>{formatCurrency(totals.saved)}</span>
+            <span className="stat-value amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
           </div>
         )}
       </div>

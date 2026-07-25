@@ -202,7 +202,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
             </p>
             <button
               className="list-button"
-              style={{ width: '100%', textAlign: 'center', background: 'var(--green)', color: '#0B0D10', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 8 }}
+              style={{ width: '100%', textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 8 }}
               onClick={async () => {
                 for (const t of similarPrompt.matches) {
                   await onSave({ ...t, categoryId: similarPrompt.categoryId }, t.id)

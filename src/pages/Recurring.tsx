@@ -72,7 +72,7 @@ export default function RecurringPage({ categories, transactions, recurring, onC
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--surface-2)', borderRadius: 8, padding: 8 }} onClick={() => dismiss(s.merchantKey)}>Not Recurring</button>
-                <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--green)', color: '#0B0D10', borderRadius: 8, padding: 8, fontWeight: 600 }} onClick={() => accept(s)}>Track as Recurring</button>
+                <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 8, padding: 8, fontWeight: 600 }} onClick={() => accept(s)}>Track as Recurring</button>
               </div>
             </div>
           ))}

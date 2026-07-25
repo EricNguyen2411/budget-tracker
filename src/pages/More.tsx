@@ -94,7 +94,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           )
         })}
         <button className="transaction-row" onClick={() => setEditingCategory('new')}>
-          <div className="tx-info"><span className="tx-note" style={{ color: 'var(--green)' }}>+ Add Category</span></div>
+          <div className="tx-info"><span className="tx-note" style={{ color: 'var(--blue)' }}>+ Add Category</span></div>
         </button>
       </div>
 

@@ -35,7 +35,7 @@ export default function DuplicateCheck({ transactions, onChanged }: Props) {
           <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
             Checks every transaction for likely duplicates — same amount, same direction, dates within a few days — regardless of whether the merchant name matches exactly.
           </p>
-          <button className="list-button" style={{ color: 'var(--green)', fontWeight: 600 }} onClick={scan}>Scan for Duplicates</button>
+          <button className="list-button" style={{ color: 'var(--blue)', fontWeight: 600 }} onClick={scan}>Scan for Duplicates</button>
         </div>
       )}
 

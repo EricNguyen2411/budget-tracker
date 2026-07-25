@@ -133,7 +133,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
                 <div className="tx-icon" style={{ background: category!.color + '33' }}>{category!.icon}</div>
                 <div className="tx-info"><span className="tx-note">{category!.name}</span></div>
                 <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(amount)}</span>
-                {categoryFilter === category!.id && <span style={{ color: 'var(--green)', marginLeft: 8 }}>✓</span>}
+                {categoryFilter === category!.id && <span style={{ color: 'var(--blue)', marginLeft: 8 }}>✓</span>}
               </button>
             ))}
           </div>

@@ -129,12 +129,12 @@ export default function TransactionEditor({ transaction, categories, allTransact
                 <div key={c.id}>
                   <button className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
                     <span>{c.icon} {c.name}</span>
-                    {categoryId === c.id && <span style={{ color: 'var(--green)' }}>✓</span>}
+                    {categoryId === c.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
                   </button>
                   {categories.filter((s) => s.parentId === c.id).map((s) => (
                     <button key={s.id} className="picker-row picker-row-sub" onClick={() => { setCategoryId(s.id); setShowCategoryPicker(false) }}>
                       <span>{s.icon} {s.name}</span>
-                      {categoryId === s.id && <span style={{ color: 'var(--green)' }}>✓</span>}
+                      {categoryId === s.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
                     </button>
                   ))}
                 </div>

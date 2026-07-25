@@ -1,23 +1,28 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
-
 :root {
-  --bg: #0B0D10;
-  --surface: #16191D;
-  --surface-2: #1E2227;
-  --surface-3: #262B31;
-  --border: #2A2F35;
-  --green: #34C759;
-  --green-dim: #2A9E48;
-  --red: #FF6B5E;
-  --amber: #F5A623;
-  --blue: #4A90D9;
-  --text: #F5F6F7;
-  --text-dim: #9AA0A6;
-  --text-faint: #5C6167;
+  /* True black, matching the native app's actual background — not a
+     dark gray. iOS system colors (dark mode variants) throughout,
+     since the native app leans on standard iOS styling rather than a
+     custom palette. */
+  --bg: #000000;
+  --surface: #1C1C1E;
+  --surface-2: #2C2C2E;
+  --surface-3: #3A3A3C;
+  --border: #38383A;
 
-  --font-display: 'Space Grotesk', sans-serif;
-  --font-body: 'Inter', sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
+  --blue: #0A84FF;    /* primary accent — tab bar, links, buttons */
+  --green: #30D158;   /* income / positive */
+  --red: #FF453A;     /* expense / over-budget */
+  --teal: #64D2FF;    /* reimbursed */
+  --indigo: #5E5CE6;  /* saved */
+  --amber: #FF9F0A;
+
+  --text: #FFFFFF;
+  --text-dim: #8E8E93;
+  --text-faint: #636366;
+
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
 
   color-scheme: dark;
 }
@@ -50,13 +55,13 @@ button {
 }
 
 button:focus-visible, input:focus-visible, a:focus-visible {
-  outline: 2px solid var(--green);
+  outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
 
 input, select {
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 16px; /* prevents iOS zoom-on-focus */
@@ -85,8 +90,8 @@ input, select {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: none;
+  border-radius: 14px;
   padding: 16px;
 }
 
@@ -98,9 +103,9 @@ input, select {
   max-width: 560px;
   margin: 0 auto;
   display: flex;
-  background: rgba(22, 25, 29, 0.92);
+  background: rgba(28, 28, 30, 0.92);
   backdrop-filter: blur(20px);
-  border-top: 1px solid var(--border);
+  border-top: 0.5px solid var(--border);
   padding-bottom: env(safe-area-inset-bottom);
 }
 
@@ -111,13 +116,13 @@ input, select {
   align-items: center;
   gap: 4px;
   padding: 10px 4px 8px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-faint);
   transition: color 0.15s ease;
 }
 
 .tab-button.active {
-  color: var(--green);
+  color: var(--blue);
 }
 
 .tab-button svg {
@@ -128,8 +133,9 @@ input, select {
 /* ---- Screen layout ---- */
 .screen-title {
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 4px 0 16px;
 }
 
@@ -143,12 +149,10 @@ input, select {
 
 .section-heading {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
-  margin: 0 4px 8px;
+  color: var(--text-dim);
+  margin: 16px 4px 8px;
 }
 
 /* ---- Hero card ---- */
@@ -160,9 +164,9 @@ input, select {
   padding: 24px 16px;
   margin-bottom: 12px;
 }
-.hero-label { font-size: 13px; color: var(--text-dim); }
-.hero-amount { font-size: 44px; font-weight: 600; margin: 6px 0; }
-.hero-sub { font-size: 12px; color: var(--text-faint); }
+.hero-label { font-size: 14px; color: var(--text-dim); }
+.hero-amount { font-size: 48px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0; }
+.hero-sub { font-size: 13px; color: var(--text-faint); }
 
 /* ---- Stat grid ---- */
 .stat-grid {
@@ -172,8 +176,8 @@ input, select {
   margin-bottom: 4px;
 }
 .stat-card { display: flex; flex-direction: column; gap: 4px; }
-.stat-label { font-size: 12px; color: var(--text-dim); }
-.stat-value { font-size: 20px; font-weight: 600; }
+.stat-label { font-size: 13px; color: var(--text-dim); }
+.stat-value { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
 
 /* ---- Progress ---- */
 .progress-track {
@@ -192,8 +196,8 @@ input, select {
 .badge {
   font-size: 10px;
   font-weight: 600;
-  color: var(--green);
-  background: rgba(52, 199, 89, 0.15);
+  color: var(--blue);
+  background: rgba(10, 132, 255, 0.15);
   padding: 2px 6px;
   border-radius: 6px;
   margin-left: 8px;
@@ -203,7 +207,7 @@ input, select {
 /* ---- Day grouped transactions ---- */
 .day-heading {
   display: block;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-dim);
   margin: 0 4px 8px;
@@ -219,13 +223,13 @@ input, select {
 }
 
 .tx-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 17px;
+  font-size: 16px;
   flex-shrink: 0;
 }
 
@@ -235,36 +239,36 @@ input, select {
   flex: 1;
   min-width: 0;
 }
-.tx-note { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tx-category { font-size: 12px; color: var(--text-faint); }
-.tx-amount { font-size: 15px; font-weight: 500; flex-shrink: 0; }
+.tx-note { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-category { font-size: 13px; color: var(--text-faint); }
+.tx-amount { font-size: 16px; font-weight: 500; flex-shrink: 0; }
 
 .chevron { color: var(--text-faint); font-size: 18px; margin-left: auto; }
 
 .round-icon-button {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--green);
+  color: var(--blue);
 }
-.round-icon-button svg { width: 18px; height: 18px; }
+.round-icon-button svg { width: 17px; height: 17px; }
 
 /* ---- Segmented control ---- */
 .segmented {
   display: flex;
   background: var(--surface-2);
-  border-radius: 10px;
-  padding: 3px;
-  gap: 3px;
+  border-radius: 9px;
+  padding: 2px;
+  gap: 2px;
 }
 .segmented button {
   flex: 1;
-  padding: 7px 0;
-  border-radius: 8px;
+  padding: 6px 0;
+  border-radius: 7px;
   font-size: 13px;
   color: var(--text-dim);
 }
@@ -278,8 +282,8 @@ input, select {
 .list-button {
   text-align: left;
   padding: 4px 0;
-  color: var(--text);
-  font-size: 15px;
+  color: var(--blue);
+  font-size: 16px;
 }
 
 /* ---- Modal ---- */
@@ -292,11 +296,11 @@ input, select {
   z-index: 50;
 }
 .modal-sheet {
-  background: var(--surface);
+  background: #1C1C1E;
   width: 100%;
   max-width: 560px;
   margin: 0 auto;
-  border-radius: 20px 20px 0 0;
+  border-radius: 14px 14px 0 0;
   max-height: 88vh;
   display: flex;
   flex-direction: column;
@@ -307,11 +311,11 @@ input, select {
   justify-content: space-between;
   align-items: center;
   padding: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0.5px solid var(--border);
 }
-.modal-title { font-family: var(--font-display); font-weight: 600; font-size: 15px; }
-.text-button { color: var(--text-dim); font-size: 15px; }
-.text-button-primary { color: var(--green); font-weight: 600; }
+.modal-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+.text-button { color: var(--text-dim); font-size: 16px; }
+.text-button-primary { color: var(--blue); font-weight: 600; }
 .modal-body {
   padding: 16px;
   overflow-y: auto;
@@ -322,15 +326,15 @@ input, select {
 .modal-body input, .modal-body select { margin-bottom: 12px; }
 
 .field-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
   margin-top: 4px;
 }
 
 .amount-input {
   font-family: var(--font-mono);
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 26px;
+  font-weight: 700;
 }
 
 .picker-row {
@@ -346,7 +350,7 @@ input, select {
 }
 .picker-row-sub { margin-left: 16px; opacity: 0.85; }
 
-.hint { font-size: 12px; color: var(--text-faint); line-height: 1.5; }
+.hint { font-size: 13px; color: var(--text-faint); line-height: 1.5; }
 .hint-warning { color: var(--amber); }
 
 .danger-button {
@@ -355,5 +359,5 @@ input, select {
   padding: 14px;
   margin-top: 16px;
   border-radius: 10px;
-  background: rgba(255, 107, 94, 0.1);
+  background: rgba(255, 69, 58, 0.1);
 }

@@ -26,7 +26,7 @@ export default function HealthCheck({ transactions, recurring, categories }: Pro
           <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
             Checks your data for things worth a second look — possible duplicates, uncategorized transactions, unusually large amounts, stale pending fares, overdue recurring items. Nothing changes automatically.
           </p>
-          <button className="list-button" style={{ color: 'var(--green)', fontWeight: 600 }} onClick={run}>Run Health Check</button>
+          <button className="list-button" style={{ color: 'var(--blue)', fontWeight: 600 }} onClick={run}>Run Health Check</button>
         </div>
       )}
 

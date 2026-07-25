@@ -65,8 +65,8 @@ export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [
   { name: 'Transport', icon: '🚗', color: '#9B7EDE', monthlyBudget: 0, sortOrder: 3, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
   { name: 'Utilities', icon: '💡', color: '#5AC8C8', monthlyBudget: 0, sortOrder: 4, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
   { name: 'Entertainment', icon: '🎬', color: '#FF6B9D', monthlyBudget: 0, sortOrder: 5, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
-  { name: 'Shopping', icon: '🛍️', color: '#E8846B', monthlyBudget: 0, sortOrder: 6, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
+  { name: 'Shopping', icon: '🛍️', color: '#64D2FF', monthlyBudget: 0, sortOrder: 6, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
   { name: 'Health', icon: '💊', color: '#4ECDC4', monthlyBudget: 0, sortOrder: 7, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
-  { name: 'Savings', icon: '🐷', color: '#34C759', monthlyBudget: 0, sortOrder: 8, parentId: null, isSavingsCategory: true, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
+  { name: 'Savings', icon: '🐷', color: '#0A84FF', monthlyBudget: 0, sortOrder: 8, parentId: null, isSavingsCategory: true, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null },
   { name: 'Other', icon: '📦', color: '#9AA0A6', monthlyBudget: 0, sortOrder: 9, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null }
 ]
