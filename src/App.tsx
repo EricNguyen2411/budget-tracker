@@ -16,9 +16,11 @@ import ShoppingLists from './pages/ShoppingLists'
 import DuplicateCheck from './pages/DuplicateCheck'
 import HealthCheck from './pages/HealthCheck'
 import CategoryDetail from './pages/CategoryDetail'
+import CustomRangeReport from './pages/CustomRangeReport'
+import MerchantRules from './pages/MerchantRules'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -109,6 +111,8 @@ export default function App() {
       {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
       {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} />}
       {tab === 'health' && <HealthCheck transactions={transactions} recurring={recurring} categories={categories} />}
+      {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
+      {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
 
       {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
         <div style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
@@ -131,8 +135,8 @@ export default function App() {
           <TargetIcon active={tab === 'budgets' && !categoryDetail} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health'].includes(tab) && !categoryDetail ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health'].includes(tab) && !categoryDetail} />
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants'].includes(tab) && !categoryDetail ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants'].includes(tab) && !categoryDetail} />
           More
         </button>
       </nav>

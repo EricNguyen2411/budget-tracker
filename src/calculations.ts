@@ -1,5 +1,5 @@
 import type { Category, Transaction } from './types'
-import { isInSamePeriod, daysRemainingInPeriod } from './budgetPeriod'
+import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetPeriod'
 
 export function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1)
@@ -124,6 +124,91 @@ export function formatCurrency(amount: number): string {
 
 export function daysRemainingInMonth(referenceDate: Date): number {
   return daysRemainingInPeriod(referenceDate)
+}
+
+export interface CategorySlice {
+  categoryId: string
+  name: string
+  color: string
+  amount: number
+}
+
+export function categoryBreakdown(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): CategorySlice[] {
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
+
+  return topLevel
+    .map((c) => ({ categoryId: c.id, name: c.name, color: c.color, amount: Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)) }))
+    .filter((s) => s.amount > 0)
+    .sort((a, b) => b.amount - a.amount)
+}
+
+export interface DayPoint {
+  date: Date
+  amount: number
+}
+
+export function last14DaysSpend(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date()): DayPoint[] {
+  const result: DayPoint[] = []
+  for (let offset = 13; offset >= 0; offset--) {
+    const day = new Date(referenceDate)
+    day.setDate(day.getDate() - offset)
+    const dayStr = day.toDateString()
+    const total = transactions
+      .filter((t) => {
+        const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+        return t.isExpense && !cat?.isSavingsCategory && new Date(t.date).toDateString() === dayStr
+      })
+      .reduce((sum, t) => sum + netAmount(t, transactions), 0)
+    result.push({ date: day, amount: total })
+  }
+  return result
+}
+
+export interface PeriodPoint {
+  periodStart: Date
+  amount: number
+}
+
+export function last6PeriodsSpend(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): PeriodPoint[] {
+  const result: PeriodPoint[] = []
+  for (let offset = 5; offset >= 0; offset--) {
+    const period = periodOffsetBy(-offset, referenceDate)
+    const total = transactions
+      .filter((t) => {
+        const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+        return t.isExpense && !cat?.isSavingsCategory && new Date(t.date) >= period.start && new Date(t.date) < period.end
+      })
+      .reduce((sum, t) => sum + netAmount(t, transactions), 0)
+    result.push({ periodStart: period.start, amount: total })
+  }
+  return result
+}
+
+export function last6PeriodsNetSavings(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): PeriodPoint[] {
+  const result: PeriodPoint[] = []
+  for (let offset = 5; offset >= 0; offset--) {
+    const period = periodOffsetBy(-offset, referenceDate)
+    const periodTx = transactions.filter((t) => new Date(t.date) >= period.start && new Date(t.date) < period.end)
+
+    const spent = periodTx
+      .filter((t) => {
+        const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+        return t.isExpense && !cat?.isSavingsCategory
+      })
+      .reduce((sum, t) => sum + netAmount(t, transactions), 0)
+
+    const unlinkedIncome = periodTx.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+    const excessFromLinked = periodTx
+      .filter((t) => !t.isExpense && t.reimbursesExpenseId)
+      .reduce((sum, t) => {
+        const expense = transactions.find((e) => e.id === t.reimbursesExpenseId)
+        return expense ? sum + totalExcessReimbursement(expense, transactions) : sum
+      }, 0)
+    const income = unlinkedIncome + excessFromLinked
+
+    result.push({ periodStart: period.start, amount: income - spent })
+  }
+  return result
 }
 
 export function isGoal(category: Category): boolean {

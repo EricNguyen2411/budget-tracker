@@ -12,11 +12,7 @@ interface Props {
 }
 
 const PENDING_FEATURES = [
-  'Statement/receipt photo import (OCR) — different tech stack entirely (browser OCR vs. Apple Vision), planned as its own focused build',
-  'Charts (category pie, daily/monthly trend, net savings trend) — Dashboard has the numbers, not yet the visuals',
-  'Custom date-range reports (pick any start/end date)',
-  'Multi-select bulk delete/recategorize on the Transactions list',
-  'A dedicated screen to view/manage learned merchant rules (learning itself works, just no UI to review or delete a bad one yet)'
+  'Statement/receipt photo import (OCR) — different tech stack entirely (browser OCR vs. Apple Vision), planned as its own focused build'
 ]
 
 export default function More({ categories, transactions, onCategoriesChanged, onNavigate }: Props) {
@@ -107,8 +103,10 @@ export default function More({ categories, transactions, onCategoriesChanged, on
         {[
           { tab: 'recurring', icon: '🔁', label: 'Recurring' },
           { tab: 'shopping', icon: '🛒', label: 'Shopping Lists' },
+          { tab: 'report', icon: '📅', label: 'Custom Date Range Report' },
           { tab: 'duplicates', icon: '📑', label: 'Duplicate Check' },
-          { tab: 'health', icon: '❤️', label: 'Health Check' }
+          { tab: 'health', icon: '❤️', label: 'Health Check' },
+          { tab: 'merchants', icon: '🧠', label: 'Learned Merchants' }
         ].map((item, i, arr) => (
           <button key={item.tab} className="transaction-row" style={{ borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => onNavigate(item.tab)}>
             <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>{item.icon}</div>

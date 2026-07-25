@@ -1,6 +1,7 @@
 import type { Category, Transaction } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate } from '../calculations'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings } from '../calculations'
 import { generateInsights } from '../insights'
+import { DonutChart, BarChart } from '../components/Charts'
 
 interface Props {
   categories: Category[]
@@ -23,6 +24,11 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
 
   const insights = generateInsights(categories, transactions, now)
   const goalCategories = categories.filter((c) => !c.parentId && isGoal(c))
+
+  const pieSlices = categoryBreakdown(categories, transactions, now)
+  const dailySpend = last14DaysSpend(transactions, categories, now)
+  const monthlyTrend = last6PeriodsSpend(categories, transactions, now)
+  const netSavingsTrend = last6PeriodsNetSavings(categories, transactions, now)
 
   return (
     <div className="screen">
@@ -113,6 +119,51 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
               </button>
             )
           })}
+        </div>
+      )}
+
+      {pieSlices.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <span className="section-heading" style={{ margin: '0 0 12px' }}>Spending by Category</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            <DonutChart slices={pieSlices.map((s) => ({ label: s.name, value: s.amount, color: s.color }))} />
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {pieSlices.slice(0, 6).map((s) => (
+                <div key={s.categoryId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+                  <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(s.amount)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dailySpend.some((d) => d.amount > 0) && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <span className="section-heading" style={{ margin: '0 0 12px' }}>Last 14 Days</span>
+          <BarChart data={dailySpend.map((d) => ({ label: d.date.toLocaleDateString('en-AU'), value: d.amount }))} height={100} positiveColor="var(--blue)" />
+        </div>
+      )}
+
+      {monthlyTrend.some((d) => d.amount > 0) && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <span className="section-heading" style={{ margin: '0 0 12px' }}>Monthly Trend</span>
+          <BarChart data={monthlyTrend.map((d) => ({ label: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }), value: d.amount }))} height={100} positiveColor="var(--blue)" />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>
+            {monthlyTrend.map((d, i) => <span key={i}>{d.periodStart.toLocaleDateString('en-AU', { month: 'short' })}</span>)}
+          </div>
+        </div>
+      )}
+
+      {netSavingsTrend.some((d) => d.amount !== 0) && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <span className="section-heading" style={{ margin: '0 0 12px' }}>Net Savings Trend</span>
+          <BarChart data={netSavingsTrend.map((d) => ({ label: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }), value: d.amount }))} height={100} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>
+            {netSavingsTrend.map((d, i) => <span key={i}>{d.periodStart.toLocaleDateString('en-AU', { month: 'short' })}</span>)}
+          </div>
         </div>
       )}
     </div>

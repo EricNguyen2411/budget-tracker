@@ -31,6 +31,9 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [creating, setCreating] = useState(false)
   const [similarPrompt, setSimilarPrompt] = useState<{ note: string; categoryId: string; matches: Transaction[] } | null>(null)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false)
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
@@ -59,11 +62,43 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
       .map(([key, txs]) => ({ label: dayLabel(new Date(key)), transactions: txs }))
   }, [filtered])
 
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false)
+    setSelectedIds(new Set())
+  }
+
+  async function bulkDelete() {
+    if (!confirm(`Delete ${selectedIds.size} transaction${selectedIds.size === 1 ? '' : 's'}? This can't be undone.`)) return
+    for (const id of selectedIds) await onDelete(id)
+    exitSelectMode()
+  }
+
+  async function bulkCategorize(categoryId: string) {
+    const targets = transactions.filter((t) => selectedIds.has(t.id))
+    for (const t of targets) await onSave({ ...t, categoryId }, t.id)
+    setShowBulkCategoryPicker(false)
+    exitSelectMode()
+  }
+
   return (
     <div className="screen">
       <div className="screen-header-row">
         <h1 className="screen-title">Transactions</h1>
-        <button className="round-icon-button" onClick={() => setCreating(true)}><PlusIcon /></button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button style={{ fontSize: 14, color: 'var(--text-dim)' }} onClick={() => selectMode ? exitSelectMode() : setSelectMode(true)}>
+            {selectMode ? 'Done' : 'Select'}
+          </button>
+          {!selectMode && <button className="round-icon-button" onClick={() => setCreating(true)}><PlusIcon /></button>}
+        </div>
       </div>
 
       <input
@@ -103,8 +138,11 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                   key={t.id}
                   className="transaction-row"
                   style={{ borderBottom: i < group.transactions.length - 1 ? '1px solid var(--border)' : 'none' }}
-                  onClick={() => setEditing(t)}
+                  onClick={() => selectMode ? toggleSelect(t.id) : setEditing(t)}
                 >
+                  {selectMode && (
+                    <input type="checkbox" checked={selectedIds.has(t.id)} readOnly style={{ width: 18, height: 18 }} />
+                  )}
                   <div className="tx-icon" style={{ background: (category?.color ?? '#5C6167') + '33' }}>
                     {category?.icon ?? '❓'}
                   </div>
@@ -121,6 +159,18 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           </div>
         </div>
       ))}
+
+      {selectMode && selectedIds.size > 0 && (
+        <div style={{ position: 'fixed', bottom: 84, left: 0, right: 0, maxWidth: 560, margin: '0 auto', padding: '10px 16px' }}>
+          <div className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>{selectedIds.size} selected</span>
+            <div style={{ display: 'flex', gap: 16 }}>
+              <button style={{ color: 'var(--blue)', fontSize: 13, fontWeight: 600 }} onClick={() => setShowBulkCategoryPicker(true)}>Category</button>
+              <button style={{ color: 'var(--red)', fontSize: 13, fontWeight: 600 }} onClick={bulkDelete}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(editing || creating) && (
         <TransactionEditor
@@ -163,6 +213,31 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               Categorize {similarPrompt.matches.length}
             </button>
             <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not Now</button>
+          </div>
+        </div>
+      )}
+
+      {showBulkCategoryPicker && (
+        <div className="modal-backdrop" onClick={() => setShowBulkCategoryPicker(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Change {selectedIds.size} to</span>
+              <button className="text-button text-button-primary" onClick={() => setShowBulkCategoryPicker(false)}>Cancel</button>
+            </div>
+            <div className="modal-body">
+              {categories.filter((c) => !c.parentId).map((c) => (
+                <div key={c.id}>
+                  <button className="picker-row" onClick={() => bulkCategorize(c.id)}>
+                    <span>{c.icon} {c.name}</span>
+                  </button>
+                  {categories.filter((s) => s.parentId === c.id).map((s) => (
+                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => bulkCategorize(s.id)}>
+                      <span>{s.icon} {s.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
