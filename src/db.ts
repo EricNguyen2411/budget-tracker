@@ -198,18 +198,74 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   }
 
   const db = await getDB()
+
+  // Reconcile incoming categories against what already exists, by name
+  // (case-insensitive) rather than ID — IDs from an import are always
+  // freshly generated and can never match what's already in your data,
+  // so without this, re-importing (or importing after the default
+  // categories were auto-seeded on first launch) creates a duplicate
+  // for every category that happens to share a name, like "Dining Out"
+  // ending up twice — one empty, one with your real subcategories.
+  const existingCategories = await db.getAll('categories')
+  const existingTopByName = new Map(existingCategories.filter((c) => !c.parentId).map((c) => [c.name.toLowerCase(), c]))
+
+  const idRemap = new Map<string, string>() // incoming id -> id actually used
+  const categoriesToWrite: Category[] = []
+
+  const incomingTop = categories.filter((c) => !c.parentId)
+  const incomingSub = categories.filter((c) => c.parentId)
+
+  for (const c of incomingTop) {
+    const existing = existingTopByName.get(c.name.toLowerCase())
+    if (existing) {
+      idRemap.set(c.id, existing.id)
+      // Keep the existing category as-is (its own budget/color/etc. —
+      // don't overwrite settings you may have already configured), but
+      // if the existing one has no budget set and the incoming one
+      // does, that's worth carrying over rather than discarding.
+      if (existing.monthlyBudget === 0 && c.monthlyBudget > 0) {
+        categoriesToWrite.push({ ...existing, monthlyBudget: c.monthlyBudget })
+      }
+    } else {
+      categoriesToWrite.push(c)
+    }
+  }
+
+  const existingSubByParentAndName = new Map(
+    existingCategories.filter((c) => c.parentId).map((c) => [`${c.parentId}::${c.name.toLowerCase()}`, c])
+  )
+  for (const c of incomingSub) {
+    const resolvedParentId = idRemap.get(c.parentId!) ?? c.parentId!
+    const key = `${resolvedParentId}::${c.name.toLowerCase()}`
+    const existing = existingSubByParentAndName.get(key)
+    if (existing) {
+      idRemap.set(c.id, existing.id)
+    } else {
+      categoriesToWrite.push({ ...c, parentId: resolvedParentId })
+    }
+  }
+
+  function remapCategoryId(id: string | null): string | null {
+    if (!id) return null
+    return idRemap.get(id) ?? id
+  }
+
+  const transactionsToWrite = transactions.map((t) => ({ ...t, categoryId: remapCategoryId(t.categoryId) }))
+  const recurringToWrite = recurring.map((r) => ({ ...r, categoryId: remapCategoryId(r.categoryId) }))
+  const shoppingListsToWrite = shoppingLists.map((s) => ({ ...s, categoryId: remapCategoryId(s.categoryId) }))
+
   const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
-  for (const c of categories) await tx.objectStore('categories').put(c)
-  for (const t of transactions) await tx.objectStore('transactions').put(t)
-  for (const r of recurring) await tx.objectStore('recurring').put(r)
-  for (const s of shoppingLists) await tx.objectStore('shoppingLists').put(s)
+  for (const c of categoriesToWrite) await tx.objectStore('categories').put(c)
+  for (const t of transactionsToWrite) await tx.objectStore('transactions').put(t)
+  for (const r of recurringToWrite) await tx.objectStore('recurring').put(r)
+  for (const s of shoppingListsToWrite) await tx.objectStore('shoppingLists').put(s)
   await tx.done
 
   for (const rule of merchantRulesToImport) {
-    learnMerchant(rule.key, rule.categoryId)
+    learnMerchant(rule.key, remapCategoryId(rule.categoryId))
   }
 
-  return { categoriesCount: categories.length, transactionsCount: transactions.length }
+  return { categoriesCount: categoriesToWrite.length, transactionsCount: transactionsToWrite.length }
 }
 
 const AUTO_BACKUP_INTERVAL_HOURS = 12

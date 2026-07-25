@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { listAutoBackups, restoreAutoBackup } from '../db'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   onBack: () => void
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function AutoBackups({ onBack, onRestored }: Props) {
+  useSwipeBack(onBack)
   const [backups, setBackups] = useState<{ id: string; createdAt: string }[]>([])
   const [status, setStatus] = useState<string | null>(null)
 

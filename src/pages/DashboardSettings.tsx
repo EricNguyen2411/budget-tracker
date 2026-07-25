@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { WIDGET_LABELS, hideableWidgets, getHiddenWidgets, setWidgetHidden, getWidgetOrder, moveWidget } from '../dashboardWidgets'
+import { useSwipeBack } from '../useSwipeBack'
 
 export default function DashboardSettings({ onBack }: { onBack: () => void }) {
+  useSwipeBack(onBack)
   const [hidden, setHidden] = useState(getHiddenWidgets())
   const [order, setOrder] = useState(getWidgetOrder())
 

@@ -3,6 +3,7 @@ import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, totalExcessReimbursement } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
+import { useSwipeBack } from '../useSwipeBack'
 
 export type StatKind = 'spent' | 'income' | 'reimbursed' | 'saved'
 
@@ -23,6 +24,7 @@ const TITLES: Record<StatKind, string> = {
 }
 
 export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete }: Props) {
+  useSwipeBack(onBack)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
 

@@ -3,6 +3,7 @@ import type { Category } from '../types'
 import { suggestBudgets } from '../budgetSuggestions'
 import { formatCurrency } from '../calculations'
 import { saveCategory } from '../db'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   categories: Category[]
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function TotalBudgetPlanner({ categories, onBack, onChanged }: Props) {
+  useSwipeBack(onBack)
   const [income, setIncome] = useState('')
   const [budgets, setBudgets] = useState<Map<string, string>>(new Map(categories.filter((c) => !c.parentId).map((c) => [c.id, c.monthlyBudget ? String(c.monthlyBudget) : ''])))
 

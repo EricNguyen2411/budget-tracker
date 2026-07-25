@@ -5,6 +5,7 @@ import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '..
 import { significantTokens } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { createTransaction } from '../db'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   categories: Category[]
@@ -20,6 +21,7 @@ const FORMAT_LABELS: Record<DetectedFormat, string> = {
 }
 
 export default function StatementImport({ categories, existingTransactions, onBack, onImported }: Props) {
+  useSwipeBack(onBack)
   const [status, setStatus] = useState<'idle' | 'scanning' | 'done'>('idle')
   const [scanProgress, setScanProgress] = useState('')
   const [results, setResults] = useState<ParsedTransaction[]>([])

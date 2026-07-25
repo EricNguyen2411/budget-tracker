@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Category } from '../types'
 import { getAllMerchantRules, deleteMerchantRule } from '../merchantRules'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   categories: Category[]
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function MerchantRules({ categories, onBack }: Props) {
+  useSwipeBack(onBack)
   const [rules, setRules] = useState(getAllMerchantRules())
   const catById = new Map(categories.map((c) => [c.id, c]))
 

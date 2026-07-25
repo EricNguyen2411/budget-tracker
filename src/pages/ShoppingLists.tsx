@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Category, ShoppingList, ShoppingListItem, Transaction } from '../types'
 import { formatCurrency, effectiveBudget, netSpentForCategory } from '../calculations'
 import { createShoppingList, saveShoppingList, deleteShoppingList, createTransaction, newId } from '../db'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   lists: ShoppingList[]
@@ -66,6 +67,7 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
   onBack: () => void
   onChanged: () => void
 }) {
+  useSwipeBack(onBack)
   const [itemName, setItemName] = useState('')
   const [itemPrice, setItemPrice] = useState('')
   const category = categories.find((c) => c.id === list.categoryId)

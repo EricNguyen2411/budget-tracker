@@ -3,6 +3,7 @@ import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   category: Category
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function CategoryDetail({ category, allCategories, transactions, onBack, onSave, onDelete, onOpenCategory }: Props) {
+  useSwipeBack(onBack)
   const [showAllTime, setShowAllTime] = useState(false)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)

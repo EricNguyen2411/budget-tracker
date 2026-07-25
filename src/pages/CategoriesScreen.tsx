@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Category } from '../types'
 import { createCategory, saveCategory, deleteCategory } from '../db'
 import { localDateInputValue } from '../calculations'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   categories: Category[]
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function CategoriesScreen({ categories, onBack, onChanged }: Props) {
+  useSwipeBack(onBack)
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null)
 
   return (

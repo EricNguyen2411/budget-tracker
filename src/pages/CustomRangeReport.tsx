@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, totalExcessReimbursement, localDateInputValue } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   categories: Category[]
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd }: Props) {
+  useSwipeBack(onBack)
   const now = new Date()
   const [start, setStart] = useState(initialStart ?? localDateInputValue(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
   const [end, setEnd] = useState(initialEnd ?? localDateInputValue(now))

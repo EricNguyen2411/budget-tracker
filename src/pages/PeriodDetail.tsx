@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   title: string
@@ -19,6 +20,7 @@ interface Props {
  * is for picking an arbitrary range): the period is already known from
  * what you tapped, so showing it again would just be clutter. */
 export default function PeriodDetail({ title, start, end, categories, transactions, onBack, onSave, onDelete }: Props) {
+  useSwipeBack(onBack)
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [editing, setEditing] = useState<Transaction | null>(null)
 

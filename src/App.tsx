@@ -7,6 +7,7 @@ import {
 import { processDueRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
 import { checkInAppNudge } from './notifications'
+import { useSwipeBack } from './useSwipeBack'
 import Dashboard from './pages/Dashboard'
 import TransactionsPage from './pages/Transactions'
 import Budgets from './pages/Budgets'
@@ -38,6 +39,11 @@ export default function App() {
   const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
   const [statDetail, setStatDetail] = useState<StatKind | null>(null)
   const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string } | null>(null)
+
+  useSwipeBack(
+    () => setTab('more'),
+    tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health'
+  )
 
   const reload = useCallback(async () => {
     const [cats, txs, rec, lists] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists()])

@@ -104,6 +104,7 @@ input, select {
   right: 14px;
   max-width: 532px;
   margin: 0 auto;
+  z-index: 10;
   display: flex;
   background: rgba(28, 28, 30, 0.78);
   backdrop-filter: blur(30px) saturate(180%);
