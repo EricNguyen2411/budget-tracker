@@ -8,16 +8,18 @@ interface Props {
   transactions: Transaction[]
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onBack: () => void
+  initialStart?: string
+  initialEnd?: string
 }
 
 function isoDate(d: Date) {
   return d.toISOString().slice(0, 10)
 }
 
-export default function CustomRangeReport({ categories, transactions, onSave, onBack }: Props) {
+export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd }: Props) {
   const now = new Date()
-  const [start, setStart] = useState(isoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
-  const [end, setEnd] = useState(isoDate(now))
+  const [start, setStart] = useState(initialStart ?? isoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
+  const [end, setEnd] = useState(initialEnd ?? isoDate(now))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [editing, setEditing] = useState<Transaction | null>(null)
 

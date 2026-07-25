@@ -16,6 +16,7 @@ interface Props {
 
 export default function CategoryDetail({ category, allCategories, transactions, onBack, onSave, onDelete, onOpenCategory }: Props) {
   const [showAllTime, setShowAllTime] = useState(false)
+  const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
 
   const subcategories = allCategories.filter((c) => c.parentId === category.id)
@@ -26,7 +27,9 @@ export default function CategoryDetail({ category, allCategories, transactions, 
     return showAllTime ? base : base.filter((t) => isInSamePeriod(new Date(t.date)))
   }, [transactions, showAllTime, category.id])
 
-  const sorted = [...relevant].sort((a, b) => b.date.localeCompare(a.date))
+  const sorted = [...relevant].sort((a, b) =>
+    sort === 'recent' ? b.date.localeCompare(a.date) : netAmount(b, transactions) - netAmount(a, transactions)
+  )
   const budget = effectiveBudget(category, allCategories)
   const spent = Math.max(0, netSpentForCategory(category, allCategories, transactions, new Date()))
   const goal = isGoal(category)
@@ -90,9 +93,14 @@ export default function CategoryDetail({ category, allCategories, transactions, 
         </>
       )}
 
-      <div className="segmented" style={{ marginBottom: 16 }}>
+      <div className="segmented" style={{ marginBottom: 10 }}>
         <button className={!showAllTime ? 'segmented-active' : ''} onClick={() => setShowAllTime(false)}>This Period</button>
         <button className={showAllTime ? 'segmented-active' : ''} onClick={() => setShowAllTime(true)}>All Time</button>
+      </div>
+
+      <div className="segmented" style={{ marginBottom: 16 }}>
+        <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
+        <button className={sort === 'price' ? 'segmented-active' : ''} onClick={() => setSort('price')}>Highest Price</button>
       </div>
 
       {sorted.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing logged {showAllTime ? '' : 'this period'} yet.</p>}

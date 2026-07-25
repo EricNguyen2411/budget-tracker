@@ -2,14 +2,17 @@ import type { Category, Transaction } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings } from '../calculations'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
+import { getHiddenWidgets } from '../dashboardWidgets'
 
 interface Props {
   categories: Category[]
   transactions: Transaction[]
   onOpenCategory: (id: string) => void
+  onOpenStat: (kind: 'spent' | 'income' | 'reimbursed' | 'saved') => void
+  onOpenDateRange: (start: string, end: string) => void
 }
 
-export default function Dashboard({ categories, transactions, onOpenCategory }: Props) {
+export default function Dashboard({ categories, transactions, onOpenCategory, onOpenStat, onOpenDateRange }: Props) {
   const now = new Date()
   const totals = computeDashboardTotals(categories, transactions, now)
   const days = daysRemainingInMonth(now)
@@ -29,6 +32,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
   const dailySpend = last14DaysSpend(transactions, categories, now)
   const monthlyTrend = last6PeriodsSpend(categories, transactions, now)
   const netSavingsTrend = last6PeriodsNetSavings(categories, transactions, now)
+  const hidden = getHiddenWidgets()
 
   return (
     <div className="screen">
@@ -41,27 +45,27 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
       </div>
 
       <div className="stat-grid">
-        <div className="card stat-card">
+        <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('spent')}>
           <span className="stat-label">Spent</span>
           <span className="stat-value amount" style={{ color: 'var(--red)' }}>{formatCurrency(totals.spent)}</span>
-        </div>
-        <div className="card stat-card">
+        </button>
+        <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('income')}>
           <span className="stat-label">Income</span>
           <span className="stat-value amount" style={{ color: 'var(--green)' }}>{formatCurrency(totals.income)}</span>
-        </div>
-        <div className="card stat-card">
+        </button>
+        <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('reimbursed')}>
           <span className="stat-label">Reimbursed</span>
           <span className="stat-value amount" style={{ color: 'var(--teal)' }}>{formatCurrency(totals.reimbursed)}</span>
-        </div>
+        </button>
         {totals.saved > 0 && (
-          <div className="card stat-card">
+          <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('saved')}>
             <span className="stat-label">Saved</span>
             <span className="stat-value amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
-          </div>
+          </button>
         )}
       </div>
 
-      {insights.length > 0 && (
+      {insights.length > 0 && !hidden.has('insights') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading" style={{ margin: '0 0 10px' }}>✨ Insights</span>
           {insights.map((insight, i) => (
@@ -73,7 +77,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
         </div>
       )}
 
-      {goalCategories.length > 0 && (
+      {goalCategories.length > 0 && !hidden.has('goals') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading" style={{ margin: '0 0 10px' }}>🎯 Savings Goals</span>
           {goalCategories.map((c) => {
@@ -101,7 +105,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
         </div>
       )}
 
-      {budgetRows.length > 0 && (
+      {budgetRows.length > 0 && !hidden.has('budgetVsActual') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading">Budget vs Actual</span>
           {budgetRows.map(({ category, spent, budget }) => {
@@ -122,48 +126,63 @@ export default function Dashboard({ categories, transactions, onOpenCategory }: 
         </div>
       )}
 
-      {pieSlices.length > 0 && (
+      {pieSlices.length > 0 && !hidden.has('categoryPie') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading" style={{ margin: '0 0 12px' }}>Spending by Category</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <DonutChart slices={pieSlices.map((s) => ({ label: s.name, value: s.amount, color: s.color }))} />
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {pieSlices.slice(0, 6).map((s) => (
-                <div key={s.categoryId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <button key={s.categoryId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, width: '100%', textAlign: 'left' }} onClick={() => onOpenCategory(s.categoryId)}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
                   <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(s.amount)}</span>
-                </div>
+                </button>
               ))}
             </div>
           </div>
         </div>
       )}
 
-      {dailySpend.some((d) => d.amount > 0) && (
+      {dailySpend.some((d) => d.amount > 0) && !hidden.has('last14Days') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading" style={{ margin: '0 0 12px' }}>Last 14 Days</span>
-          <BarChart data={dailySpend.map((d) => ({ label: d.date.toLocaleDateString('en-AU'), value: d.amount }))} height={100} positiveColor="var(--blue)" />
+          <BarChart data={dailySpend.map((d) => ({
+            label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
+            axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
+            value: d.amount,
+            onSelect: () => onOpenDateRange(d.date.toISOString().slice(0, 10), d.date.toISOString().slice(0, 10))
+          }))} height={100} />
         </div>
       )}
 
-      {monthlyTrend.some((d) => d.amount > 0) && (
+      {monthlyTrend.some((d) => d.amount > 0) && !hidden.has('monthlyTrend') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading" style={{ margin: '0 0 12px' }}>Monthly Trend</span>
-          <BarChart data={monthlyTrend.map((d) => ({ label: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }), value: d.amount }))} height={100} positiveColor="var(--blue)" />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>
-            {monthlyTrend.map((d, i) => <span key={i}>{d.periodStart.toLocaleDateString('en-AU', { month: 'short' })}</span>)}
-          </div>
+          <BarChart data={monthlyTrend.map((d) => {
+            const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
+            return {
+              label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
+              axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
+              value: d.amount,
+              onSelect: () => onOpenDateRange(d.periodStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10))
+            }
+          })} height={100} />
         </div>
       )}
 
-      {netSavingsTrend.some((d) => d.amount !== 0) && (
+      {netSavingsTrend.some((d) => d.amount !== 0) && !hidden.has('netSavingsTrend') && (
         <div className="card" style={{ marginTop: 16 }}>
           <span className="section-heading" style={{ margin: '0 0 12px' }}>Net Savings Trend</span>
-          <BarChart data={netSavingsTrend.map((d) => ({ label: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }), value: d.amount }))} height={100} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>
-            {netSavingsTrend.map((d, i) => <span key={i}>{d.periodStart.toLocaleDateString('en-AU', { month: 'short' })}</span>)}
-          </div>
+          <BarChart data={netSavingsTrend.map((d) => {
+            const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
+            return {
+              label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
+              axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
+              value: d.amount,
+              onSelect: () => onOpenDateRange(d.periodStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10))
+            }
+          })} height={100} />
         </div>
       )}
     </div>
