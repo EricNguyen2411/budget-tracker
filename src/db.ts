@@ -1,6 +1,8 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
 import { DEFAULT_CATEGORIES } from './types'
+import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
+import { learnMerchant } from './merchantRules'
 
 interface BudgetDB extends DBSchema {
   categories: { key: string; value: Category }
@@ -148,20 +150,56 @@ export async function exportBackup(): Promise<string> {
   return JSON.stringify({ formatVersion: 2, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists }, null, 2)
 }
 
-export async function importBackup(json: string) {
-  const data = JSON.parse(json) as {
-    categories: Category[]
-    transactions: Transaction[]
-    recurring?: RecurringTransaction[]
-    shoppingLists?: ShoppingList[]
+export async function importBackup(json: string): Promise<{ categoriesCount: number; transactionsCount: number }> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    throw new Error('That file isn\u2019t valid JSON — make sure you selected the right backup file.')
   }
+
+  let categories: Category[]
+  let transactions: Transaction[]
+  let recurring: RecurringTransaction[] = []
+  let shoppingLists: ShoppingList[] = []
+  let merchantRulesToImport: { key: string; categoryId: string }[] = []
+
+  if (isNativeBackupFormat(parsed)) {
+    const translated = translateNativeBackup(parsed)
+    categories = translated.categories
+    transactions = translated.transactions
+    recurring = translated.recurring
+    shoppingLists = translated.shoppingLists
+    merchantRulesToImport = translated.merchantRules
+  } else {
+    const data = parsed as {
+      categories?: Category[]
+      transactions?: Transaction[]
+      recurring?: RecurringTransaction[]
+      shoppingLists?: ShoppingList[]
+    }
+    if (!Array.isArray(data.categories) || !Array.isArray(data.transactions)) {
+      throw new Error('That doesn\u2019t look like a Budget Tracker backup file — missing categories or transactions.')
+    }
+    categories = data.categories
+    transactions = data.transactions
+    recurring = data.recurring ?? []
+    shoppingLists = data.shoppingLists ?? []
+  }
+
   const db = await getDB()
   const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
-  for (const c of data.categories) await tx.objectStore('categories').put(c)
-  for (const t of data.transactions) await tx.objectStore('transactions').put(t)
-  for (const r of data.recurring ?? []) await tx.objectStore('recurring').put(r)
-  for (const s of data.shoppingLists ?? []) await tx.objectStore('shoppingLists').put(s)
+  for (const c of categories) await tx.objectStore('categories').put(c)
+  for (const t of transactions) await tx.objectStore('transactions').put(t)
+  for (const r of recurring) await tx.objectStore('recurring').put(r)
+  for (const s of shoppingLists) await tx.objectStore('shoppingLists').put(s)
   await tx.done
+
+  for (const rule of merchantRulesToImport) {
+    learnMerchant(rule.key, rule.categoryId)
+  }
+
+  return { categoriesCount: categories.length, transactionsCount: transactions.length }
 }
 
 export function exportCSV(transactions: Transaction[], categories: Category[]): string {

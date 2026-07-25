@@ -59,10 +59,14 @@ export default function More({ categories, transactions, onCategoriesChanged, on
   }
 
   async function handleImportFile(file: File) {
-    const text = await file.text()
-    await importBackup(text)
-    onCategoriesChanged()
-    setStatus('Backup restored.')
+    try {
+      const text = await file.text()
+      const result = await importBackup(text)
+      onCategoriesChanged()
+      setStatus(`Restored ${result.categoriesCount} categories and ${result.transactionsCount} transactions.`)
+    } catch (err) {
+      setStatus(`Import failed: ${err instanceof Error ? err.message : 'something went wrong reading that file.'}`)
+    }
   }
 
   return (
@@ -154,7 +158,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
         <button className="list-button" onClick={() => fileInput.current?.click()}>Restore from Backup</button>
         <input ref={fileInput} type="file" accept="application/json" style={{ display: 'none' }}
           onChange={(e) => e.target.files?.[0] && handleImportFile(e.target.files[0])} />
-        {status && <p style={{ fontSize: 13, color: 'var(--green)', margin: 0 }}>{status}</p>}
+        {status && <p style={{ fontSize: 13, color: status.startsWith('Import failed') ? 'var(--red)' : 'var(--green)', margin: 0 }}>{status}</p>}
         <p className="hint">Downloads/restores a JSON file — save it somewhere safe (Files, email) periodically. There's no automatic backup yet in this web version.</p>
       </div>
 
