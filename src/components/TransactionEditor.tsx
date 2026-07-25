@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency } from '../calculations'
+import { formatCurrency, localDateInputValue } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
 export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose }: Props) {
   const [amount, setAmount] = useState(transaction ? String(transaction.amount) : '')
   const [note, setNote] = useState(transaction?.note ?? '')
-  const [date, setDate] = useState(transaction?.date.slice(0, 10) ?? new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(transaction ? localDateInputValue(new Date(transaction.date)) : localDateInputValue(new Date()))
   const [isExpense, setIsExpense] = useState(transaction?.isExpense ?? true)
   const [categoryId, setCategoryId] = useState<string | null>(transaction?.categoryId ?? null)
   const [reimbursesId, setReimbursesId] = useState<string | null>(transaction?.reimbursesExpenseId ?? null)
@@ -41,7 +41,10 @@ export default function TransactionEditor({ transaction, categories, allTransact
     onSave({
       amount: parsed,
       note: note.trim(),
-      date: new Date(date).toISOString(),
+      date: (() => {
+        const [y, m, d] = date.split('-').map(Number)
+        return new Date(y, m - 1, d).toISOString()
+      })(),
       isExpense,
       categoryId,
       reimbursesExpenseId: isExpense ? null : reimbursesId

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, totalExcessReimbursement } from '../calculations'
+import { formatCurrency, netAmount, totalExcessReimbursement, localDateInputValue } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
 
 interface Props {
@@ -12,31 +12,27 @@ interface Props {
   initialEnd?: string
 }
 
-function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10)
-}
-
 export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd }: Props) {
   const now = new Date()
-  const [start, setStart] = useState(initialStart ?? isoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
-  const [end, setEnd] = useState(initialEnd ?? isoDate(now))
+  const [start, setStart] = useState(initialStart ?? localDateInputValue(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
+  const [end, setEnd] = useState(initialEnd ?? localDateInputValue(now))
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [editing, setEditing] = useState<Transaction | null>(null)
 
   function applyPreset(preset: string) {
     const today = new Date()
     switch (preset) {
-      case '7d': setStart(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6))); setEnd(isoDate(today)); break
-      case '30d': setStart(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29))); setEnd(isoDate(today)); break
-      case '90d': setStart(isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 89))); setEnd(isoDate(today)); break
-      case 'thisMonth': setStart(isoDate(new Date(today.getFullYear(), today.getMonth(), 1))); setEnd(isoDate(today)); break
+      case '7d': setStart(localDateInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6))); setEnd(localDateInputValue(today)); break
+      case '30d': setStart(localDateInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29))); setEnd(localDateInputValue(today)); break
+      case '90d': setStart(localDateInputValue(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 89))); setEnd(localDateInputValue(today)); break
+      case 'thisMonth': setStart(localDateInputValue(new Date(today.getFullYear(), today.getMonth(), 1))); setEnd(localDateInputValue(today)); break
       case 'lastMonth': {
         const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1)
         const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0)
-        setStart(isoDate(lastMonthStart)); setEnd(isoDate(lastMonthEnd))
+        setStart(localDateInputValue(lastMonthStart)); setEnd(localDateInputValue(lastMonthEnd))
         break
       }
-      case 'ytd': setStart(isoDate(new Date(today.getFullYear(), 0, 1))); setEnd(isoDate(today)); break
+      case 'ytd': setStart(localDateInputValue(new Date(today.getFullYear(), 0, 1))); setEnd(localDateInputValue(today)); break
     }
   }
 
@@ -106,7 +102,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
         </div>
         <div style={{ flex: 1 }}>
           <label className="field-label">To</label>
-          <input type="date" value={end} min={start} max={isoDate(now)} onChange={(e) => setEnd(e.target.value)} />
+          <input type="date" value={end} min={start} max={localDateInputValue(now)} onChange={(e) => setEnd(e.target.value)} />
         </div>
       </div>
 

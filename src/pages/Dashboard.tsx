@@ -1,5 +1,5 @@
 import type { Category, Transaction } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings } from '../calculations'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth } from '../calculations'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets } from '../dashboardWidgets'
@@ -33,6 +33,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
   const monthlyTrend = last6PeriodsSpend(categories, transactions, now)
   const netSavingsTrend = last6PeriodsNetSavings(categories, transactions, now)
   const hidden = getHiddenWidgets()
+  const topMerchants = topMerchantsThisMonth(transactions, now)
 
   return (
     <div className="screen">
@@ -151,7 +152,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
             label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
             axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
             value: d.amount,
-            onSelect: () => onOpenDateRange(d.date.toISOString().slice(0, 10), d.date.toISOString().slice(0, 10))
+            onSelect: () => onOpenDateRange(localDateInputValue(d.date), localDateInputValue(d.date))
           }))} height={100} />
         </div>
       )}
@@ -165,7 +166,7 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
               label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
               axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
               value: d.amount,
-              onSelect: () => onOpenDateRange(d.periodStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10))
+              onSelect: () => onOpenDateRange(localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
             }
           })} height={100} />
         </div>
@@ -180,9 +181,22 @@ export default function Dashboard({ categories, transactions, onOpenCategory, on
               label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
               axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
               value: d.amount,
-              onSelect: () => onOpenDateRange(d.periodStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10))
+              onSelect: () => onOpenDateRange(localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
             }
           })} height={100} />
+        </div>
+      )}
+
+      {topMerchants.length > 0 && !hidden.has('topMerchants') && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <span className="section-heading" style={{ margin: '0 0 12px' }}>Top Merchants This Month</span>
+          {topMerchants.map((m, i) => (
+            <div key={m.note} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+              <span style={{ color: 'var(--text-faint)', fontSize: 13, width: 16 }}>{i + 1}</span>
+              <span style={{ flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.note}</span>
+              <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(m.amount)}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

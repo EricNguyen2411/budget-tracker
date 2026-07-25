@@ -211,6 +211,42 @@ export function last6PeriodsNetSavings(categories: Category[], transactions: Tra
   return result
 }
 
+/**
+ * Extracts YYYY-MM-DD in LOCAL time, for use with <input type="date">.
+ * toISOString().slice(0,10) — used in a few places before this existed —
+ * looks equivalent but isn't: it converts to UTC first, so for any
+ * transaction whose stored time-of-day is late enough that the local
+ * calendar date has already rolled over (anything from early-to-mid
+ * afternoon UTC onward, for Australia), it silently returns the WRONG
+ * day — one day behind what every other part of the app shows, since
+ * everywhere else correctly uses local time via toLocaleDateString /
+ * toDateString.
+ */
+export function localDateInputValue(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export interface MerchantTotal {
+  note: string
+  amount: number
+}
+
+export function topMerchantsThisMonth(transactions: Transaction[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
+  const thisMonth = transactions.filter((t) => t.isExpense && isInSamePeriod(new Date(t.date), referenceDate) && t.note.trim())
+  const map = new Map<string, number>()
+  for (const t of thisMonth) {
+    const key = t.note.trim()
+    map.set(key, (map.get(key) ?? 0) + netAmount(t, transactions))
+  }
+  return Array.from(map.entries())
+    .map(([note, amount]) => ({ note, amount }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, limit)
+}
+
 export function isGoal(category: Category): boolean {
   return category.isSavingsCategory && category.goalTargetAmount > 0
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Category } from '../types'
 import { createCategory, saveCategory, deleteCategory } from '../db'
+import { localDateInputValue } from '../calculations'
 
 interface Props {
   categories: Category[]
@@ -74,7 +75,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [isGoalToggle, setIsGoalToggle] = useState((category?.goalTargetAmount ?? 0) > 0)
   const [goalAmount, setGoalAmount] = useState(category?.goalTargetAmount ? String(category.goalTargetAmount) : '')
   const [hasGoalDate, setHasGoalDate] = useState(!!category?.goalTargetDate)
-  const [goalDate, setGoalDate] = useState(category?.goalTargetDate?.slice(0, 10) ?? '')
+  const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
 
   const eligibleParents = allCategories.filter((c) =>
     !c.parentId &&
