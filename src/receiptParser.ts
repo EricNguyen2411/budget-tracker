@@ -16,7 +16,7 @@ function uuid() {
 
 // ---------- Shared date-header helpers ----------
 
-const WEEKDAY_DATE_PATTERN = /^(Mon(day)?|Tue(s(day)?)?|Wed(nesday)?|Thu(rs(day)?)?|Fri(day)?|Sat(urday)?|Sun(day)?)\s+\d{1,2}\s+[A-Za-z]{3,}\s+\d{4}/i
+const WEEKDAY_DATE_PATTERN = /^(Mon(day)?|Tue(s(day)?)?|Wed(nesday)?|Thu(rs(day)?)?|Fri(day)?|Sat(urday)?|Sun(day)?)\s+\d{1,2}\s+[A-Za-z]{3,}\s*\d{4}/i
 
 function startsWithWeekdayDate(text: string): boolean {
   return WEEKDAY_DATE_PATTERN.test(text.trim())
@@ -121,19 +121,18 @@ export function parseAppTransactionList(items: TextItem[]): { transactions: Pars
 
   const excludedIndices = new Set<number>()
 
-  // Anything above the topmost date header is account-level info (the
-  // current balance shown once before any transaction section begins) —
-  // never a transaction's own amount. Left unexcluded, amount extraction
-  // (which takes the first dollar figure it finds in a block) could pick
-  // this up over the actual transaction amount for whichever row sorts
-  // nearest to it.
+  // Anything above the topmost date header is app chrome — status bar,
+  // page title, search/refresh icons, account balance — never a
+  // transaction's own data. Found via direct testing: excluding only
+  // stray dollar amounts up there (the original approach) missed plain
+  // text like a card title, which got glued onto the first transaction's
+  // note since nothing else claimed it.
   const topmostHeaderY = dateHeaders.length > 0 ? Math.min(...dateHeaders.map((h) => h.y)) : null
   if (topmostHeaderY !== null) {
     merged.forEach((item, index) => {
       const text = item.text.trim()
       if (isAnyDateHeader(text) || isRowAnchorMarker(text)) return
-      const isPlainAmount = /^\$?\d{1,3}(,\d{3})*\.\d{2}$/.test(text.replace(/^[+-]/, ''))
-      if (isPlainAmount && item.box.y0 < topmostHeaderY) excludedIndices.add(index)
+      if (item.box.y0 < topmostHeaderY) excludedIndices.add(index)
     })
   }
 
@@ -194,6 +193,7 @@ export function parseAppTransactionList(items: TextItem[]): { transactions: Pars
       .replace(/[+-]?\s?\$\s?\d{1,3}(?:,\d{3})*\.\d{2}/g, ' ')
       .replace(/bal\s*\$\d{1,3}(,\d{3})*\.\d{2}/gi, ' ')
       .replace(/card ending \d+/gi, ' ')
+      .replace(/[>›]/g, ' ') // trailing disclosure chevron, present on every row in some formats
       .replace(/\s+/g, ' ')
       .trim()
     if (!note) note = 'Transaction'

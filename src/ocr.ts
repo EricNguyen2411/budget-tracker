@@ -30,7 +30,12 @@ function getWorker() {
  */
 export async function recognizeTextItems(image: File | Blob): Promise<TextItem[]> {
   const worker = await getWorker()
-  const { data } = await worker.recognize(image)
+  // blocks:true is required — Tesseract.js's hierarchical block/paragraph/
+  // line/word data (data.blocks) is null by default unless explicitly
+  // requested here, silently returning zero results regardless of what's
+  // actually in the image. Confirmed directly: recognize() without this
+  // option produces correct plain text but a null blocks array every time.
+  const { data } = await worker.recognize(image, {}, { blocks: true })
 
   const bitmap = await createImageBitmap(image)
   const width = bitmap.width

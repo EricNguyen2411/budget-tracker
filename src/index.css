@@ -99,7 +99,7 @@ input, select {
 
 .tab-bar {
   position: fixed;
-  bottom: calc(6px + env(safe-area-inset-bottom));
+  bottom: env(safe-area-inset-bottom);
   left: 14px;
   right: 14px;
   max-width: 532px;
