@@ -110,6 +110,12 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
 
   async function handleDelete() {
     if (!category) return
+    const subCount = allCategories.filter((c) => c.parentId === category.id).length
+    if (subCount > 0) {
+      alert(`"${category.name}" still has ${subCount} subcategor${subCount === 1 ? 'y' : 'ies'} under it. Delete or move those first — deleting the parent while they still point to it would leave them orphaned.`)
+      return
+    }
+    if (!confirm(`Delete "${category.name}"? Any transactions using it will become uncategorized rather than being deleted.`)) return
     await deleteCategory(category.id)
     onChanged()
     onClose()

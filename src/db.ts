@@ -77,7 +77,29 @@ export async function createCategory(data: Omit<Category, 'id'>): Promise<Catego
 
 export async function deleteCategory(id: string) {
   const db = await getDB()
-  await db.delete('categories', id)
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
+
+  await tx.objectStore('categories').delete(id)
+
+  // Clear the reference on anything that pointed to it, rather than
+  // leaving a dangling categoryId pointing at a category that no longer
+  // exists — display code falls back to "Uncategorized" either way, but
+  // an explicit null is the correct state, not a stale id that happens
+  // to render the same.
+  const transactions = await tx.objectStore('transactions').getAll()
+  for (const t of transactions) {
+    if (t.categoryId === id) await tx.objectStore('transactions').put({ ...t, categoryId: null })
+  }
+  const recurring = await tx.objectStore('recurring').getAll()
+  for (const r of recurring) {
+    if (r.categoryId === id) await tx.objectStore('recurring').put({ ...r, categoryId: null })
+  }
+  const shoppingLists = await tx.objectStore('shoppingLists').getAll()
+  for (const s of shoppingLists) {
+    if (s.categoryId === id) await tx.objectStore('shoppingLists').put({ ...s, categoryId: null })
+  }
+
+  await tx.done
 }
 
 export async function getTransactions(): Promise<Transaction[]> {

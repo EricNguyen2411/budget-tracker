@@ -56,7 +56,16 @@ function resolvedDateForHeader(text: string): Date | null {
 }
 
 function isRowAnchorMarker(text: string): boolean {
-  return /card ending \d+/i.test(text) || /bal\s*\$\d{1,3}(,\d{3})*\.\d{2}/i.test(text)
+  if (/card ending \d+/i.test(text)) return true
+  if (/bal\s*\$\d{1,3}(,\d{3})*\.\d{2}/i.test(text)) return true
+  // Some rows (confirmed via testing — a cardless ATM withdrawal) show a
+  // transaction-type label instead of a running balance, with no "bal
+  // $X" line at all. Without recognizing these too, that row has no
+  // anchor to attach to and silently disappears, same failure mode as
+  // the "Yesterday" header bug found earlier.
+  if (/^(ATM\/EFTPOS|Online) Withdrawal$/i.test(text.trim())) return true
+  if (/^Transfers?$/i.test(text.trim())) return true
+  return false
 }
 
 // ---------- Format detection ----------
@@ -82,6 +91,11 @@ function parseSignedAmount(text: string): { amount: number; isExpense: boolean }
   const amount = parseFloat(match[2].replace(/,/g, ''))
   const isExpense = match[1] !== '+'
   return { amount, isExpense }
+}
+
+function parseBalance(anchorText: string): number | null {
+  const match = anchorText.match(/bal\s*\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/i)
+  return match ? parseFloat(match[1].replace(/,/g, '')) : null
 }
 
 export function parseAppTransactionList(items: TextItem[]): { transactions: ParsedTransaction[]; skipped: string[] } {
@@ -175,9 +189,16 @@ export function parseAppTransactionList(items: TextItem[]): { transactions: Pars
   const transactions: ParsedTransaction[] = []
   const skipped: string[] = []
 
+  // First pass: build each transaction with its naive text-based sign,
+  // plus the running balance if this row's anchor showed one.
+  interface Draft { amount: number; note: string; date: Date; textIsExpense: boolean; balanceAfter: number | null }
+  const drafts: Draft[] = []
+  const skippedTexts: string[] = []
+
   for (const anchor of rowAnchors) {
     const blockTexts = textByAnchor.get(anchor.index) ?? []
     const combinedText = blockTexts.join(' ')
+    const anchorText = merged[anchor.index].text
 
     const applicableHeader = dateHeaders.filter((h) => h.y <= anchor.y).sort((a, b) => b.y - a.y)[0]
     const date = applicableHeader?.date
@@ -185,7 +206,7 @@ export function parseAppTransactionList(items: TextItem[]): { transactions: Pars
     const parsedAmount = parseSignedAmount(combinedText)
 
     if (!date || !parsedAmount) {
-      skipped.push(blockTexts.join(' | ') || merged[anchor.index].text)
+      skippedTexts.push(blockTexts.join(' | ') || anchorText)
       continue
     }
 
@@ -198,15 +219,39 @@ export function parseAppTransactionList(items: TextItem[]): { transactions: Pars
       .trim()
     if (!note) note = 'Transaction'
 
+    drafts.push({ amount: parsedAmount.amount, note, date, textIsExpense: parsedAmount.isExpense, balanceAfter: parseBalance(anchorText) })
+  }
+
+  // Second pass: rows sort newest-first (matching how the screen reads
+  // top to bottom), so each row's "before" balance is the NEXT row's
+  // balanceAfter — comparing them gives a direction that doesn't depend
+  // on a sign character being present in the text at all, fixing the
+  // common case where income shows in green with no "+", which OCR has
+  // no way to read as a sign since it's color, not text.
+  for (let i = 0; i < drafts.length; i++) {
+    const draft = drafts[i]
+    const balanceBefore = drafts[i + 1]?.balanceAfter ?? null
+    let isExpense = draft.textIsExpense
+    if (draft.balanceAfter !== null && balanceBefore !== null) {
+      const delta = draft.balanceAfter - balanceBefore
+      // Only trust the delta if it's actually consistent with the parsed
+      // amount (within a cent) — otherwise something else changed the
+      // balance between these two rows (a skipped/unparsed transaction
+      // in between) and the naive text-based sign is safer to keep.
+      if (Math.abs(Math.abs(delta) - draft.amount) < 0.01) {
+        isExpense = delta < 0
+      }
+    }
     transactions.push({
       id: uuid(),
-      amount: parsedAmount.amount,
-      note,
-      date: date.toISOString(),
-      isExpense: parsedAmount.isExpense,
-      suggestedCategoryId: suggestCategoryId(note)
+      amount: draft.amount,
+      note: draft.note,
+      date: draft.date.toISOString(),
+      isExpense,
+      suggestedCategoryId: suggestCategoryId(draft.note)
     })
   }
+  skipped.push(...skippedTexts)
 
   return { transactions, skipped }
 }
