@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount } from '../calculations'
+import { formatCurrency, netAmount, totalReimbursed } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import TransactionEditor from '../components/TransactionEditor'
 import SwipeableRow from '../components/SwipeableRow'
@@ -134,6 +134,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
             {group.transactions.map((t, i) => {
               const category = t.categoryId ? categoryById.get(t.categoryId) : undefined
               const amount = netAmount(t, transactions)
+              const reimbursed = t.isExpense ? totalReimbursed(t, transactions) : 0
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
                   <button
@@ -149,7 +150,10 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                     </div>
                     <div className="tx-info">
                       <span className="tx-note">{t.note || category?.name || 'Uncategorized'}</span>
-                      <span className="tx-category">{category?.name ?? 'Uncategorized'}</span>
+                      <span className="tx-category">
+                        {category?.name ?? 'Uncategorized'}
+                        {reimbursed > 0 && ` · ${formatCurrency(t.amount)} − ${formatCurrency(reimbursed)} reimbursed`}
+                      </span>
                     </div>
                     <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
                       {t.isExpense ? '-' : '+'}{formatCurrency(amount)}
