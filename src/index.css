@@ -27,6 +27,10 @@
   color-scheme: dark;
 }
 
+body:has(.modal-backdrop) {
+  overflow: hidden;
+}
+
 * { box-sizing: border-box; }
 
 html, body, #root {
@@ -302,6 +306,7 @@ input, select {
   display: flex;
   align-items: flex-end;
   z-index: 50;
+  overscroll-behavior: contain;
 }
 .modal-sheet {
   background: rgba(28, 28, 30, 0.88);
@@ -334,6 +339,7 @@ input, select {
   padding: 16px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   flex: 1;
   min-height: 0;
   display: flex;

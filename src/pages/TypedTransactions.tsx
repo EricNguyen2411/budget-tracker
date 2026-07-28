@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, totalExcessReimbursement } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, totalExcessReimbursement } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -94,7 +94,7 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
               <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
               <div className="tx-info">
                 <span className="tx-note">{t.note || cat?.name || 'Uncategorized'}</span>
-                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}</span>
+                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{reimbursementNote(t, transactions) && ` · ${reimbursementNote(t, transactions)}`}</span>
               </div>
               <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
                 {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}

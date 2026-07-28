@@ -251,6 +251,13 @@ export function topMerchantsThisMonth(transactions: Transaction[], categories: C
     .slice(0, limit)
 }
 
+export function reimbursementNote(transaction: Transaction, all: Transaction[]): string | null {
+  if (!transaction.isExpense) return null
+  const reimbursed = totalReimbursed(transaction, all)
+  if (reimbursed <= 0) return null
+  return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed`
+}
+
 export function isGoal(category: Category): boolean {
   return category.isSavingsCategory && category.goalTargetAmount > 0
 }

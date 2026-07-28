@@ -129,6 +129,11 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
           <span className="modal-title">{category ? 'Edit Category' : 'New Category'}</span>
           <button onClick={handleSave} className="text-button text-button-primary">Save</button>
         </div>
+        {category && (
+          <button onClick={handleDelete} style={{ color: 'var(--red)', fontSize: 13, textAlign: 'center', padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
+            Delete Category
+          </button>
+        )}
         <div className="modal-body">
           <label className="field-label">Name</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
@@ -182,9 +187,6 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
             </>
           )}
 
-          {category && (
-            <button className="danger-button" onClick={handleDelete}>Delete Category</button>
-          )}
         </div>
       </div>
     </div>

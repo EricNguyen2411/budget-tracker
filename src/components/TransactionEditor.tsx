@@ -85,7 +85,19 @@ export default function TransactionEditor({ transaction, categories, allTransact
           />
 
           <label className="field-label">Note</label>
-          <input type="text" placeholder="e.g. Coles, Netflix" value={note} onChange={(e) => setNote(e.target.value)} />
+          <input type="text" placeholder="e.g. Coles, Netflix" value={note} onChange={(e) => setNote(e.target.value)} list="note-suggestions" />
+          <datalist id="note-suggestions">
+            {(() => {
+              const seen = new Set<string>()
+              const recent: string[] = []
+              for (const t of [...allTransactions].sort((a, b) => b.date.localeCompare(a.date))) {
+                const n = t.note.trim()
+                if (n && !seen.has(n)) { seen.add(n); recent.push(n) }
+                if (recent.length >= 20) break
+              }
+              return recent.map((n) => <option key={n} value={n} />)
+            })()}
+          </datalist>
 
           <label className="field-label">Date</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -125,6 +137,28 @@ export default function TransactionEditor({ transaction, categories, allTransact
               <button onClick={() => setShowCategoryPicker(false)} className="text-button text-button-primary">Done</button>
             </div>
             <div className="modal-body">
+              {(() => {
+                const recentIds: string[] = []
+                for (const t of [...allTransactions].sort((a, b) => b.date.localeCompare(a.date))) {
+                  if (t.categoryId && !recentIds.includes(t.categoryId) && t.categoryId !== categoryId) recentIds.push(t.categoryId)
+                  if (recentIds.length >= 6) break
+                }
+                const recentCategories = recentIds.map((id) => categories.find((c) => c.id === id)).filter((c): c is Category => !!c)
+                if (recentCategories.length === 0) return null
+                return (
+                  <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 2 }}>
+                    {recentCategories.map((c) => (
+                      <button
+                        key={c.id}
+                        onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}
+                        style={{ whiteSpace: 'nowrap', fontSize: 13, padding: '6px 14px', borderRadius: 16, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 5 }}
+                      >
+                        <span>{c.icon}</span><span>{c.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
               <button className="picker-row" onClick={() => { setCategoryId(null); setShowCategoryPicker(false) }}>
                 <span>None</span>
               </button>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, totalExcessReimbursement, localDateInputValue } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, totalExcessReimbursement, localDateInputValue } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
 
@@ -147,7 +147,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
           <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
             <div className="tx-info">
               <span className="tx-note">{t.note || 'Uncategorized'}</span>
-              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}</span>
+              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{reimbursementNote(t, transactions) && ` · ${reimbursementNote(t, transactions)}`}</span>
             </div>
             <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
               {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
