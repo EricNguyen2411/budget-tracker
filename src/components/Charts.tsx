@@ -86,6 +86,7 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(axisMax * f))
 
   const selected = selectedIndex !== null ? data[selectedIndex] : null
+  const axisColumnWidth = 36
 
   return (
     <div>
@@ -96,7 +97,7 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
         </div>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: Math.max(2, 6 - data.length / 5), borderRight: '1px solid var(--border)' }}>
+        <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: Math.max(2, 6 - data.length / 5), borderRight: '1px solid var(--border)' }}>
           {gridLines.map((_, i) => (
             <div key={i} style={{ position: 'absolute', left: 0, right: 0, bottom: `${(i / (gridLines.length - 1)) * 100}%`, borderTop: '1px dashed var(--border)' }} />
           ))}
@@ -127,11 +128,11 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
             )
           })}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontSize: 10, color: 'var(--text-faint)', textAlign: 'left' }}>
+        <div style={{ width: axisColumnWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontSize: 10, color: 'var(--text-faint)', textAlign: 'left' }}>
           {[...gridLines].reverse().map((v, i) => <span key={i}>{v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}</span>)}
         </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6, paddingRight: 26 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6, paddingRight: axisColumnWidth + 8 }}>
         {data.map((d, i) => <span key={i} style={{ opacity: selectedIndex === i ? 1 : 0.7, fontWeight: selectedIndex === i ? 600 : 400 }}>{d.axisLabel}</span>)}
       </div>
     </div>
