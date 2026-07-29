@@ -22,6 +22,7 @@ interface Props {
 export default function PeriodDetail({ title, start, end, categories, transactions, onBack, onSave, onDelete }: Props) {
   useSwipeBack(onBack)
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
 
   const periodTransactions = useMemo(() => {
@@ -42,7 +43,9 @@ export default function PeriodDetail({ title, start, end, categories, transactio
   }, [periodTransactions, categories])
 
   const filtered = categoryFilter ? periodTransactions.filter((t) => t.categoryId === categoryFilter) : periodTransactions
-  const sorted = [...filtered].sort((a, b) => b.date.localeCompare(a.date))
+  const sorted = [...filtered].sort((a, b) =>
+    sort === 'recent' ? b.date.localeCompare(a.date) : netAmount(b, transactions) - netAmount(a, transactions)
+  )
   const catById = new Map(categories.map((c) => [c.id, c]))
 
   return (
@@ -85,6 +88,11 @@ export default function PeriodDetail({ title, start, end, categories, transactio
           ))}
         </div>
       )}
+
+      <div className="segmented" style={{ marginBottom: 16 }}>
+        <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
+        <button className={sort === 'price' ? 'segmented-active' : ''} onClick={() => setSort('price')}>Highest Price</button>
+      </div>
 
       {sorted.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', marginTop: 20 }}>Nothing here.</p>}
 
