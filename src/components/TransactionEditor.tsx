@@ -34,6 +34,16 @@ export default function TransactionEditor({ transaction, categories, allTransact
     if (suggested) setCategoryId(suggested)
   }, [note])
 
+  // A reimbursement should always carry the same category as the
+  // expense it's repaying — that's what makes "how much did Groceries
+  // actually cost me" come out right. This runs whenever the link
+  // changes, not just once, so re-linking to a different expense keeps
+  // the category in sync rather than leaving a stale one behind.
+  useEffect(() => {
+    if (isExpense || !reimbursedExpense) return
+    if (reimbursedExpense.categoryId) setCategoryId(reimbursedExpense.categoryId)
+  }, [reimbursesId])
+
   function handleSave() {
     const parsed = parseFloat(amount)
     if (isNaN(parsed) || parsed <= 0) return

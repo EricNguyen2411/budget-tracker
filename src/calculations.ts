@@ -251,6 +251,34 @@ export function topMerchantsThisMonth(transactions: Transaction[], categories: C
     .slice(0, limit)
 }
 
+export function repaysNote(transaction: Transaction, all: Transaction[]): string | null {
+  if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
+  const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
+  if (!expense) return null
+  return `repays ${expense.note || 'transaction'}`
+}
+
+export function excessIncomeNote(transaction: Transaction, all: Transaction[]): string | null {
+  if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
+  const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
+  if (!expense) return null
+
+  // Allocated in order (earliest reimbursement first), so with several
+  // people chipping in, only the actual overflow past what the expense
+  // cost counts as this transaction's excess — not an even split.
+  const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
+  let remaining = expense.amount
+  for (const r of reimbursements) {
+    const applied = Math.min(r.amount, Math.max(0, remaining))
+    const excess = r.amount - applied
+    remaining -= applied
+    if (r.id === transaction.id) {
+      return excess > 0 ? `${formatCurrency(excess)} extra, counted as income` : null
+    }
+  }
+  return null
+}
+
 export function reimbursementNote(transaction: Transaction, all: Transaction[]): string | null {
   if (!transaction.isExpense) return null
   const reimbursed = totalReimbursed(transaction, all)

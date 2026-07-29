@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, reimbursementNote } from '../calculations'
+import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, reimbursementNote, repaysNote } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -112,14 +112,18 @@ export default function CategoryDetail({ category, allCategories, transactions, 
           <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
             <div className="tx-info">
               <span className="tx-note">{t.note || 'Uncategorized'}</span>
-              <span className="tx-category">
-                {new Date(t.date).toLocaleDateString('en-AU')}
-                {reimbursementNote(t, transactions) && ` · ${reimbursementNote(t, transactions)}`}
+              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions) && ` · ${repaysNote(t, transactions)}`}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+              {reimbursementNote(t, transactions) && (
+                <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
+                  {formatCurrency(t.amount)}
+                </span>
+              )}
+              <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+                {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
               </span>
             </div>
-            <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-              {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
-            </span>
           </button>
         ))}
       </div>

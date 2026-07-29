@@ -57,11 +57,12 @@ export interface BarDatum {
  * which show gridline numbers and let you tap a bar to see that
  * specific day/month's figure rather than just an unlabeled shape.
  */
-export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', negativeColor = 'var(--red)' }: {
+export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', negativeColor = 'var(--red)', preferredStep }: {
   data: BarDatum[]
   height?: number
   positiveColor?: string
   negativeColor?: string
+  preferredStep?: number
 }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   if (data.length === 0) return null
@@ -70,9 +71,13 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
   const hasNegative = data.some((d) => d.value < 0)
   const zeroLine = hasNegative ? height / 2 : height
 
-  // Round the axis max up to a "nice" number (nearest 10/50/100/500/1000
-  // depending on scale) so gridline labels read like "600" not "583.20".
+  // With a preferred step (e.g. 200 for a daily chart, 2000 for a
+  // monthly one), the axis extends in round multiples of it — matching
+  // the native app's gridlines (0/200/400/600) instead of scaling to
+  // whatever the data happens to be. Falls back to automatic "nice"
+  // rounding if no step is given.
   function niceMax(n: number): number {
+    if (preferredStep) return Math.ceil(n / preferredStep) * preferredStep
     const magnitude = Math.pow(10, Math.floor(Math.log10(Math.max(1, n))))
     const step = magnitude / 2
     return Math.ceil(n / step) * step
@@ -91,10 +96,7 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
         </div>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontSize: 10, color: 'var(--text-faint)', textAlign: 'right' }}>
-          {[...gridLines].reverse().map((v, i) => <span key={i}>{v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}</span>)}
-        </div>
-        <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: Math.max(2, 6 - data.length / 5), borderLeft: '1px solid var(--border)' }}>
+        <div style={{ flex: 1, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: Math.max(2, 6 - data.length / 5), borderRight: '1px solid var(--border)' }}>
           {gridLines.map((_, i) => (
             <div key={i} style={{ position: 'absolute', left: 0, right: 0, bottom: `${(i / (gridLines.length - 1)) * 100}%`, borderTop: '1px dashed var(--border)' }} />
           ))}
@@ -125,8 +127,11 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
             )
           })}
         </div>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontSize: 10, color: 'var(--text-faint)', textAlign: 'left' }}>
+          {[...gridLines].reverse().map((v, i) => <span key={i}>{v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}</span>)}
+        </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6, paddingLeft: 26 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6, paddingRight: 26 }}>
         {data.map((d, i) => <span key={i} style={{ opacity: selectedIndex === i ? 1 : 0.7, fontWeight: selectedIndex === i ? 600 : 400 }}>{d.axisLabel}</span>)}
       </div>
     </div>

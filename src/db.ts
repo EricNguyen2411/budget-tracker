@@ -356,6 +356,36 @@ export function daysSinceLastManualBackup(): number | null {
   return Math.floor((Date.now() - new Date(last).getTime()) / (1000 * 60 * 60 * 24))
 }
 
+const REIMBURSEMENT_CATEGORY_SYNC_KEY = 'budget-tracker-reimbursement-category-sync-done'
+
+/** One-time fix: every existing reimbursement transaction gets its
+ * category updated to match the expense it repays — matching the rule
+ * new reimbursements follow automatically going forward. Runs once
+ * (tracked via localStorage) rather than every launch, so it doesn't
+ * keep re-overwriting a category you might deliberately change later. */
+export async function syncReimbursementCategoriesOnce(): Promise<number> {
+  if (localStorage.getItem(REIMBURSEMENT_CATEGORY_SYNC_KEY)) return 0
+
+  const db = await getDB()
+  const all = await db.getAll('transactions')
+  const byId = new Map(all.map((t) => [t.id, t]))
+  let updated = 0
+
+  const tx = db.transaction('transactions', 'readwrite')
+  for (const t of all) {
+    if (t.isExpense || !t.reimbursesExpenseId) continue
+    const expense = byId.get(t.reimbursesExpenseId)
+    if (!expense || !expense.categoryId) continue
+    if (t.categoryId === expense.categoryId) continue
+    await tx.store.put({ ...t, categoryId: expense.categoryId })
+    updated++
+  }
+  await tx.done
+
+  localStorage.setItem(REIMBURSEMENT_CATEGORY_SYNC_KEY, 'true')
+  return updated
+}
+
 export function exportCSV(transactions: Transaction[], categories: Category[]): string {
   const catById = new Map(categories.map((c) => [c.id, c.name]))
   const header = 'Date,Note,Category,Type,Amount\n'

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
 import {
   ensureDefaultCategories, getCategories, getTransactions, createTransaction, saveTransaction, deleteTransaction,
-  getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded
+  getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce
 } from './db'
 import { processDueRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
@@ -56,6 +56,7 @@ export default function App() {
   useEffect(() => {
     async function init() {
       await ensureDefaultCategories()
+      await syncReimbursementCategoriesOnce()
       const rec = await getRecurring()
       const { newTransactions, updatedRecurring } = processDueRecurring(rec)
       for (const t of newTransactions) await createTransaction(t)

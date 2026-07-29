@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import TransactionEditor from '../components/TransactionEditor'
 import SwipeableRow from '../components/SwipeableRow'
@@ -135,6 +135,8 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               const category = t.categoryId ? categoryById.get(t.categoryId) : undefined
               const amount = netAmount(t, transactions)
               const reimbursedNote = reimbursementNote(t, transactions)
+              const excessNote = excessIncomeNote(t, transactions)
+              const repayNote = repaysNote(t, transactions)
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
                   <button
@@ -152,12 +154,20 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                       <span className="tx-note">{t.note || category?.name || 'Uncategorized'}</span>
                       <span className="tx-category">
                         {category?.name ?? 'Uncategorized'}
-                        {reimbursedNote && ` · ${reimbursedNote}`}
+                        {repayNote && ` · ${repayNote}`}
+                        {excessNote && ` · ${excessNote}`}
                       </span>
                     </div>
-                    <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-                      {t.isExpense ? '-' : '+'}{formatCurrency(amount)}
-                    </span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+                      {reimbursedNote && (
+                        <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
+                          {formatCurrency(t.amount)}
+                        </span>
+                      )}
+                      <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+                        {t.isExpense ? '-' : '+'}{formatCurrency(amount)}
+                      </span>
+                    </div>
                   </button>
                 </SwipeableRow>
               )

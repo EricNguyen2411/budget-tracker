@@ -201,7 +201,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
                 value: d.amount,
                 onSelect: () => onOpenDateRange(d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }), localDateInputValue(d.date), localDateInputValue(d.date))
-              }))} height={100} />
+              }))} height={100} preferredStep={200} />
             </div>
           ),
 
@@ -216,7 +216,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                   value: d.amount,
                   onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
                 }
-              })} height={100} />
+              })} height={100} preferredStep={2000} />
             </div>
           ),
 
@@ -231,7 +231,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                   value: d.amount,
                   onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
                 }
-              })} height={100} />
+              })} height={100} preferredStep={2000} />
             </div>
           ),
 
