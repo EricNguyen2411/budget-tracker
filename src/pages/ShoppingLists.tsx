@@ -70,6 +70,7 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
   useSwipeBack(onBack)
   const [itemName, setItemName] = useState('')
   const [itemPrice, setItemPrice] = useState('')
+  const [editingItem, setEditingItem] = useState<ShoppingListItem | null>(null)
   const category = categories.find((c) => c.id === list.categoryId)
 
   const runningTotal = list.items.filter((i) => i.isChecked).reduce((s, i) => s + i.estimatedPrice * i.quantity, 0)
@@ -95,6 +96,11 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
 
   async function toggleItem(id: string) {
     await saveShoppingList({ ...list, items: list.items.map((i) => i.id === id ? { ...i, isChecked: !i.isChecked } : i) })
+    onChanged()
+  }
+
+  async function updateItem(id: string, name: string, price: number) {
+    await saveShoppingList({ ...list, items: list.items.map((i) => i.id === id ? { ...i, name, estimatedPrice: price } : i) })
     onChanged()
   }
 
@@ -150,9 +156,9 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
         {list.items.map((item, i) => (
           <div key={item.id} className="transaction-row" style={{ borderBottom: i < list.items.length - 1 ? '1px solid var(--border)' : 'none' }}>
             <input type="checkbox" checked={item.isChecked} onChange={() => toggleItem(item.id)} style={{ width: 18, height: 18 }} />
-            <div className="tx-info">
+            <button className="tx-info" style={{ textAlign: 'left' }} onClick={() => setEditingItem(item)}>
               <span className="tx-note" style={{ textDecoration: item.isChecked ? 'line-through' : 'none', opacity: item.isChecked ? 0.5 : 1 }}>{item.name}</span>
-            </div>
+            </button>
             <span className="amount">{formatCurrency(item.estimatedPrice)}</span>
             <button onClick={() => removeItem(item.id)} style={{ color: 'var(--text-faint)', marginLeft: 8 }}>✕</button>
           </div>
@@ -168,6 +174,39 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
       <button className="list-button" style={{ width: '100%', textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 10, padding: 12, fontWeight: 600 }} onClick={completeTrip}>
         Complete Trip → Log {formatCurrency(runningTotal)}
       </button>
+
+      {editingItem && (
+        <ItemEditor item={editingItem} onSave={updateItem} onClose={() => setEditingItem(null)} />
+      )}
+    </div>
+  )
+}
+
+function ItemEditor({ item, onSave, onClose }: { item: ShoppingListItem; onSave: (id: string, name: string, price: number) => void; onClose: () => void }) {
+  const [name, setName] = useState(item.name)
+  const [price, setPrice] = useState(String(item.estimatedPrice))
+
+  function handleSave() {
+    if (!name.trim()) return
+    onSave(item.id, name.trim(), parseFloat(price) || 0)
+    onClose()
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={onClose} className="text-button">Cancel</button>
+          <span className="modal-title">Edit Item</span>
+          <button onClick={handleSave} className="text-button text-button-primary">Save</button>
+        </div>
+        <div className="modal-body">
+          <label className="field-label">Name</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="field-label">Price</label>
+          <input type="number" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
+        </div>
+      </div>
     </div>
   )
 }

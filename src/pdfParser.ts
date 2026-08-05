@@ -76,41 +76,114 @@ export async function parsePdfStatement(file: File): Promise<{ transactions: Par
       .map((it) => ({ text: it.str.trim(), x: it.transform[4], y: it.transform[5] }))
 
     const rows = groupIntoRows(items)
+    const rowTexts = rows.map((row) => row.map((r) => r.text).join(' '))
 
-    for (const row of rows) {
-      const rowText = row.map((r) => r.text).join(' ')
-      const date = parseRowDate(rowText)
-      if (!date) continue // not every row is a transaction — headers, page numbers, etc.
+    // Confirmed via testing against a real Westpac statement: each
+    // transaction wraps across multiple physical lines — the date and
+    // description start it, but the amount and running balance land on
+    // a continuation line below with no date of its own. Treating each
+    // physical line as an independent row (the original approach) meant
+    // no single row ever had both a date AND an amount together, so
+    // every transaction failed to parse. Instead, a row starting with a
+    // date opens a new transaction block, and every following row
+    // WITHOUT its own date gets folded into it, until the next
+    // date-starting row begins the next one.
+    let currentBlock: string[] | null = null
+    const blocks: string[] = []
 
-      const amountMatches = [...rowText.matchAll(new RegExp(AMOUNT_PATTERN, 'gi'))]
+    for (const rowText of rowTexts) {
+      const startsWithDate = new RegExp(`^\\s*(${DATE_PATTERN.source})`, 'i').test(rowText)
+      if (startsWithDate) {
+        if (currentBlock) blocks.push(currentBlock.join(' '))
+        currentBlock = [rowText]
+      } else if (currentBlock) {
+        currentBlock.push(rowText)
+      }
+      // rows before any date-starting row (report header, account info)
+      // are simply never captured into a block — correctly ignored.
+    }
+    if (currentBlock) blocks.push(currentBlock.join(' '))
+
+    interface Draft { amount: number; note: string; date: Date; textIsExpense: boolean; balance: number | null; balanceIsDr: boolean }
+    const drafts: Draft[] = []
+
+    for (const blockText of blocks) {
+      const date = parseRowDate(blockText)
+      if (!date) continue
+
+      const amountMatches = [...blockText.matchAll(new RegExp(AMOUNT_PATTERN, 'gi'))]
       if (amountMatches.length === 0) {
-        skipped.push(rowText)
+        skipped.push(blockText)
         continue
       }
-      // Take the last amount on the row — statements commonly show a
-      // running balance after the transaction amount, and the actual
-      // transaction figure comes first, but description text sometimes
-      // contains reference numbers that coincidentally look like
-      // amounts earlier in the row, so last-genuine-amount-match is more
-      // reliable than first.
-      const lastMatch = amountMatches[amountMatches.length - 1]
-      const amount = parseFloat(lastMatch[2].replace(/,/g, ''))
-      const isExpense = lastMatch[1] === '-' || lastMatch[3]?.toUpperCase() !== 'CR'
+      // With two or more matches, the last is almost always a running
+      // balance and the second-to-last the actual transaction amount —
+      // with only one match, that single figure IS the transaction
+      // amount (no balance column present).
+      const amountMatch = amountMatches.length >= 2 ? amountMatches[amountMatches.length - 2] : amountMatches[0]
+      const balanceMatch = amountMatches.length >= 2 ? amountMatches[amountMatches.length - 1] : null
+      const amount = parseFloat(amountMatch[2].replace(/,/g, ''))
+      const balance = balanceMatch ? parseFloat(balanceMatch[2].replace(/,/g, '')) : null
+      // Confirmed on a real NAB statement: the DR/CR marker sits on the
+      // BALANCE, not the transaction amount itself — checking only the
+      // amount's own suffix (as the Westpac-only version of this did)
+      // misses it entirely there.
+      const balanceIsDr = balanceMatch?.[3]?.toUpperCase() === 'DR'
+      // Text-based sign as a fallback only — many statements (confirmed
+      // on a real one) show deposits as a bare positive number with no
+      // "+" and no "CR"/"DR" marker on the amount at all, which would
+      // otherwise default to being read as an expense.
+      const textIsExpense = amountMatch[1] === '-' || amountMatch[3]?.toUpperCase() === 'DR'
 
-      let note = rowText
-        .replace(DATE_PATTERN, ' ')
+      let note = blockText
+        .replace(new RegExp(DATE_PATTERN.source, 'gi'), ' ')
         .replace(new RegExp(AMOUNT_PATTERN, 'gi'), ' ')
+        .replace(/\\/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
       if (!note) note = 'Transaction'
 
+      drafts.push({ amount, note, date, textIsExpense, balance, balanceIsDr })
+    }
+
+    // Confirmed different banks order their statements differently —
+    // Westpac newest-first, NAB oldest-first. Detect which by comparing
+    // the first and last parsed dates, rather than assuming one
+    // direction and silently getting every sign backwards on the other.
+    const oldestFirst = drafts.length >= 2 && drafts[0].date.getTime() <= drafts[drafts.length - 1].date.getTime()
+
+    // Confirmed different account types use opposite balance
+    // conventions: a regular bank account's balance goes DOWN when you
+    // spend, but a DR-denominated account (a credit card, where DR means
+    // "amount owed") goes UP when you spend — the same delta sign means
+    // opposite things depending on which this is.
+    const isDrAccount = drafts.some((d) => d.balanceIsDr)
+
+    for (let i = 0; i < drafts.length; i++) {
+      const draft = drafts[i]
+      const priorIndex = oldestFirst ? i - 1 : i + 1
+      const balanceBefore = drafts[priorIndex]?.balance ?? null
+      let isExpense = draft.textIsExpense
+      if (draft.balance !== null && balanceBefore !== null) {
+        const delta = draft.balance - balanceBefore
+        if (Math.abs(Math.abs(delta) - draft.amount) < 0.01) {
+          isExpense = isDrAccount ? delta > 0 : delta < 0
+        }
+      } else if (isDrAccount) {
+        // No neighbor to compare against (the very first or last row in
+        // the list) — a DR-denominated account is overwhelmingly
+        // expenses (a credit card statement), so that's a far safer
+        // default here than the unreliable text-based sign, which
+        // regularly finds no marker at all on either side.
+        isExpense = true
+      }
       transactions.push({
         id: uuid(),
-        amount,
-        note,
-        date: date.toISOString(),
+        amount: draft.amount,
+        note: draft.note,
+        date: draft.date.toISOString(),
         isExpense,
-        suggestedCategoryId: suggestCategoryId(note)
+        suggestedCategoryId: suggestCategoryId(draft.note)
       })
     }
   }

@@ -14,6 +14,18 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
   useSwipeBack(onBack)
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null)
 
+  const topLevel = categories.filter((c) => !c.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
+
+  async function move(category: Category, direction: 'up' | 'down') {
+    const index = topLevel.findIndex((c) => c.id === category.id)
+    const swapWith = direction === 'up' ? index - 1 : index + 1
+    if (swapWith < 0 || swapWith >= topLevel.length) return
+    const other = topLevel[swapWith]
+    await saveCategory({ ...category, sortOrder: other.sortOrder })
+    await saveCategory({ ...other, sortOrder: category.sortOrder })
+    onChanged()
+  }
+
   return (
     <div className="screen">
       <div className="screen-header-row">
@@ -23,18 +35,24 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {categories.filter((c) => !c.parentId).map((c) => {
+        {topLevel.map((c, i) => {
           const subs = categories.filter((s) => s.parentId === c.id)
           return (
             <div key={c.id}>
-              <button className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => setEditingCategory(c)}>
-                <div className="tx-icon" style={{ background: c.color + '33' }}>{c.icon}</div>
-                <div className="tx-info">
-                  <span className="tx-note">{c.name}</span>
-                  {c.isSavingsCategory && <span className="tx-category">Savings</span>}
+              <div className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <button onClick={() => move(c, 'up')} disabled={i === 0} style={{ color: i === 0 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1 }}>▲</button>
+                  <button onClick={() => move(c, 'down')} disabled={i === topLevel.length - 1} style={{ color: i === topLevel.length - 1 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1 }}>▼</button>
                 </div>
-                <span className="chevron">›</span>
-              </button>
+                <button className="transaction-row" style={{ padding: 0, flex: 1 }} onClick={() => setEditingCategory(c)}>
+                  <div className="tx-icon" style={{ background: c.color + '33' }}>{c.icon}</div>
+                  <div className="tx-info">
+                    <span className="tx-note">{c.name}</span>
+                    {c.isSavingsCategory && <span className="tx-category">Savings</span>}
+                  </div>
+                  <span className="chevron">›</span>
+                </button>
+              </div>
               {subs.map((s) => (
                 <button key={s.id} className="transaction-row" style={{ borderBottom: '1px solid var(--border)', paddingLeft: 34 }} onClick={() => setEditingCategory(s)}>
                   <div className="tx-icon" style={{ background: s.color + '33', width: 30, height: 30 }}>{s.icon}</div>

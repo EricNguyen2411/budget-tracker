@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import type { Category, RecurringTransaction, Transaction } from '../types'
+import type { Category, RecurringTransaction, RecurrenceFrequency, Transaction } from '../types'
 import { detectRecurring, frequencyLabel } from '../recurring'
-import { formatCurrency } from '../calculations'
+import { formatCurrency, localDateInputValue } from '../calculations'
 import { getSettings, updateSettings } from '../budgetPeriod'
 import { createRecurring, saveRecurring, deleteRecurring } from '../db'
 
@@ -14,6 +14,7 @@ interface Props {
 
 export default function RecurringPage({ categories, transactions, recurring, onChanged }: Props) {
   const [dismissed, setDismissed] = useState(getSettings().dismissedRecurringSuggestions)
+  const [editingItem, setEditingItem] = useState<RecurringTransaction | null>(null)
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
   const suggestions = useMemo(
@@ -86,18 +87,119 @@ export default function RecurringPage({ categories, transactions, recurring, onC
         return (
           <div className="card" key={item.id} style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
             <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '🔁'}</div>
-            <div style={{ flex: 1 }}>
+            <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setEditingItem(item)}>
               <div style={{ fontSize: 14 }}>{item.note}</div>
               <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
                 {frequencyLabel(item.frequency)} · next {new Date(item.nextDueDate).toLocaleDateString('en-AU')}
               </div>
-            </div>
+            </button>
             <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(item.amount)}</span>
             <input type="checkbox" checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
             <button onClick={() => remove(item.id)} style={{ color: 'var(--red)', fontSize: 12 }}>Delete</button>
           </div>
         )
       })}
+
+      {editingItem && (
+        <RecurringEditor
+          item={editingItem}
+          categories={categories}
+          onSave={async (data) => { await saveRecurring({ ...editingItem, ...data }); onChanged() }}
+          onClose={() => setEditingItem(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function RecurringEditor({ item, categories, onSave, onClose }: {
+  item: RecurringTransaction
+  categories: Category[]
+  onSave: (data: Partial<RecurringTransaction>) => void
+  onClose: () => void
+}) {
+  const [note, setNote] = useState(item.note)
+  const [amount, setAmount] = useState(String(item.amount))
+  const [frequency, setFrequency] = useState<RecurrenceFrequency>(item.frequency)
+  const [nextDueDate, setNextDueDate] = useState(localDateInputValue(new Date(item.nextDueDate)))
+  const [categoryId, setCategoryId] = useState<string | null>(item.categoryId)
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false)
+  const category = categories.find((c) => c.id === categoryId)
+
+  function handleSave() {
+    const parsed = parseFloat(amount)
+    if (isNaN(parsed) || parsed <= 0 || !note.trim()) return
+    const [y, m, d] = nextDueDate.split('-').map(Number)
+    onSave({
+      note: note.trim(),
+      amount: parsed,
+      frequency,
+      nextDueDate: new Date(y, m - 1, d).toISOString(),
+      categoryId
+    })
+    onClose()
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={onClose} className="text-button">Cancel</button>
+          <span className="modal-title">Edit Recurring</span>
+          <button onClick={handleSave} className="text-button text-button-primary">Save</button>
+        </div>
+        <div className="modal-body">
+          <label className="field-label">Note</label>
+          <input type="text" value={note} onChange={(e) => setNote(e.target.value)} />
+
+          <label className="field-label">Amount</label>
+          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+
+          <label className="field-label">Frequency</label>
+          <select value={frequency} onChange={(e) => setFrequency(e.target.value as RecurrenceFrequency)}>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+
+          <label className="field-label">Next Due Date</label>
+          <input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} />
+
+          <label className="field-label">Category</label>
+          <button className="picker-row" onClick={() => setShowCategoryPicker(true)}>
+            <span>{category ? `${category.icon} ${category.name}` : 'None'}</span>
+            <span className="chevron">›</span>
+          </button>
+        </div>
+      </div>
+
+      {showCategoryPicker && (
+        <div className="modal-backdrop" onClick={() => setShowCategoryPicker(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Category</span>
+              <button onClick={() => setShowCategoryPicker(false)} className="text-button text-button-primary">Done</button>
+            </div>
+            <div className="modal-body">
+              <button className="picker-row" onClick={() => { setCategoryId(null); setShowCategoryPicker(false) }}>
+                <span>None</span>
+              </button>
+              {categories.filter((c) => !c.parentId).map((c) => (
+                <div key={c.id}>
+                  <button className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
+                    <span>{c.icon} {c.name}</span>
+                  </button>
+                  {categories.filter((s) => s.parentId === c.id).map((s) => (
+                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => { setCategoryId(s.id); setShowCategoryPicker(false) }}>
+                      <span>{s.icon} {s.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
