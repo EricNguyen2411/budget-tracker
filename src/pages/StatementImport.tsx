@@ -75,8 +75,9 @@ export default function StatementImport({ categories, existingTransactions, onBa
       setSkippedRows(skipped)
       setFormatsSeen(new Set())
       setIncluded(new Set(transactions.filter((r) => matchingExisting(r).length === 0).map((r) => r.id)))
-    } catch {
-      setSkippedRows(['(Could not read that PDF)'])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setSkippedRows([`Couldn't read that PDF — error: ${message}`])
     }
     setStatus('done')
   }
