@@ -190,6 +190,11 @@ export default function StatementImport({ categories, existingTransactions, onBa
             <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--red)' }}>
               <span style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600 }}>{skippedRows.length} row{skippedRows.length === 1 ? '' : 's'} couldn't be read cleanly</span>
               <p className="hint" style={{ marginTop: 6 }}>Skipped rather than guessed, so nothing wrong got imported. Add these manually if needed.</p>
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {skippedRows.map((row, i) => (
+                  <p key={i} style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'monospace', margin: 0, wordBreak: 'break-word' }}>{row}</p>
+                ))}
+              </div>
             </div>
           )}
 
