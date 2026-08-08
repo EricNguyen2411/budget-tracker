@@ -23,9 +23,37 @@ function isDisjoint(a: Set<string>, b: Set<string>): boolean {
   return true
 }
 
+/** Whether two transactions look like the same real-world event —
+ * requires an exact same day, OR a shared significant name token AND
+ * being within a reasonable date window. A name match alone is NOT
+ * enough on its own: two purchases at the same cafe three months apart
+ * are legitimately different transactions, not duplicates, and treating
+ * name-match as sufficient regardless of date produced exactly that
+ * false-positive pattern. */
+interface DuplicateCandidate {
+  amount: number
+  isExpense: boolean
+  date: string
+  note: string
+}
+
+export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, windowDays = 3): boolean {
+  if (Math.abs(a.amount - b.amount) >= 0.01) return false
+  if (a.isExpense !== b.isExpense) return false
+
+  const dayDiffMs = Math.abs(new Date(a.date).getTime() - new Date(b.date).getTime())
+  const sameDay = new Date(a.date).toDateString() === new Date(b.date).toDateString()
+  if (sameDay) return true
+
+  const withinWindow = dayDiffMs <= windowDays * 24 * 60 * 60 * 1000
+  if (!withinWindow) return false
+
+  const sharesToken = !isDisjoint(significantTokens(a.note), significantTokens(b.note))
+  return sharesToken
+}
+
 export function findDuplicates(transactions: Transaction[], windowDays = 3): PotentialDuplicateGroup[] {
   const sorted = [...transactions].sort((a, b) => (a.amount !== b.amount ? a.amount - b.amount : a.date.localeCompare(b.date)))
-  const windowMs = windowDays * 24 * 60 * 60 * 1000
   const used = new Set<string>()
   const groups: { transactions: Transaction[]; hasSharedToken: boolean }[] = []
 
@@ -40,14 +68,9 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
       const candidate = sorted[j]
       if (used.has(candidate.id)) continue
       if (Math.abs(candidate.amount - anchor.amount) >= 0.01) break
-      if (candidate.isExpense !== anchor.isExpense) continue
-      if (Math.abs(new Date(candidate.date).getTime() - new Date(anchor.date).getTime()) > windowMs) continue
+      if (!isLikelyDuplicate(anchor, candidate, windowDays)) continue
 
-      const candidateTokens = significantTokens(candidate.note)
-      const sharesToken = !isDisjoint(anchorTokens, candidateTokens)
-      const sameDay = new Date(candidate.date).toDateString() === new Date(anchor.date).toDateString()
-      if (!sharesToken && !sameDay) continue
-
+      const sharesToken = !isDisjoint(anchorTokens, significantTokens(candidate.note))
       cluster.push(candidate)
       if (sharesToken) hasSharedToken = true
     }

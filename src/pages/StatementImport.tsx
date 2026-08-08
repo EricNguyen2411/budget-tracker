@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
-import { significantTokens } from '../duplicates'
+import { isLikelyDuplicate } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { createTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
@@ -28,19 +28,14 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [skippedRows, setSkippedRows] = useState<string[]>([])
   const [formatsSeen, setFormatsSeen] = useState<Set<DetectedFormat>>(new Set())
   const [included, setIncluded] = useState<Set<string>>(new Set())
+  const [sort, setSort] = useState<'recent' | 'oldest'>('recent')
   const [categoryOverrides, setCategoryOverrides] = useState<Map<string, string | null>>(new Map())
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)
 
   const [viewingDuplicateFor, setViewingDuplicateFor] = useState<ParsedTransaction | null>(null)
 
   function matchingExisting(r: ParsedTransaction): Transaction[] {
-    return existingTransactions.filter((t) => {
-      if (Math.abs(t.amount - r.amount) >= 0.01) return false
-      if (t.isExpense !== r.isExpense) return false
-      const sameDay = new Date(t.date).toDateString() === new Date(r.date).toDateString()
-      const sharesToken = [...significantTokens(r.note)].some((tok) => significantTokens(t.note).has(tok))
-      return sameDay || sharesToken
-    })
+    return existingTransactions.filter((t) => isLikelyDuplicate(t, r))
   }
 
   const duplicateIds = new Set(results.filter((r) => matchingExisting(r).length > 0).map((r) => r.id))
@@ -220,8 +215,13 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
           {results.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>No transactions found — try a clearer photo, or add these manually.</p>}
 
+          <div className="segmented" style={{ marginBottom: 12 }}>
+            <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
+            <button className={sort === 'oldest' ? 'segmented-active' : ''} onClick={() => setSort('oldest')}>Oldest</button>
+          </div>
+
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            {results.map((r, i) => {
+            {[...results].sort((a, b) => sort === 'recent' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)).map((r, i) => {
               const cat = categoryFor(r) ? catById.get(categoryFor(r)!) : undefined
               return (
                 <div key={r.id} className="transaction-row" style={{ borderBottom: i < results.length - 1 ? '1px solid var(--border)' : 'none' }}>
