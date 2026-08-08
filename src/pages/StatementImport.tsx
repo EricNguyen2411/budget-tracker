@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
-import { isLikelyDuplicate } from '../duplicates'
+import { isLikelyDuplicate, significantTokens } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { createTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
@@ -31,6 +31,8 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [sort, setSort] = useState<'recent' | 'oldest'>('recent')
   const [categoryOverrides, setCategoryOverrides] = useState<Map<string, string | null>>(new Map())
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)
+  const [similarPrompt, setSimilarPrompt] = useState<{ categoryId: string | null; matchIds: string[] } | null>(null)
+  const [hideDuplicates, setHideDuplicates] = useState(false)
 
   const [viewingDuplicateFor, setViewingDuplicateFor] = useState<ParsedTransaction | null>(null)
 
@@ -119,6 +121,39 @@ export default function StatementImport({ categories, existingTransactions, onBa
     return categoryOverrides.has(r.id) ? categoryOverrides.get(r.id)! : r.suggestedCategoryId
   }
 
+  function applyCategory(id: string, categoryId: string | null) {
+    setCategoryOverrides((m) => new Map(m).set(id, categoryId))
+    setPickingCategoryFor(null)
+
+    if (categoryId === null) return
+    const source = results.find((r) => r.id === id)
+    if (!source || /beem/i.test(source.note)) return
+    const sourceTokens = significantTokens(source.note)
+    if (sourceTokens.size === 0) return
+
+    const matches = results.filter((r) => {
+      if (r.id === id) return false
+      if (/beem/i.test(r.note)) return false
+      if (categoryFor(r) === categoryId) return false
+      const overlaps = [...significantTokens(r.note)].some((tok) => sourceTokens.has(tok))
+      return overlaps
+    })
+
+    if (matches.length > 0) {
+      setSimilarPrompt({ categoryId, matchIds: matches.map((m) => m.id) })
+    }
+  }
+
+  function confirmSimilarPrompt() {
+    if (!similarPrompt) return
+    setCategoryOverrides((m) => {
+      const next = new Map(m)
+      for (const id of similarPrompt.matchIds) next.set(id, similarPrompt.categoryId)
+      return next
+    })
+    setSimilarPrompt(null)
+  }
+
   async function handleImport() {
     const toImport = results.filter((r) => included.has(r.id))
     for (const r of toImport) {
@@ -195,7 +230,11 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
           {duplicateIds.size > 0 && (
             <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--amber)' }}>
-              <span style={{ fontSize: 13, color: 'var(--amber)', fontWeight: 600 }}>{duplicateIds.size} possible duplicate{duplicateIds.size === 1 ? '' : 's'} found and left unchecked</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 13, color: 'var(--amber)', fontWeight: 600 }}>{duplicateIds.size} possible duplicate{duplicateIds.size === 1 ? '' : 's'} found and left unchecked</span>
+                <input type="checkbox" switch checked={hideDuplicates} onChange={(e) => setHideDuplicates(e.target.checked)} />
+              </div>
+              <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Hide duplicates from this list</span>
             </div>
           )}
 
@@ -220,11 +259,15 @@ export default function StatementImport({ categories, existingTransactions, onBa
             <button className={sort === 'oldest' ? 'segmented-active' : ''} onClick={() => setSort('oldest')}>Oldest</button>
           </div>
 
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            {[...results].sort((a, b) => sort === 'recent' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date)).map((r, i) => {
-              const cat = categoryFor(r) ? catById.get(categoryFor(r)!) : undefined
-              return (
-                <div key={r.id} className="transaction-row" style={{ borderBottom: i < results.length - 1 ? '1px solid var(--border)' : 'none' }}>
+          {(() => {
+            const visible = (hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)
+              .sort((a, b) => sort === 'recent' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date))
+            return (
+              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                {visible.map((r, i) => {
+                  const cat = categoryFor(r) ? catById.get(categoryFor(r)!) : undefined
+                  return (
+                    <div key={r.id} className="transaction-row" style={{ borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none' }}>
                   <input type="checkbox" checked={included.has(r.id)} onChange={() => toggle(r.id)} style={{ width: 18, height: 18 }} />
                   <div className="tx-info">
                     <span className="tx-note">
@@ -248,7 +291,9 @@ export default function StatementImport({ categories, existingTransactions, onBa
                 </div>
               )
             })}
-          </div>
+              </div>
+            )
+          })()}
 
           <button className="list-button" style={{ marginTop: 16, color: 'var(--text-dim)', fontSize: 13 }} onClick={() => setStatus('idle')}>Scan More Photos</button>
         </>
@@ -262,16 +307,16 @@ export default function StatementImport({ categories, existingTransactions, onBa
               <button className="text-button text-button-primary" onClick={() => setPickingCategoryFor(null)}>Done</button>
             </div>
             <div className="modal-body">
-              <button className="picker-row" onClick={() => { setCategoryOverrides((m) => new Map(m).set(pickingCategoryFor, null)); setPickingCategoryFor(null) }}>
+              <button className="picker-row" onClick={() => applyCategory(pickingCategoryFor, null)}>
                 <span>None</span>
               </button>
               {categories.filter((c) => !c.parentId).map((c) => (
                 <div key={c.id}>
-                  <button className="picker-row" onClick={() => { setCategoryOverrides((m) => new Map(m).set(pickingCategoryFor, c.id)); setPickingCategoryFor(null) }}>
+                  <button className="picker-row" onClick={() => applyCategory(pickingCategoryFor, c.id)}>
                     <span>{c.icon} {c.name}</span>
                   </button>
                   {categories.filter((s) => s.parentId === c.id).map((s) => (
-                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => { setCategoryOverrides((m) => new Map(m).set(pickingCategoryFor, s.id)); setPickingCategoryFor(null) }}>
+                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => applyCategory(pickingCategoryFor, s.id)}>
                       <span>{s.icon} {s.name}</span>
                     </button>
                   ))}
@@ -302,6 +347,31 @@ export default function StatementImport({ categories, existingTransactions, onBa
           </div>
         </div>
       )}
+      {similarPrompt && (() => {
+        const cat = similarPrompt.categoryId ? catById.get(similarPrompt.categoryId) : undefined
+        const matches = results.filter((r) => similarPrompt.matchIds.includes(r.id))
+        return (
+          <div className="modal-backdrop" onClick={() => setSimilarPrompt(null)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()} style={{ padding: 20 }}>
+              <p style={{ fontSize: 14, marginBottom: 12 }}>
+                {matches.length} other transaction{matches.length === 1 ? '' : 's'} in this batch look{matches.length === 1 ? 's' : ''} similar — set {cat ? `${cat.icon} ${cat.name}` : 'the same category'} for these too?
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16, maxHeight: 240, overflowY: 'auto' }}>
+                {matches.map((m) => (
+                  <div className="card" key={m.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 13 }}>{m.note}</span>
+                    <span className="amount" style={{ fontSize: 13 }}>{m.isExpense ? '-' : '+'}{formatCurrency(m.amount)}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="list-button" style={{ flex: 1, textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not now</button>
+                <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, fontWeight: 600 }} onClick={confirmSimilarPrompt}>Apply to All</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
