@@ -328,22 +328,27 @@ export default function StatementImport({ categories, existingTransactions, onBa
       )}
       {viewingDuplicateFor && (
         <div className="modal-backdrop" onClick={() => setViewingDuplicateFor(null)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()} style={{ padding: 20 }}>
-            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>This scanned row:</p>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 14 }}>{viewingDuplicateFor.note}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(viewingDuplicateFor.date).toLocaleDateString('en-AU')}</div>
-              <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{viewingDuplicateFor.isExpense ? '-' : '+'}{formatCurrency(viewingDuplicateFor.amount)}</div>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Compare</span>
+              <button className="text-button" onClick={() => setViewingDuplicateFor(null)}>Close</button>
             </div>
-            <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>Looks similar to {matchingExisting(viewingDuplicateFor).length === 1 ? 'this existing transaction' : 'these existing transactions'}:</p>
-            {matchingExisting(viewingDuplicateFor).map((t) => (
-              <div className="card" key={t.id} style={{ marginBottom: 8 }}>
-                <div style={{ fontSize: 14 }}>{t.note || 'Uncategorized'}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(t.date).toLocaleDateString('en-AU')}</div>
-                <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{t.isExpense ? '-' : '+'}{formatCurrency(t.amount)}</div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>This scanned row:</p>
+              <div className="card" style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 14 }}>{viewingDuplicateFor.note}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(viewingDuplicateFor.date).toLocaleDateString('en-AU')}</div>
+                <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{viewingDuplicateFor.isExpense ? '-' : '+'}{formatCurrency(viewingDuplicateFor.amount)}</div>
               </div>
-            ))}
-            <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)', marginTop: 8 }} onClick={() => setViewingDuplicateFor(null)}>Close</button>
+              <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>Looks similar to {matchingExisting(viewingDuplicateFor).length === 1 ? 'this existing transaction' : 'these existing transactions'}:</p>
+              {matchingExisting(viewingDuplicateFor).map((t) => (
+                <div className="card" key={t.id} style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 14 }}>{t.note || 'Uncategorized'}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(t.date).toLocaleDateString('en-AU')}</div>
+                  <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{t.isExpense ? '-' : '+'}{formatCurrency(t.amount)}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -352,21 +357,27 @@ export default function StatementImport({ categories, existingTransactions, onBa
         const matches = results.filter((r) => similarPrompt.matchIds.includes(r.id))
         return (
           <div className="modal-backdrop" onClick={() => setSimilarPrompt(null)}>
-            <div className="modal-sheet" onClick={(e) => e.stopPropagation()} style={{ padding: 20 }}>
-              <p style={{ fontSize: 14, marginBottom: 12 }}>
-                {matches.length} other transaction{matches.length === 1 ? '' : 's'} in this batch look{matches.length === 1 ? 's' : ''} similar — set {cat ? `${cat.icon} ${cat.name}` : 'the same category'} for these too?
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16, maxHeight: 240, overflowY: 'auto' }}>
-                {matches.map((m) => (
-                  <div className="card" key={m.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 13 }}>{m.note}</span>
-                    <span className="amount" style={{ fontSize: 13 }}>{m.isExpense ? '-' : '+'}{formatCurrency(m.amount)}</span>
-                  </div>
-                ))}
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Similar in This Batch</span>
+                <button className="text-button" onClick={() => setSimilarPrompt(null)}>Close</button>
               </div>
-              <div style={{ display: 'flex', gap: 10 }}>
-                <button className="list-button" style={{ flex: 1, textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not now</button>
-                <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, fontWeight: 600 }} onClick={confirmSimilarPrompt}>Apply to All</button>
+              <div className="modal-body">
+                <p style={{ fontSize: 14, marginBottom: 12 }}>
+                  {matches.length} other transaction{matches.length === 1 ? '' : 's'} in this batch look{matches.length === 1 ? 's' : ''} similar — set {cat ? `${cat.icon} ${cat.name}` : 'the same category'} for these too?
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+                  {matches.map((m) => (
+                    <div className="card" key={m.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 13 }}>{m.note}</span>
+                      <span className="amount" style={{ fontSize: 13 }}>{m.isExpense ? '-' : '+'}{formatCurrency(m.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="list-button" style={{ flex: 1, textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not now</button>
+                  <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, fontWeight: 600 }} onClick={confirmSimilarPrompt}>Apply to All</button>
+                </div>
               </div>
             </div>
           </div>

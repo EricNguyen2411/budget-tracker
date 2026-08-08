@@ -212,23 +212,29 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
 
       {similarPrompt && (
         <div className="modal-backdrop" onClick={() => setSimilarPrompt(null)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()} style={{ padding: 20 }}>
-            <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
-              {similarPrompt.matches.length} other transaction{similarPrompt.matches.length === 1 ? '' : 's'} look{similarPrompt.matches.length === 1 ? 's' : ''} similar to "{similarPrompt.note}" but aren't categorized the same way. Categorize {similarPrompt.matches.length === 1 ? 'it' : 'them'} too?
-            </p>
-            <button
-              className="list-button"
-              style={{ width: '100%', textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 8 }}
-              onClick={async () => {
-                for (const t of similarPrompt.matches) {
-                  await onSave({ ...t, categoryId: similarPrompt.categoryId }, t.id)
-                }
-                setSimilarPrompt(null)
-              }}
-            >
-              Categorize {similarPrompt.matches.length}
-            </button>
-            <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not Now</button>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Similar Transactions</span>
+              <button className="text-button" onClick={() => setSimilarPrompt(null)}>Close</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
+                {similarPrompt.matches.length} other transaction{similarPrompt.matches.length === 1 ? '' : 's'} look{similarPrompt.matches.length === 1 ? 's' : ''} similar to "{similarPrompt.note}" but aren't categorized the same way. Categorize {similarPrompt.matches.length === 1 ? 'it' : 'them'} too?
+              </p>
+              <button
+                className="list-button"
+                style={{ width: '100%', textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 8 }}
+                onClick={async () => {
+                  for (const t of similarPrompt.matches) {
+                    await onSave({ ...t, categoryId: similarPrompt.categoryId }, t.id)
+                  }
+                  setSimilarPrompt(null)
+                }}
+              >
+                Categorize {similarPrompt.matches.length}
+              </button>
+              <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not Now</button>
+            </div>
           </div>
         </div>
       )}

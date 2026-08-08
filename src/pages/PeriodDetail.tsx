@@ -36,14 +36,14 @@ export default function PeriodDetail({ title, start, end, categories, transactio
     })
   }, [transactions, start, end])
 
-  const totalSpent = periodTransactions.filter((t) => t.isExpense).reduce((s, t) => s + netAmount(t, transactions), 0)
-
   const categoriesInPeriod = useMemo(() => {
     const ids = new Set(periodTransactions.map((t) => t.categoryId).filter((id): id is string => !!id))
     return categories.filter((c) => ids.has(c.id))
   }, [periodTransactions, categories])
 
   const filtered = categoryFilter ? periodTransactions.filter((t) => t.categoryId === categoryFilter) : periodTransactions
+  const totalSpent = filtered.filter((t) => t.isExpense).reduce((s, t) => s + netAmount(t, transactions), 0)
+  const filteredCategoryName = categoryFilter ? categories.find((c) => c.id === categoryFilter)?.name : null
   const sorted = [...filtered].sort((a, b) =>
     sort === 'recent' ? b.date.localeCompare(a.date) : netAmount(b, transactions) - netAmount(a, transactions)
   )
@@ -58,7 +58,7 @@ export default function PeriodDetail({ title, start, end, categories, transactio
       </div>
 
       <div className="card hero-card" style={{ marginBottom: 16 }}>
-        <span className="hero-label">Net Spent</span>
+        <span className="hero-label">{filteredCategoryName ? `Spent on ${filteredCategoryName}` : 'Net Spent'}</span>
         <span className="hero-amount amount" style={{ fontSize: 32, color: 'var(--red)' }}>{formatCurrency(totalSpent)}</span>
       </div>
 

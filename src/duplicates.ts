@@ -88,15 +88,42 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
 
 /** Explicitly excludes Beem, even though it's already a stop word, since other tokens
  * (like a sender's name) can still coincidentally match unrelated Beem payments. */
+/** Tokens that show up across many genuinely different merchants aren't
+ * merchant-identifying — most commonly a shared suburb or street name
+ * (e.g. "CANLEY HEIGHT" appearing in several unrelated businesses'
+ * addresses). A fixed stop-word list can't anticipate every location
+ * name, so this derives it from the data instead: a token used across
+ * several distinct notes is treated as generic and ignored for
+ * similarity matching, keeping only the words that actually identify
+ * one specific merchant. */
+function genericTokens(transactions: Transaction[]): Set<string> {
+  const tokenToNotes = new Map<string, Set<string>>()
+  for (const t of transactions) {
+    const noteKey = t.note.trim().toLowerCase()
+    if (!noteKey) continue
+    for (const token of significantTokens(t.note)) {
+      if (!tokenToNotes.has(token)) tokenToNotes.set(token, new Set())
+      tokenToNotes.get(token)!.add(noteKey)
+    }
+  }
+  const generic = new Set<string>()
+  for (const [token, notes] of tokenToNotes) {
+    if (notes.size >= 4) generic.add(token)
+  }
+  return generic
+}
+
 export function transactionsWithSimilarName(note: string, categoryId: string, excludingId: string | null, transactions: Transaction[]): Transaction[] {
   if (/beem/i.test(note)) return []
-  const targetTokens = significantTokens(note)
+  const generic = genericTokens(transactions)
+  const targetTokens = new Set([...significantTokens(note)].filter((t) => !generic.has(t)))
   if (targetTokens.size === 0) return []
 
   return transactions.filter((candidate) => {
     if (candidate.id === excludingId) return false
     if (candidate.categoryId === categoryId) return false
     if (/beem/i.test(candidate.note)) return false
-    return !isDisjoint(targetTokens, significantTokens(candidate.note))
+    const candidateTokens = new Set([...significantTokens(candidate.note)].filter((t) => !generic.has(t)))
+    return !isDisjoint(targetTokens, candidateTokens)
   })
 }
