@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "idb": "^8.0.3",
-    "pdfjs-dist": "^6.1.200",
+    "pdfjs-dist": "^4.10.38",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tesseract.js": "^7.0.0",
