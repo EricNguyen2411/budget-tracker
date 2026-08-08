@@ -99,6 +99,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
         {[
           { tab: 'budgetplanner', icon: '🧮', label: 'Total Budget Planner' },
+          { tab: 'categorybreakdown', icon: '🥧', label: 'Spending by Category (by Month)' },
           { tab: 'recurring', icon: '🔁', label: 'Recurring' },
           { tab: 'shopping', icon: '🛒', label: 'Shopping Lists' },
           { tab: 'report', icon: '📅', label: 'Custom Date Range Report' },

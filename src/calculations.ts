@@ -93,7 +93,7 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
   const unlinkedIncome = thisMonth.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
   const excessFromLinked = thisMonth
     .filter((t) => !t.isExpense && t.reimbursesExpenseId)
-    .reduce((sum, t) => sum + totalExcessReimbursement(transactions.find((e) => e.id === t.reimbursesExpenseId)!, transactions), 0)
+    .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
   const income = unlinkedIncome + excessFromLinked
 
   const reimbursed = thisMonth
@@ -200,10 +200,7 @@ export function last6PeriodsNetSavings(categories: Category[], transactions: Tra
     const unlinkedIncome = periodTx.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
     const excessFromLinked = periodTx
       .filter((t) => !t.isExpense && t.reimbursesExpenseId)
-      .reduce((sum, t) => {
-        const expense = transactions.find((e) => e.id === t.reimbursesExpenseId)
-        return expense ? sum + totalExcessReimbursement(expense, transactions) : sum
-      }, 0)
+      .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
     const income = unlinkedIncome + excessFromLinked
 
     result.push({ periodStart: period.start, amount: income - spent })
@@ -258,25 +255,30 @@ export function repaysNote(transaction: Transaction, all: Transaction[]): string
   return `repays ${expense.note || 'transaction'}`
 }
 
-export function excessIncomeNote(transaction: Transaction, all: Transaction[]): string | null {
-  if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
+/** How much of THIS SPECIFIC reimbursement transaction is excess beyond
+ * what the expense actually cost — allocated in order (earliest
+ * reimbursement first), so with several people chipping in, only the
+ * actual overflow counts as excess, not an even split. Returns 0 if this
+ * transaction isn't an excess-producing reimbursement at all. */
+export function excessForReimbursement(transaction: Transaction, all: Transaction[]): number {
+  if (transaction.isExpense || !transaction.reimbursesExpenseId) return 0
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
-  if (!expense) return null
+  if (!expense) return 0
 
-  // Allocated in order (earliest reimbursement first), so with several
-  // people chipping in, only the actual overflow past what the expense
-  // cost counts as this transaction's excess — not an even split.
   const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
   let remaining = expense.amount
   for (const r of reimbursements) {
     const applied = Math.min(r.amount, Math.max(0, remaining))
     const excess = r.amount - applied
     remaining -= applied
-    if (r.id === transaction.id) {
-      return excess > 0 ? `${formatCurrency(excess)} extra, counted as income` : null
-    }
+    if (r.id === transaction.id) return excess
   }
-  return null
+  return 0
+}
+
+export function excessIncomeNote(transaction: Transaction, all: Transaction[]): string | null {
+  const excess = excessForReimbursement(transaction, all)
+  return excess > 0 ? `${formatCurrency(excess)} extra, counted as income` : null
 }
 
 export function reimbursementNote(transaction: Transaction, all: Transaction[]): string | null {

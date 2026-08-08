@@ -13,15 +13,16 @@ interface Props {
   onBack: () => void
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
+  initialCategoryId?: string
 }
 
 /** For chart taps — a specific day or month you tapped into. Deliberately
  * has no presets or date pickers (unlike Custom Date Range Report, which
  * is for picking an arbitrary range): the period is already known from
  * what you tapped, so showing it again would just be clutter. */
-export default function PeriodDetail({ title, start, end, categories, transactions, onBack, onSave, onDelete }: Props) {
+export default function PeriodDetail({ title, start, end, categories, transactions, onBack, onSave, onDelete, initialCategoryId }: Props) {
   useSwipeBack(onBack)
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(initialCategoryId ?? null)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
 

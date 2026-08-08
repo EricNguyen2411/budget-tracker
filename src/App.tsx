@@ -25,9 +25,10 @@ import PeriodDetail from './pages/PeriodDetail'
 import StatementImport from './pages/StatementImport'
 import TotalBudgetPlanner from './pages/TotalBudgetPlanner'
 import AutoBackups from './pages/AutoBackups'
+import CategoryBreakdownByMonth from './pages/CategoryBreakdownByMonth'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -38,7 +39,7 @@ export default function App() {
   const [loaded, setLoaded] = useState(false)
   const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
   const [statDetail, setStatDetail] = useState<StatKind | null>(null)
-  const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string } | null>(null)
+  const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string; categoryId?: string } | null>(null)
 
   useSwipeBack(
     () => setTab('more'),
@@ -123,6 +124,7 @@ export default function App() {
           onBack={() => setDateRangeNav(null)}
           start={dateRangeNav.start}
           end={dateRangeNav.end}
+          initialCategoryId={dateRangeNav.categoryId}
         />
       ) : (
         <>
@@ -163,6 +165,14 @@ export default function App() {
       {tab === 'import' && <StatementImport categories={categories} existingTransactions={transactions} onBack={() => setTab('more')} onImported={reload} />}
       {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={reload} />}
+      {tab === 'categorybreakdown' && (
+        <CategoryBreakdownByMonth
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setTab('more')}
+          onOpenPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
+        />
+      )}
 
       {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
         <div style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
@@ -185,8 +195,8 @@ export default function App() {
           <TargetIcon active={tab === 'budgets' && !anyOverlay} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups'].includes(tab) && !anyOverlay} />
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

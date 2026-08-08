@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, repaysNote, totalExcessReimbursement } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, repaysNote, excessForReimbursement } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -51,11 +51,9 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
 
   const total = scoped.reduce((sum, t) => {
     if (kind === 'reimbursed' && t.reimbursesExpenseId) {
-      const expense = transactions.find((e) => e.id === t.reimbursesExpenseId)
-      if (!expense) return sum
       // applied portion only, not any excess (which counts toward income instead)
-      const excess = totalExcessReimbursement(expense, transactions)
-      return sum + (t.amount - Math.min(excess, t.amount))
+      const excess = excessForReimbursement(t, transactions)
+      return sum + (t.amount - excess)
     }
     return sum + netAmount(t, transactions)
   }, 0)

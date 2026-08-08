@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, repaysNote, totalExcessReimbursement, localDateInputValue } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, repaysNote, excessForReimbursement, localDateInputValue } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
 
@@ -52,10 +52,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
   const unlinkedIncome = rangeTransactions.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((s, t) => s + t.amount, 0)
   const excessFromLinked = rangeTransactions
     .filter((t) => !t.isExpense && t.reimbursesExpenseId)
-    .reduce((s, t) => {
-      const expense = transactions.find((e) => e.id === t.reimbursesExpenseId)
-      return expense ? s + totalExcessReimbursement(expense, transactions) : s
-    }, 0)
+    .reduce((s, t) => s + excessForReimbursement(t, transactions), 0)
   const totalIncome = unlinkedIncome + excessFromLinked
 
   const categoryTotals = useMemo(() => {
