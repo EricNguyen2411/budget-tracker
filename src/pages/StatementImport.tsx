@@ -232,6 +232,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
                       {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
                       {pendingFareIds.has(r.id) && <span> 🚊</span>}
                     </span>
+                    <span className="tx-category">{new Date(r.date).toLocaleDateString('en-AU')}</span>
                     <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}
                     </button>
