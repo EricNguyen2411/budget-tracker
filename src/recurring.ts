@@ -1,4 +1,5 @@
 import type { Transaction, RecurringTransaction, RecurrenceFrequency } from './types'
+import { normalizeMerchantKey } from './merchantRules'
 
 export interface RecurringSuggestion {
   merchantKey: string
@@ -13,7 +14,7 @@ export interface RecurringSuggestion {
 }
 
 function merchantKey(note: string): string {
-  return note.trim().toLowerCase()
+  return normalizeMerchantKey(note)
 }
 
 function classifyFrequency(averageGapDays: number, gaps: number[]): RecurrenceFrequency | null {

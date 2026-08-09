@@ -63,7 +63,22 @@ export function suggestCategoryId(note: string): string | null {
   if (exact) return exact.categoryId
 
   const partial = rules.find((r) => key.includes(r.key) || r.key.includes(key))
-  return partial?.categoryId ?? null
+  if (partial) return partial.categoryId
+
+  // Different branches of the same chain (confirmed a real gap: e.g.
+  // "WOOLWORTHS FAIRFIELD WEST" vs "WOOLWORTHS BURWOOD" share no exact
+  // or substring match, since the key captures the varying suburb name
+  // alongside the brand). The first word is the most reliable
+  // brand-identifying token — everything after it is typically location
+  // — so falling back to matching on it alone catches this case,
+  // without the false-positive risk of matching on any shared word.
+  const firstWord = key.split(' ')[0]
+  if (firstWord.length >= 4) {
+    const brandMatch = rules.find((r) => r.key.split(' ')[0] === firstWord)
+    if (brandMatch) return brandMatch.categoryId
+  }
+
+  return null
 }
 
 export function getAllMerchantRules(): MerchantRule[] {
