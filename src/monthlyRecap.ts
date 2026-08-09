@@ -14,8 +14,9 @@ import {
 const NEED_KEYWORDS = ['rent', 'mortgage', 'housing', 'groceries', 'grocery', 'utilities', 'utility', 'transport', 'health', 'medical', 'insurance', 'bills', 'phone', 'internet']
 const WANT_KEYWORDS = ['dining', 'restaurant', 'entertainment', 'shopping', 'hobbies', 'hobby', 'subscriptions', 'games', 'travel', 'holiday', 'fun', 'leisure']
 
-function classify(categoryName: string): 'need' | 'want' | 'unknown' {
-  const name = categoryName.toLowerCase()
+export function classify(category: Category): 'need' | 'want' | 'unknown' {
+  if (category.needWantType) return category.needWantType
+  const name = category.name.toLowerCase()
   if (NEED_KEYWORDS.some((k) => name.includes(k))) return 'need'
   if (WANT_KEYWORDS.some((k) => name.includes(k))) return 'want'
   return 'unknown'
@@ -67,7 +68,7 @@ export function buildMonthRecap(categories: Category[], transactions: Transactio
       icon: c.icon,
       spent: Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)),
       budget: effectiveBudget(c, categories),
-      classification: classify(c.name)
+      classification: classify(c)
     }))
     .filter((r) => r.spent > 0 || r.budget > 0)
 

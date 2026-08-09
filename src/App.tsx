@@ -174,7 +174,16 @@ export default function App() {
           onOpenPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
         />
       )}
-      {tab === 'monthlyrecap' && <MonthlyRecapPage categories={categories} transactions={transactions} onBack={() => setTab('more')} />}
+      {tab === 'monthlyrecap' && (
+        <MonthlyRecapPage
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setTab('more')}
+          onSaveTransaction={handleSaveTransaction}
+          onDeleteTransaction={handleDeleteTransaction}
+          onOpenCategoryPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
+        />
+      )}
 
       {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
         <div style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>

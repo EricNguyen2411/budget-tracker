@@ -150,7 +150,8 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       isSavingsCategory: def.isSavingsCategory ?? false,
       goalTargetAmount: def.goalTargetAmount ?? 0,
       goalTargetDate: def.goalTargetDate ?? null,
-      goalStartDate: def.goalStartDate ?? null
+      goalStartDate: def.goalStartDate ?? null,
+      needWantType: null
     })
   }
 
@@ -170,7 +171,8 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       isSavingsCategory: def.isSavingsCategory ?? false,
       goalTargetAmount: def.goalTargetAmount ?? 0,
       goalTargetDate: def.goalTargetDate ?? null,
-      goalStartDate: def.goalStartDate ?? null
+      goalStartDate: def.goalStartDate ?? null,
+      needWantType: null
     })
   }
 

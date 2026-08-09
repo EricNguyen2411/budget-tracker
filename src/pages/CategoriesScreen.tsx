@@ -96,6 +96,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [goalAmount, setGoalAmount] = useState(category?.goalTargetAmount ? String(category.goalTargetAmount) : '')
   const [hasGoalDate, setHasGoalDate] = useState(!!category?.goalTargetDate)
   const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
+  const [needWantType, setNeedWantType] = useState<'need' | 'want' | null>(category?.needWantType ?? null)
 
   const eligibleParents = allCategories.filter((c) =>
     !c.parentId &&
@@ -115,7 +116,8 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
       isSavingsCategory: isSavings,
       goalTargetAmount: isSavings && isGoalToggle ? (parseFloat(goalAmount) || 0) : 0,
       goalTargetDate: isSavings && isGoalToggle && hasGoalDate && goalDate ? new Date(goalDate).toISOString() : null,
-      goalStartDate: isSavings && isGoalToggle ? (category?.goalStartDate ?? new Date().toISOString()) : null
+      goalStartDate: isSavings && isGoalToggle ? (category?.goalStartDate ?? new Date().toISOString()) : null,
+      needWantType: isSavings ? null : needWantType
     }
     if (category) {
       await saveCategory({ ...category, ...data })
@@ -176,6 +178,17 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
 
           <label className="field-label">{parentId ? "Monthly Budget (rolls up into parent's total)" : 'Monthly Budget'}</label>
           <input type="number" inputMode="decimal" placeholder="0.00" value={budget} onChange={(e) => setBudget(e.target.value)} />
+
+          {!isSavings && (
+            <>
+              <label className="field-label">Need or Want</label>
+              <div className="segmented" style={{ marginBottom: 12 }}>
+                <button className={needWantType === 'need' ? 'segmented-active' : ''} onClick={() => setNeedWantType(needWantType === 'need' ? null : 'need')}>Need</button>
+                <button className={needWantType === 'want' ? 'segmented-active' : ''} onClick={() => setNeedWantType(needWantType === 'want' ? null : 'want')}>Want</button>
+              </div>
+              <p className="hint" style={{ marginTop: -8, marginBottom: 12 }}>Used by Month in Review to check spending against the 50/30/20 guideline. Leave unset to let it guess from the category name instead.</p>
+            </>
+          )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16 }}>
             <input type="checkbox" switch checked={isSavings} onChange={(e) => setIsSavings(e.target.checked)} />
