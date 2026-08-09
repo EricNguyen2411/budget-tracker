@@ -102,6 +102,38 @@ export async function deleteCategory(id: string) {
   await tx.done
 }
 
+/** Reassigns every transaction, recurring item, and shopping list
+ * pointing at sourceId to targetId instead, then deletes the (now
+ * empty) source category — for merging a genuine duplicate into the
+ * category you're keeping, rather than losing the categorization
+ * entirely the way a plain delete does. */
+export async function mergeCategoryInto(sourceId: string, targetId: string): Promise<{ movedCount: number }> {
+  const db = await getDB()
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
+
+  let movedCount = 0
+  const transactions = await tx.objectStore('transactions').getAll()
+  for (const t of transactions) {
+    if (t.categoryId === sourceId) {
+      await tx.objectStore('transactions').put({ ...t, categoryId: targetId })
+      movedCount++
+    }
+  }
+  const recurring = await tx.objectStore('recurring').getAll()
+  for (const r of recurring) {
+    if (r.categoryId === sourceId) await tx.objectStore('recurring').put({ ...r, categoryId: targetId })
+  }
+  const shoppingLists = await tx.objectStore('shoppingLists').getAll()
+  for (const s of shoppingLists) {
+    if (s.categoryId === sourceId) await tx.objectStore('shoppingLists').put({ ...s, categoryId: targetId })
+  }
+
+  await tx.objectStore('categories').delete(sourceId)
+  await tx.done
+
+  return { movedCount }
+}
+
 export async function getTransactions(): Promise<Transaction[]> {
   const db = await getDB()
   const all = await db.getAllFromIndex('transactions', 'by-date')

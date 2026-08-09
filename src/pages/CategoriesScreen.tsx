@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Category } from '../types'
-import { createCategory, saveCategory, deleteCategory } from '../db'
+import { createCategory, saveCategory, deleteCategory, mergeCategoryInto } from '../db'
 import { localDateInputValue } from '../calculations'
 import { useSwipeBack } from '../useSwipeBack'
 
@@ -97,6 +97,15 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [hasGoalDate, setHasGoalDate] = useState(!!category?.goalTargetDate)
   const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
   const [needWantType, setNeedWantType] = useState<'need' | 'want' | null>(category?.needWantType ?? null)
+  const [showDeleteOptions, setShowDeleteOptions] = useState(false)
+
+  // A same-name category elsewhere is very likely the exact duplicate
+  // situation this is for — surfaced as the suggested merge target,
+  // though any category can be picked instead.
+  const likelyDuplicate = category
+    ? allCategories.find((c) => c.id !== category.id && c.parentId === category.parentId && c.name.trim().toLowerCase() === category.name.trim().toLowerCase())
+    : null
+  const mergeCandidates = category ? allCategories.filter((c) => c.id !== category.id && c.parentId === category.parentId) : []
 
   const eligibleParents = allCategories.filter((c) =>
     !c.parentId &&
@@ -128,14 +137,30 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
     onClose()
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!category) return
     const subCount = allCategories.filter((c) => c.parentId === category.id).length
     if (subCount > 0) {
       alert(`"${category.name}" still has ${subCount} subcategor${subCount === 1 ? 'y' : 'ies'} under it. Delete or move those first — deleting the parent while they still point to it would leave them orphaned.`)
       return
     }
-    if (!confirm(`Delete "${category.name}"? Any transactions using it will become uncategorized rather than being deleted.`)) return
+    setShowDeleteOptions(true)
+  }
+
+  async function handleMergeInto(targetId: string) {
+    if (!category) return
+    const target = allCategories.find((c) => c.id === targetId)
+    if (!target) return
+    if (!confirm(`Move everything from "${category.name}" into "${target.name}", then delete "${category.name}"?`)) return
+    const { movedCount } = await mergeCategoryInto(category.id, targetId)
+    alert(`Moved ${movedCount} transaction${movedCount === 1 ? '' : 's'} into "${target.name}".`)
+    onChanged()
+    onClose()
+  }
+
+  async function handlePlainDelete() {
+    if (!category) return
+    if (!confirm(`Delete "${category.name}"? Any transactions using it will become uncategorized rather than being reassigned.`)) return
     await deleteCategory(category.id)
     onChanged()
     onClose()
@@ -220,6 +245,47 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
 
         </div>
       </div>
+
+      {showDeleteOptions && category && (
+        <div className="modal-backdrop" onClick={() => setShowDeleteOptions(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Delete "{category.name}"</span>
+              <button className="text-button" onClick={() => setShowDeleteOptions(false)}>Cancel</button>
+            </div>
+            <div className="modal-body">
+              {likelyDuplicate && (
+                <>
+                  <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>
+                    Found another category with the same name — likely what you're actually trying to clean up:
+                  </p>
+                  <button className="picker-row" style={{ background: 'var(--surface-2)', borderRadius: 10, marginBottom: 16 }} onClick={() => handleMergeInto(likelyDuplicate.id)}>
+                    <span>Merge into {likelyDuplicate.icon} {likelyDuplicate.name}</span>
+                    <span className="chevron">›</span>
+                  </button>
+                </>
+              )}
+
+              {mergeCandidates.length > 0 && (
+                <>
+                  <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>Or merge into any other category — moves every transaction across before deleting:</p>
+                  {mergeCandidates.filter((c) => c.id !== likelyDuplicate?.id).map((c) => (
+                    <button key={c.id} className="picker-row" onClick={() => handleMergeInto(c.id)}>
+                      <span>{c.icon} {c.name}</span>
+                      <span className="chevron">›</span>
+                    </button>
+                  ))}
+                </>
+              )}
+
+              <button className="danger-button" style={{ marginTop: 16 }} onClick={handlePlainDelete}>
+                Delete Without Reassigning
+              </button>
+              <p className="hint" style={{ marginTop: 8 }}>Any transactions using "{category.name}" will become uncategorized instead of moving anywhere.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
