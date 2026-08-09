@@ -98,6 +98,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
       <span className="section-heading">Tools</span>
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
         {[
+          { tab: 'monthlyrecap', icon: '📊', label: 'Month in Review' },
           { tab: 'budgetplanner', icon: '🧮', label: 'Total Budget Planner' },
           { tab: 'categorybreakdown', icon: '🥧', label: 'Spending by Category (by Month)' },
           { tab: 'recurring', icon: '🔁', label: 'Recurring' },
