@@ -94,7 +94,7 @@ export default function RecurringPage({ categories, transactions, recurring, onC
               </div>
             </button>
             <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(item.amount)}</span>
-            <input type="checkbox" checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
+            <input type="checkbox" switch checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
             <button onClick={() => remove(item.id)} style={{ color: 'var(--red)', fontSize: 12 }}>Delete</button>
           </div>
         )

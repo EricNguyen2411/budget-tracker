@@ -67,8 +67,14 @@ export function netSpentForCategory(category: Category, allCategories: Category[
 
 export function effectiveBudget(category: Category, allCategories: Category[]): number {
   const subs = allCategories.filter((c) => c.parentId === category.id)
-  if (subs.length === 0) return category.monthlyBudget
-  return subs.reduce((sum, s) => sum + s.monthlyBudget, 0)
+  const subsTotal = subs.reduce((sum, s) => sum + s.monthlyBudget, 0)
+  // Once subcategories actually have their own budgets set, the parent
+  // is meant to be their sum, not a separate number on top of them —
+  // but if none of them have been set yet (all still 0), falling back
+  // to whatever's set directly on the parent is what makes budgeting a
+  // category at the parent level actually work, rather than silently
+  // discarding it just because empty subcategories happen to exist.
+  return subsTotal > 0 ? subsTotal : category.monthlyBudget
 }
 
 export interface DashboardTotals {

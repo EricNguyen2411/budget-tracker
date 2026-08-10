@@ -118,7 +118,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
 
       {filter === 'income' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 13, color: 'var(--text-dim)' }}>
-          <input type="checkbox" checked={unlinkedOnly} onChange={(e) => setUnlinkedOnly(e.target.checked)} style={{ width: 16, height: 16 }} />
+          <input type="checkbox" switch checked={unlinkedOnly} onChange={(e) => setUnlinkedOnly(e.target.checked)} style={{ width: 16, height: 16 }} />
           <span>Only unlinked (no reimbursement)</span>
         </div>
       )}
