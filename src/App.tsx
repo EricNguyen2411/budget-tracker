@@ -164,7 +164,7 @@ export default function App() {
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'import' && <StatementImport categories={categories} existingTransactions={transactions} onBack={() => setTab('more')} onImported={reload} />}
-      {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
+      {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} transactions={transactions} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={reload} />}
       {tab === 'categorybreakdown' && (
         <CategoryBreakdownByMonth
