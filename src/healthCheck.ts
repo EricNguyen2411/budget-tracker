@@ -1,5 +1,8 @@
 import type { Transaction, RecurringTransaction, Category } from './types'
 import { findDuplicates } from './duplicates'
+import { goalProgress, projectedGoalCompletionDate, netSpentForCategory } from './calculations'
+import { detectRecurring } from './recurring'
+import { getSettings } from './budgetPeriod'
 
 export interface HealthFinding {
   icon: string
@@ -97,6 +100,59 @@ export function runHealthCheck(
       detail: 'Counted in Income, but NOT in Saved — Saved only tracks money moving out to savings (Expense direction). If these are contributions you made, switch them to Expense.',
       severity: 'warning',
       transactions: incomeInSavings
+    })
+  }
+
+  // Goals with a target date that's either already passed without being
+  // reached, or on a pace that won't get there in time — surfaced here
+  // since Month in Review only shows this for the current month, and
+  // it's easy to lose track of a goal you're not actively looking at.
+  const goalsOffPace = categories.filter((c) => {
+    if (!c.isSavingsCategory || !c.goalTargetDate || c.goalTargetAmount <= 0) return false
+    if (goalProgress(c, transactions) >= c.goalTargetAmount) return false
+    const target = new Date(c.goalTargetDate)
+    if (target < referenceDate) return true // target date already passed, goal not reached
+    const projected = projectedGoalCompletionDate(c, transactions, referenceDate)
+    return projected !== null && projected > target
+  })
+  if (goalsOffPace.length > 0) {
+    findings.push({
+      icon: '🎯',
+      title: `${goalsOffPace.length} savings goal${goalsOffPace.length === 1 ? '' : 's'} behind pace`,
+      detail: goalsOffPace.map((c) => c.name).join(', ') + ' — at the current contribution rate, won\u2019t reach the target by the date set. Increase the monthly amount or push the date out.',
+      severity: 'warning',
+      transactions: []
+    })
+  }
+
+  // Categories that have real spending this period but no budget set —
+  // easy to miss since Budgets only shows categories that already have
+  // one, so a forgotten category never surfaces there on its own.
+  const unbudgeted = categories.filter((c) => {
+    if (c.parentId || c.isSavingsCategory || c.monthlyBudget > 0) return false
+    return netSpentForCategory(c, categories, transactions, referenceDate) > 0
+  })
+  if (unbudgeted.length > 0) {
+    findings.push({
+      icon: '📊',
+      title: `${unbudgeted.length} categor${unbudgeted.length === 1 ? 'y has' : 'ies have'} spending but no budget`,
+      detail: unbudgeted.map((c) => c.name).join(', ') + ' — has activity this period but no budget set, so Budget vs Actual has nothing to compare it against.',
+      severity: 'info',
+      transactions: []
+    })
+  }
+
+  // Recurring-looking patterns that haven't actually been added as
+  // recurring yet — the Recurring page only shows this if you go look;
+  // surfacing it here means you're more likely to actually see it.
+  const recurringSuggestions = detectRecurring(transactions, recurring, getSettings().dismissedRecurringSuggestions, referenceDate)
+  if (recurringSuggestions.length > 0) {
+    findings.push({
+      icon: '✨',
+      title: `${recurringSuggestions.length} transaction${recurringSuggestions.length === 1 ? ' looks' : 's look'} recurring but ${recurringSuggestions.length === 1 ? "isn't" : "aren't"} set up`,
+      detail: recurringSuggestions.map((s) => s.displayName).join(', ') + ' — showing up on a regular pattern. Add these in Recurring so they\u2019re tracked and forecasted properly.',
+      severity: 'info',
+      transactions: []
     })
   }
 

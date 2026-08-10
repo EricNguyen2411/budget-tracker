@@ -1,17 +1,22 @@
 import { useState } from 'react'
 import type { Category, RecurringTransaction, Transaction } from '../types'
 import { runHealthCheck, type HealthFinding } from '../healthCheck'
-import { formatCurrency } from '../calculations'
+import { formatCurrency, netAmount } from '../calculations'
+import TransactionEditor from '../components/TransactionEditor'
 
 interface Props {
   transactions: Transaction[]
   recurring: RecurringTransaction[]
   categories: Category[]
+  onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
+  onDelete: (id: string) => void
 }
 
-export default function HealthCheck({ transactions, recurring, categories }: Props) {
+export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete }: Props) {
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
+  const [editing, setEditing] = useState<Transaction | null>(null)
+  const catById = new Map(categories.map((c) => [c.id, c]))
 
   function run() {
     setFindings(runHealthCheck(transactions, recurring, categories))
@@ -24,7 +29,7 @@ export default function HealthCheck({ transactions, recurring, categories }: Pro
       {findings === null && (
         <div className="card">
           <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
-            Checks your data for things worth a second look — possible duplicates, uncategorized transactions, unusually large amounts, stale pending fares, overdue recurring items. Nothing changes automatically.
+            Checks your data for things worth a second look — possible duplicates, uncategorized transactions, unusually large amounts, stale pending fares, overdue recurring items, savings goals behind pace, unbudgeted categories, and undetected recurring patterns. Nothing changes automatically.
           </p>
           <button className="list-button" style={{ color: 'var(--blue)', fontWeight: 600 }} onClick={run}>Run Health Check</button>
         </div>
@@ -60,15 +65,53 @@ export default function HealthCheck({ transactions, recurring, categories }: Pro
               <button className="text-button text-button-primary" onClick={() => setDrillDown(null)}>Done</button>
             </div>
             <div className="modal-body">
-              {drillDown.transactions.map((t) => (
-                <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 14 }}>{t.note || 'Uncategorized'}</span>
-                  <span className="amount">{formatCurrency(t.amount)}</span>
-                </div>
-              ))}
+              <p className="hint" style={{ marginBottom: 12 }}>Tap any transaction to fix it directly.</p>
+              {drillDown.transactions.map((t) => {
+                const cat = t.categoryId ? catById.get(t.categoryId) : undefined
+                return (
+                  <button key={t.id} className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => setEditing(t)}>
+                    <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
+                    <div className="tx-info">
+                      <span className="tx-note">{t.note || 'Uncategorized'}</span>
+                      <span className="tx-category">{cat?.name ?? 'Uncategorized'} · {new Date(t.date).toLocaleDateString('en-AU')}</span>
+                    </div>
+                    <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+                      {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
           </div>
         </div>
+      )}
+
+      {editing && (
+        <TransactionEditor
+          transaction={editing}
+          categories={categories}
+          allTransactions={transactions}
+          onSave={(data) => {
+            onSave(data, editing.id)
+            setEditing(null)
+            // Re-run automatically so the fixed transaction drops off
+            // the list immediately, rather than looking unfixed until
+            // a manual re-run — and keep the open drill-down modal (if
+            // any) in sync too, since it otherwise holds a stale
+            // snapshot from before the fix.
+            const refreshed = runHealthCheck(transactions.map((t) => t.id === editing.id ? { ...t, ...data } : t), recurring, categories)
+            setFindings(refreshed)
+            if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
+          }}
+          onDelete={() => {
+            onDelete(editing.id)
+            setEditing(null)
+            const refreshed = runHealthCheck(transactions.filter((t) => t.id !== editing.id), recurring, categories)
+            setFindings(refreshed)
+            if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
+          }}
+          onClose={() => setEditing(null)}
+        />
       )}
     </div>
   )

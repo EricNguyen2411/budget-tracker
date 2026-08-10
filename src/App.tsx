@@ -159,7 +159,7 @@ export default function App() {
       {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} />}
       {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
       {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} />}
-      {tab === 'health' && <HealthCheck transactions={transactions} recurring={recurring} categories={categories} />}
+      {tab === 'health' && <HealthCheck transactions={transactions} recurring={recurring} categories={categories} onSave={handleSaveTransaction} onDelete={handleDeleteTransaction} />}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
