@@ -77,7 +77,7 @@ export function detectFormat(items: TextItem[]): DetectedFormat {
   const hasRowAnchor = items.some((i) => isRowAnchorMarker(i.text))
   if (hasDateHeader && hasRowAnchor) return 'appScreenshot'
 
-  const hasPaymentSuccessful = items.some((i) => /payment (successful|received|sent)/i.test(i.text))
+  const hasPaymentSuccessful = items.some((i) => /payment\s+(success|received|sent)/i.test(i.text))
   if (hasPaymentSuccessful) return 'notificationScreenshot'
 
   return 'unknown'
@@ -300,7 +300,7 @@ export function parseNotificationScreenshots(items: TextItem[]): { transactions:
   const skipped: string[] = []
 
   // Group into blocks anchored on each "Payment successful/received/sent" line.
-  const anchors = items.filter((i) => /payment (successful|received|sent)/i.test(i.text))
+  const anchors = items.filter((i) => /payment\s+(success|received|sent)/i.test(i.text))
 
   anchors.forEach((anchor, i) => {
     const nextAnchorY = anchors[i + 1]?.box.y0 ?? Infinity
@@ -314,7 +314,7 @@ export function parseNotificationScreenshots(items: TextItem[]): { transactions:
     const date = parseNotificationTime(beforeAnchorText) ?? parseNotificationTime(combinedText)
 
     const descMatch = combinedText.match(/description:\s*([^$]+)/i)
-    let note = descMatch ? descMatch[1].trim() : combinedText.replace(/payment (successful|received|sent)/i, '').replace(/made of\s?\$[\d,.]+/i, '').replace(/\$[\d,.]+/g, '').trim()
+    let note = descMatch ? descMatch[1].trim() : combinedText.replace(/payment\s+(success\w*|received|sent)/i, '').replace(/made of\s?\$[\d,.]+/i, '').replace(/\$[\d,.]+/g, '').trim()
     note = note.slice(0, 60) || 'Payment'
 
     const isExpense = !/received/i.test(combinedText)
