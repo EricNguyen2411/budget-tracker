@@ -335,7 +335,6 @@ a {
   max-height: 85dvh;
   display: flex;
   flex-direction: column;
-  padding-bottom: env(safe-area-inset-bottom);
   overflow: hidden;
 }
 .modal-header {
@@ -350,7 +349,7 @@ a {
 .text-button { color: var(--text-dim); font-size: 16px; }
 .text-button-primary { color: var(--blue); font-weight: 600; }
 .modal-body {
-  padding: 16px;
+  padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
