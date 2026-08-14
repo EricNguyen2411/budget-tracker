@@ -31,6 +31,15 @@ body:has(.modal-backdrop) {
   overflow: hidden;
 }
 
+/* Belt-and-braces on top of z-index stacking: fully remove the tab bar
+   from view whenever any modal is open, rather than relying solely on
+   z-index ordering to keep it visually behind. Removes any chance of it
+   overlapping a modal's bottom content regardless of stacking-context
+   edge cases that are hard to verify without a real device to test on. */
+body:has(.modal-backdrop) .tab-bar {
+  display: none;
+}
+
 * { box-sizing: border-box; }
 
 html, body, #root {
