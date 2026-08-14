@@ -41,8 +41,8 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
             <div key={c.id}>
               <div className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <button onClick={() => move(c, 'up')} disabled={i === 0} style={{ color: i === 0 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1 }}>▲</button>
-                  <button onClick={() => move(c, 'down')} disabled={i === topLevel.length - 1} style={{ color: i === topLevel.length - 1 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1 }}>▼</button>
+                  <button onClick={() => move(c, 'up')} disabled={i === 0} style={{ color: i === 0 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1, padding: '10px 14px' }}>▲</button>
+                  <button onClick={() => move(c, 'down')} disabled={i === topLevel.length - 1} style={{ color: i === topLevel.length - 1 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1, padding: '10px 14px' }}>▼</button>
                 </div>
                 <button className="transaction-row" style={{ padding: 0, flex: 1 }} onClick={() => setEditingCategory(c)}>
                   <div className="tx-icon" style={{ background: c.color + '33' }}>{c.icon}</div>

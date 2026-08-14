@@ -89,6 +89,19 @@ input, select {
   touch-action: manipulation;
 }
 
+/* Checkboxes are visually small by design, but a small VISUAL size
+   shouldn't mean a small TAPPABLE size — Apple's own research shows
+   targets under 44x44pt produce meaningfully higher tap-error rates.
+   content-box sizing means this padding expands the actual click/touch
+   area outward without touching how big the checkbox looks. */
+input[type="checkbox"] {
+  box-sizing: content-box;
+  padding: 10px;
+  margin: -10px;
+  background: none;
+  border-radius: 0;
+}
+
 a {
   touch-action: manipulation;
 }
@@ -302,7 +315,7 @@ a {
 }
 .segmented button {
   flex: 1;
-  padding: 6px 0;
+  padding: 9px 0;
   border-radius: 7px;
   font-size: 13px;
   color: var(--text-dim);
@@ -316,7 +329,7 @@ a {
 /* ---- List buttons (More page) ---- */
 .list-button {
   text-align: left;
-  padding: 4px 0;
+  padding: 13px 0;
   color: var(--blue);
   font-size: 16px;
 }

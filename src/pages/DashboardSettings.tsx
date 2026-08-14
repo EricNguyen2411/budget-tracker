@@ -37,8 +37,8 @@ export default function DashboardSettings({ onBack }: { onBack: () => void }) {
         {orderedHideable.map((id, i, arr) => (
           <div key={id} className="transaction-row" style={{ borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <button onClick={() => move(id, 'up')} disabled={i === 0} style={{ color: i === 0 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1 }}>▲</button>
-              <button onClick={() => move(id, 'down')} disabled={i === arr.length - 1} style={{ color: i === arr.length - 1 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1 }}>▼</button>
+              <button onClick={() => move(id, 'up')} disabled={i === 0} style={{ color: i === 0 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1, padding: '10px 14px' }}>▲</button>
+              <button onClick={() => move(id, 'down')} disabled={i === arr.length - 1} style={{ color: i === arr.length - 1 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1, padding: '10px 14px' }}>▼</button>
             </div>
             <div className="tx-info"><span className="tx-note">{WIDGET_LABELS[id]}</span></div>
             <input type="checkbox" switch checked={!hidden.has(id)} onChange={() => toggle(id)} />

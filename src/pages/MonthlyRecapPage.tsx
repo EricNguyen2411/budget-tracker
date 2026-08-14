@@ -55,9 +55,9 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
       </div>
 
       <div className="card" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <button onClick={() => setMonthOffset((m) => m - 1)} style={{ fontSize: 18, color: 'var(--blue)', padding: '4px 12px' }}>‹</button>
+        <button onClick={() => setMonthOffset((m) => m - 1)} style={{ fontSize: 18, color: 'var(--blue)', padding: '13px 12px' }}>‹</button>
         <span style={{ fontSize: 15, fontWeight: 600 }}>{monthLabel}</span>
-        <button onClick={() => setMonthOffset((m) => m + 1)} disabled={monthOffset >= 0} style={{ fontSize: 18, color: monthOffset >= 0 ? 'var(--text-faint)' : 'var(--blue)', padding: '4px 12px' }}>›</button>
+        <button onClick={() => setMonthOffset((m) => m + 1)} disabled={monthOffset >= 0} style={{ fontSize: 18, color: monthOffset >= 0 ? 'var(--text-faint)' : 'var(--blue)', padding: '13px 12px' }}>›</button>
       </div>
 
       {recap.income <= 0 ? (
