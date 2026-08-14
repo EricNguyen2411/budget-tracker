@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { formatCurrency } from '../calculations'
 
 interface DonutSlice {
@@ -65,6 +65,11 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
   preferredStep?: number
 }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setMounted(true))
+    return () => cancelAnimationFrame(t)
+  }, [])
   if (data.length === 0) return null
 
   const maxAbs = Math.max(1, ...data.map((d) => Math.abs(d.value)))
@@ -87,6 +92,10 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
 
   const selected = selectedIndex !== null ? data[selectedIndex] : null
   const axisColumnWidth = 36
+  // A little more breathing room between bars than the old formula gave
+  // at higher bar counts (it went almost to zero gap at 14 bars, which
+  // read as cramped) — clamped to a comfortable range instead.
+  const barGap = Math.min(8, Math.max(3, 10 - data.length / 3))
 
   return (
     <div>
@@ -97,14 +106,15 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
         </div>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
-        <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: Math.max(2, 6 - data.length / 5), borderRight: '1px solid var(--border)' }}>
+        <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: barGap }}>
           {gridLines.map((_, i) => (
-            <div key={i} style={{ position: 'absolute', left: 0, right: 0, bottom: `${(i / (gridLines.length - 1)) * 100}%`, borderTop: '1px dashed var(--border)' }} />
+            <div key={i} style={{ position: 'absolute', left: 0, right: 0, bottom: `${(i / (gridLines.length - 1)) * 100}%`, borderTop: '1px solid rgba(255,255,255,0.06)' }} />
           ))}
           {data.map((d, i) => {
-            const barHeight = (Math.abs(d.value) / axisMax) * (hasNegative ? height / 2 : height)
+            const barHeight = mounted ? (Math.abs(d.value) / axisMax) * (hasNegative ? height / 2 : height) : 0
             const color = d.color ?? (d.value >= 0 ? positiveColor : negativeColor)
             const isSelected = selectedIndex === i
+            const isPositive = d.value >= 0
             return (
               <button
                 key={i}
@@ -114,14 +124,14 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
                 <div
                   style={{
                     width: '100%',
-                    height: Math.max(2, barHeight),
-                    background: color,
-                    opacity: selectedIndex !== null && !isSelected ? 0.4 : 1,
-                    borderRadius: 3,
+                    height: Math.max(3, barHeight),
+                    background: `linear-gradient(${isPositive ? '180deg' : '0deg'}, ${color} 0%, color-mix(in srgb, ${color} 65%, transparent) 100%)`,
+                    opacity: selectedIndex !== null && !isSelected ? 0.35 : 1,
+                    borderRadius: isPositive ? '6px 6px 2px 2px' : '2px 2px 6px 6px',
                     position: 'absolute',
-                    top: hasNegative ? (d.value >= 0 ? zeroLine - barHeight : zeroLine) : undefined,
+                    top: hasNegative ? (isPositive ? zeroLine - barHeight : zeroLine) : undefined,
                     bottom: !hasNegative ? 0 : undefined,
-                    transition: 'opacity 0.15s ease'
+                    transition: 'height 0.5s cubic-bezier(0.22, 1, 0.36, 1), top 0.5s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.15s ease'
                   }}
                 />
               </button>
