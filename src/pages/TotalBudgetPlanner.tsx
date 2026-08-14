@@ -17,6 +17,8 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   const [income, setIncome] = useState('')
   const [savings, setSavings] = useState('')
   const [savingsTouched, setSavingsTouched] = useState(false)
+  const [totalBudget, setTotalBudget] = useState('')
+  const [totalBudgetTouched, setTotalBudgetTouched] = useState(false)
   const [budgets, setBudgets] = useState<Map<string, string>>(new Map(categories.filter((c) => !c.parentId).map((c) => [c.id, c.monthlyBudget ? String(c.monthlyBudget) : ''])))
 
   const now = new Date()
@@ -41,7 +43,39 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   const suggestionByCategory = new Map(suggestions.map((s) => [s.categoryId, s]))
 
   const topLevel = categories.filter((c) => !c.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
-  const totalAllocated = [...budgets.values()].reduce((sum, v) => sum + (parseFloat(v) || 0), 0)
+  const spendingCats = topLevel.filter((c) => !c.isSavingsCategory)
+  // "Other" is the catch-all — whatever's left of the total budget once
+  // every other category (spending AND savings both, since the total is
+  // your full income now, not just what's left after savings) has its
+  // own number set, computed fresh on every render rather than stored
+  // and kept in sync by hand, so it can never drift out of date with
+  // whatever you've typed elsewhere. Matched by name since there's no
+  // dedicated flag for "this is the leftover bucket."
+  const otherCategory = spendingCats.find((c) => c.name.trim().toLowerCase() === 'other')
+
+  // Defaults straight to your income — the whole point is putting your
+  // real income in and allocating every dollar of it yourself, not a
+  // pre-reduced figure you'd then have to add savings back on top of.
+  const effectiveTotalBudget = totalBudgetTouched ? (parseFloat(totalBudget) || 0) : parsedIncome
+
+  const otherRemainder = useMemo(() => {
+    if (!otherCategory) return 0
+    const othersSum = topLevel
+      .filter((c) => c.id !== otherCategory.id)
+      .reduce((sum, c) => sum + (parseFloat(budgets.get(c.id) ?? '') || 0), 0)
+    return Math.max(0, effectiveTotalBudget - othersSum)
+  }, [otherCategory, topLevel, budgets, effectiveTotalBudget])
+
+  // What's actually shown/saved per category — Other is overridden with
+  // the live-computed remainder instead of whatever's sitting in the
+  // budgets map for it.
+  function displayBudget(categoryId: string): string {
+    if (otherCategory && categoryId === otherCategory.id) return String(Math.round(otherRemainder))
+    return budgets.get(categoryId) ?? ''
+  }
+
+  const totalAllocated = spendingCats.reduce((sum, c) => sum + (parseFloat(displayBudget(c.id)) || 0), 0)
+    + topLevel.filter((c) => c.isSavingsCategory).reduce((sum, c) => sum + (parseFloat(budgets.get(c.id) ?? '') || 0), 0)
 
   function applySuggestion(categoryId: string) {
     const s = suggestionByCategory.get(categoryId)
@@ -59,7 +93,7 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
 
   async function handleSave() {
     for (const c of topLevel) {
-      const value = parseFloat(budgets.get(c.id) ?? '') || 0
+      const value = parseFloat(displayBudget(c.id)) || 0
       if (value !== c.monthlyBudget) {
         await saveCategory({ ...c, monthlyBudget: value })
       }
@@ -93,7 +127,20 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
           </p>
         )}
         <p className="hint" style={{ marginTop: 8 }}>
-          Spending categories then split whatever's left of income after savings, weighted by ABS Household Expenditure Survey averages (housing gets the biggest share, entertainment a smaller one) — a general population average, not a personal target, so adjust freely.
+          Used to work out spending suggestions below (splitting whatever's left of income after this, weighted by ABS Household Expenditure Survey averages) — doesn't reduce the Total Budget below, which is your full income. Set the actual savings budget in the category list like any other category.
+        </p>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <label className="field-label">Total Budget</label>
+        <input
+          type="number" inputMode="decimal"
+          placeholder={parsedIncome > 0 ? parsedIncome.toFixed(0) : '0.00'}
+          value={totalBudgetTouched ? totalBudget : (parsedIncome > 0 ? String(Math.round(parsedIncome)) : '')}
+          onChange={(e) => { setTotalBudget(e.target.value); setTotalBudgetTouched(true) }}
+        />
+        <p className="hint" style={{ marginTop: 6 }}>
+          Defaults to your income above — put in the real number and allocate every dollar of it yourself, savings included (set a budget on your savings categories below just like any spending category). {otherCategory ? `"${otherCategory.name}" automatically absorbs whatever's left once everything else has a number, so it always adds up without working out the remainder by hand.` : 'Add a category named "Other" to have it automatically absorb whatever\u2019s left.'}
         </p>
       </div>
 
@@ -106,18 +153,23 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {topLevel.map((c) => {
           const suggestion = suggestionByCategory.get(c.id)
+          const isOther = otherCategory?.id === c.id
           return (
             <div key={c.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                 <span style={{ flex: 1, fontSize: 14 }}>{c.icon} {c.name}{c.isSavingsCategory && <span className="badge">Savings</span>}</span>
                 <input
                   type="number" inputMode="decimal" placeholder="0.00"
-                  value={budgets.get(c.id) ?? ''}
-                  onChange={(e) => setBudgets((prev) => new Map(prev).set(c.id, e.target.value))}
-                  style={{ width: 100, textAlign: 'right' }}
+                  value={displayBudget(c.id)}
+                  onChange={(e) => !isOther && setBudgets((prev) => new Map(prev).set(c.id, e.target.value))}
+                  readOnly={isOther}
+                  style={{ width: 100, textAlign: 'right', color: isOther ? 'var(--text-dim)' : undefined }}
                 />
               </div>
-              {suggestion && (
+              {isOther && (
+                <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Automatically the remainder of your total spending budget</span>
+              )}
+              {suggestion && !isOther && (
                 <button onClick={() => applySuggestion(c.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                   Suggested: {formatCurrency(suggestion.suggestedAmount)} ({suggestion.explanation})
                 </button>
@@ -129,8 +181,8 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
 
       <div className="card" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 14 }}>Total Allocated</span>
-        <span className="amount" style={{ fontWeight: 600, color: parsedIncome > 0 && totalAllocated > parsedIncome ? 'var(--red)' : 'var(--text)' }}>
-          {formatCurrency(totalAllocated)}{parsedIncome > 0 ? ` / ${formatCurrency(parsedIncome)}` : ''}
+        <span className="amount" style={{ fontWeight: 600, color: effectiveTotalBudget > 0 && totalAllocated > effectiveTotalBudget ? 'var(--red)' : 'var(--text)' }}>
+          {formatCurrency(totalAllocated)}{effectiveTotalBudget > 0 ? ` / ${formatCurrency(effectiveTotalBudget)}` : ''}
         </span>
       </div>
     </div>
