@@ -132,26 +132,30 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <label className="field-label">Total Monthly Income</label>
-        <input
-          type="number" inputMode="decimal"
-          placeholder={suggestedIncome > 0 ? suggestedIncome.toFixed(0) : '0.00'}
-          value={incomeTouched ? income : (suggestedIncome > 0 ? String(Math.round(suggestedIncome)) : '')}
-          onChange={(e) => { setIncome(e.target.value); setIncomeTouched(true) }}
-        />
+        <div className="form-row">
+          <span className="form-row-label">Total Monthly Income</span>
+          <input
+            type="number" inputMode="decimal"
+            placeholder={suggestedIncome > 0 ? suggestedIncome.toFixed(0) : '0.00'}
+            value={incomeTouched ? income : (suggestedIncome > 0 ? String(Math.round(suggestedIncome)) : '')}
+            onChange={(e) => { setIncome(e.target.value); setIncomeTouched(true) }}
+          />
+        </div>
         {suggestedIncome > 0 && (
-          <p className="hint" style={{ marginTop: 6 }}>Pre-filled with what you actually earned last month ({formatCurrency(suggestedIncome)}) — change it to whatever you're expecting this month instead.</p>
+          <p className="hint" style={{ marginTop: 10 }}>Pre-filled with what you actually earned last month ({formatCurrency(suggestedIncome)}) — change it to whatever you're expecting this month instead.</p>
         )}
 
-        <label className="field-label">Set Aside for Savings</label>
-        <input
-          type="number" inputMode="decimal"
-          placeholder={suggestedSavings > 0 ? suggestedSavings.toFixed(0) : '0.00'}
-          value={savingsTouched ? savings : (suggestedSavings > 0 ? String(Math.round(suggestedSavings)) : '')}
-          onChange={(e) => { setSavings(e.target.value); setSavingsTouched(true) }}
-        />
+        <div className="form-row">
+          <span className="form-row-label">Set Aside for Savings</span>
+          <input
+            type="number" inputMode="decimal"
+            placeholder={suggestedSavings > 0 ? suggestedSavings.toFixed(0) : '0.00'}
+            value={savingsTouched ? savings : (suggestedSavings > 0 ? String(Math.round(suggestedSavings)) : '')}
+            onChange={(e) => { setSavings(e.target.value); setSavingsTouched(true) }}
+          />
+        </div>
         {suggestedSavings > 0 && (
-          <p className="hint" style={{ marginTop: 6 }}>
+          <p className="hint" style={{ marginTop: 10 }}>
             {goalPaceSavings > 0
               ? `Pre-filled with what your savings goals with a target date actually need this month to stay on pace (${formatCurrency(suggestedSavings)}) — a real number from your goals, not a guess.`
               : `Pre-filled with what you actually saved last month (${formatCurrency(suggestedSavings)}) — no goal with a target date to calculate a pace from yet.`} Change it to whatever you'd rather set aside.
@@ -163,14 +167,16 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <label className="field-label">Total Budget</label>
-        <input
-          type="number" inputMode="decimal"
-          placeholder={parsedIncome > 0 ? parsedIncome.toFixed(0) : '0.00'}
-          value={totalBudgetTouched ? totalBudget : (parsedIncome > 0 ? String(Math.round(parsedIncome)) : '')}
-          onChange={(e) => { setTotalBudget(e.target.value); setTotalBudgetTouched(true) }}
-        />
-        <p className="hint" style={{ marginTop: 6 }}>
+        <div className="form-row">
+          <span className="form-row-label">Total Budget</span>
+          <input
+            type="number" inputMode="decimal"
+            placeholder={parsedIncome > 0 ? parsedIncome.toFixed(0) : '0.00'}
+            value={totalBudgetTouched ? totalBudget : (parsedIncome > 0 ? String(Math.round(parsedIncome)) : '')}
+            onChange={(e) => { setTotalBudget(e.target.value); setTotalBudgetTouched(true) }}
+          />
+        </div>
+        <p className="hint" style={{ marginTop: 10 }}>
           Defaults to your income above — put in the real number and allocate every dollar of it yourself, savings included (set a budget on your savings categories below just like any spending category). {otherCategory ? `"${otherCategory.name}" automatically absorbs whatever's left once everything else has a number, so it always adds up without working out the remainder by hand.` : 'Add a category named "Other" to have it automatically absorb whatever\u2019s left.'}
         </p>
       </div>

@@ -376,6 +376,41 @@ a {
   margin-top: 4px;
 }
 
+/* Matches iOS's standard "inset grouped" form pattern (Settings.app):
+   label on the left, value on the right within the same row, no visible
+   border or background around the input itself, just a thin divider
+   between rows. A stack of full-width boxed inputs (the previous
+   approach) reads as a web form, not a native one. */
+.form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 0.5px solid var(--border);
+}
+.form-row:last-child {
+  border-bottom: none;
+}
+.form-row-label {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+.form-row input {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 16px; /* prevents iOS zoom-on-focus, same reasoning as the global input rule */
+  flex: 1;
+  min-width: 0;
+}
+.form-row input:focus {
+  color: var(--text);
+}
+
 .amount-input {
   font-family: var(--font-mono);
   font-size: 26px;
