@@ -92,20 +92,20 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
       )}
 
       <div className="stat-grid">
-        <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('spent')}>
+        <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(255, 69, 58, 0.08)', borderColor: 'rgba(255, 69, 58, 0.18)' }} onClick={() => onOpenStat('spent')}>
           <span className="stat-label">Spent</span>
           <span className="stat-value amount" style={{ color: 'var(--red)' }}>{formatCurrency(totals.spent)}</span>
         </button>
-        <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('income')}>
+        <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(48, 209, 88, 0.08)', borderColor: 'rgba(48, 209, 88, 0.18)' }} onClick={() => onOpenStat('income')}>
           <span className="stat-label">Income</span>
           <span className="stat-value amount" style={{ color: 'var(--green)' }}>{formatCurrency(totals.income)}</span>
         </button>
-        <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('reimbursed')}>
+        <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(100, 210, 255, 0.08)', borderColor: 'rgba(100, 210, 255, 0.18)' }} onClick={() => onOpenStat('reimbursed')}>
           <span className="stat-label">Reimbursed</span>
           <span className="stat-value amount" style={{ color: 'var(--teal)' }}>{formatCurrency(totals.reimbursed)}</span>
         </button>
         {totals.saved > 0 && (
-          <button className="card stat-card" style={{ textAlign: 'left' }} onClick={() => onOpenStat('saved')}>
+          <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(94, 92, 230, 0.08)', borderColor: 'rgba(94, 92, 230, 0.18)' }} onClick={() => onOpenStat('saved')}>
             <span className="stat-label">Saved</span>
             <span className="stat-value amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
           </button>
