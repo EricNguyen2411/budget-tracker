@@ -76,7 +76,7 @@ git branch -M main
 git remote add origin https://github.com/EricNguyen2411/budget-tracker.git
 git push -u origin main
 ```
-First time using Git, a browser window may pop up ascking you to sign into GitHub — approve it.
+First time using Git, a browser window may pop up ascsking you to sign into GitHub — approve it.
 
 ## Step 8 — Turn on automatic deployment
 
