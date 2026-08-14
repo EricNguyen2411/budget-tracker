@@ -203,6 +203,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
 
           <label className="field-label">{parentId ? "Monthly Budget (rolls up into parent's total)" : 'Monthly Budget'}</label>
           <input type="number" inputMode="decimal" placeholder="0.00" value={budget} onChange={(e) => setBudget(e.target.value)} />
+          <p className="hint" style={{ marginTop: -8, marginBottom: 12 }}>For setting budgets across all categories at once against your income, use More → Total Budget Planner instead.</p>
 
           {!isSavings && (
             <>

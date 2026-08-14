@@ -81,6 +81,22 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
               <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Saved — {Math.round(recap.savedPct * 100)}% <span style={{ color: 'var(--text-faint)' }}>(~20% guide)</span></span>
               <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(recap.totalSaved)}</span>
             </button>
+
+            {(() => {
+              const netAmount = recap.income - recap.totalSaved - recap.needsSpent - recap.wantsSpent
+              const unclassified = recap.totalSpent - recap.needsSpent - recap.wantsSpent
+              return (
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Net (Income − Saved − Needs − Wants)</span>
+                    <span className="amount" style={{ fontWeight: 600, color: netAmount >= 0 ? 'var(--green)' : 'var(--red)' }}>{formatCurrency(netAmount)}</span>
+                  </div>
+                  {unclassified > 1 && (
+                    <p className="hint" style={{ marginTop: 6 }}>Includes {formatCurrency(unclassified)} of spending not classified as a need or want, so it's folded into this figure rather than subtracted separately — set Need/Want on those categories for a more precise number.</p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           {recap.suggestions.length > 0 && (

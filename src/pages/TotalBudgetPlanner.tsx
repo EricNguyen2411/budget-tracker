@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { suggestBudgets } from '../budgetSuggestions'
-import { formatCurrency, goalProgress } from '../calculations'
+import { formatCurrency, goalProgress, computeDashboardTotals } from '../calculations'
 import { saveCategory } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 
@@ -15,6 +15,7 @@ interface Props {
 export default function TotalBudgetPlanner({ categories, transactions, onBack, onChanged }: Props) {
   useSwipeBack(onBack)
   const [income, setIncome] = useState('')
+  const [incomeTouched, setIncomeTouched] = useState(false)
   const [savings, setSavings] = useState('')
   const [savingsTouched, setSavingsTouched] = useState(false)
   const [totalBudget, setTotalBudget] = useState('')
@@ -22,12 +23,24 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   const [budgets, setBudgets] = useState<Map<string, string>>(new Map(categories.filter((c) => !c.parentId).map((c) => [c.id, c.monthlyBudget ? String(c.monthlyBudget) : ''])))
 
   const now = new Date()
-  const parsedIncome = parseFloat(income) || 0
+
+  // Auto-populated from what you actually earned last month — the last
+  // FULL month, not the still-in-progress current one, since that
+  // wouldn't be a complete figure yet. Still fully editable, same as
+  // savings and the total below.
+  const lastMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth() - 1, 1), [])
+  const lastMonthTotals = useMemo(() => computeDashboardTotals(categories, transactions, lastMonth), [categories, transactions, lastMonth])
+  const suggestedIncome = lastMonthTotals.income
+
+  const effectiveIncome = incomeTouched ? (parseFloat(income) || 0) : suggestedIncome
+  const parsedIncome = effectiveIncome
 
   // A smart starting point for the savings field: what your existing
   // goals with a target date actually need this month to stay on pace,
   // summed up — not a guess, the real gap-over-months-remaining math.
-  const suggestedSavings = useMemo(() => {
+  // Falls back to what you actually saved last month if there's no
+  // goal with a target date to calculate a pace from at all.
+  const goalPaceSavings = useMemo(() => {
     const goalCats = categories.filter((c) => !c.parentId && c.isSavingsCategory && c.goalTargetDate && c.goalTargetAmount > 0)
     return goalCats.reduce((sum, c) => {
       const remaining = c.goalTargetAmount - goalProgress(c, transactions)
@@ -37,6 +50,8 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
       return sum + remaining / monthsLeft
     }, 0)
   }, [categories, transactions])
+  const suggestedSavings = goalPaceSavings > 0 ? goalPaceSavings : lastMonthTotals.saved
+
 
   const effectiveSavings = savingsTouched ? (parseFloat(savings) || 0) : suggestedSavings
   const suggestions = parsedIncome > 0 ? suggestBudgets(categories, parsedIncome, effectiveSavings, transactions, now) : []
@@ -110,9 +125,23 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
         <button className="text-button text-button-primary" onClick={handleSave}>Save</button>
       </div>
 
+      <div className="card" style={{ marginBottom: 16, borderLeft: '3px solid var(--blue)' }}>
+        <p style={{ fontSize: 13, lineHeight: 1.5 }}>
+          Use this for setting up all your budgets at once against your income, or a full rebalance — it saves every category's budget together when you tap Save above. For a quick one-off tweak to a single category, edit it directly in <strong>More → Categories</strong> instead, which is faster and saves immediately.
+        </p>
+      </div>
+
       <div className="card" style={{ marginBottom: 16 }}>
         <label className="field-label">Total Monthly Income</label>
-        <input type="number" inputMode="decimal" placeholder="0.00" value={income} onChange={(e) => setIncome(e.target.value)} />
+        <input
+          type="number" inputMode="decimal"
+          placeholder={suggestedIncome > 0 ? suggestedIncome.toFixed(0) : '0.00'}
+          value={incomeTouched ? income : (suggestedIncome > 0 ? String(Math.round(suggestedIncome)) : '')}
+          onChange={(e) => { setIncome(e.target.value); setIncomeTouched(true) }}
+        />
+        {suggestedIncome > 0 && (
+          <p className="hint" style={{ marginTop: 6 }}>Pre-filled with what you actually earned last month ({formatCurrency(suggestedIncome)}) — change it to whatever you're expecting this month instead.</p>
+        )}
 
         <label className="field-label">Set Aside for Savings</label>
         <input
@@ -123,7 +152,9 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
         />
         {suggestedSavings > 0 && (
           <p className="hint" style={{ marginTop: 6 }}>
-            Pre-filled with what your savings goals with a target date actually need this month to stay on pace ({formatCurrency(suggestedSavings)}) — a real number from your goals, not a guess. Change it to whatever you'd rather set aside.
+            {goalPaceSavings > 0
+              ? `Pre-filled with what your savings goals with a target date actually need this month to stay on pace (${formatCurrency(suggestedSavings)}) — a real number from your goals, not a guess.`
+              : `Pre-filled with what you actually saved last month (${formatCurrency(suggestedSavings)}) — no goal with a target date to calculate a pace from yet.`} Change it to whatever you'd rather set aside.
           </p>
         )}
         <p className="hint" style={{ marginTop: 8 }}>
