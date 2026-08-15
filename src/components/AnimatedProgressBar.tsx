@@ -15,6 +15,7 @@ interface Props {
  * animate. */
 export default function AnimatedProgressBar({ fraction, color, trackStyle }: Props) {
   const [width, setWidth] = useState(0)
+  const reached = fraction >= 1
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => setWidth(Math.min(1, Math.max(0, fraction)) * 100))
@@ -23,7 +24,7 @@ export default function AnimatedProgressBar({ fraction, color, trackStyle }: Pro
 
   return (
     <div className="progress-track" style={trackStyle}>
-      <div className="progress-fill" style={{ width: `${width}%`, background: color }} />
+      <div className={`progress-fill${reached ? ' progress-fill-reached' : ''}`} style={{ width: `${width}%`, background: color }} />
     </div>
   )
 }

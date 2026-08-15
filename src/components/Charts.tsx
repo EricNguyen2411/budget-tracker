@@ -57,12 +57,13 @@ export interface BarDatum {
  * which show gridline numbers and let you tap a bar to see that
  * specific day/month's figure rather than just an unlabeled shape.
  */
-export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', negativeColor = 'var(--red)', preferredStep }: {
+export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', negativeColor = 'var(--red)', preferredStep, defaultSummary }: {
   data: BarDatum[]
   height?: number
   positiveColor?: string
   negativeColor?: string
   preferredStep?: number
+  defaultSummary?: React.ReactNode
 }) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -99,12 +100,14 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
 
   return (
     <div>
-      {selected && (
+      {selected ? (
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 13 }}>
           <span style={{ color: 'var(--text-dim)' }}>{selected.label}</span>
           <span className="amount" style={{ fontWeight: 600 }}>{formatCurrency(selected.value)}</span>
         </div>
-      )}
+      ) : defaultSummary ? (
+        <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-dim)' }}>{defaultSummary}</div>
+      ) : null}
       <div style={{ display: 'flex', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: barGap }}>
           {gridLines.map((_, i) => (

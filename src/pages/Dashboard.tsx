@@ -22,6 +22,30 @@ interface Props {
   onOpenImport: (files: FileList) => void
 }
 
+/** Compares the last two COMPLETE periods, deliberately excluding the
+ * final entry when it represents the current, still-in-progress
+ * period — last6PeriodsSpend/last6PeriodsNetSavings both include the
+ * current month as their last data point, and comparing an
+ * in-progress month against a full one would show a misleading swing
+ * purely because the month isn't over yet, not because spending
+ * actually changed. */
+function trendSummary(values: number[], label: string, excludeCurrent: boolean): React.ReactNode {
+  const complete = excludeCurrent ? values.slice(0, -1) : values
+  if (complete.length < 2) return null
+  const current = complete[complete.length - 1]
+  const previous = complete[complete.length - 2]
+  if (previous === 0) return null
+  const pctChange = ((current - previous) / Math.abs(previous)) * 100
+  const up = pctChange > 0
+  const color = label === 'spending' ? (up ? 'var(--red)' : 'var(--green)') : (up ? 'var(--green)' : 'var(--red)')
+  return (
+    <span>
+      <span style={{ color, fontWeight: 600 }}>{up ? '↑' : '↓'} {Math.abs(pctChange).toFixed(0)}%</span>
+      {' '}{label} vs last month
+    </span>
+  )
+}
+
 export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport }: Props) {
   const now = new Date()
   const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
@@ -249,42 +273,57 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
           last14Days: dailySpend.some((d) => d.amount > 0) && (
             <div className="card" style={{ marginTop: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 12px' }}>Last 14 Days</span>
-              <BarChart data={dailySpend.map((d) => ({
-                label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
-                axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
-                value: d.amount,
-                onSelect: () => onOpenDateRange(d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }), localDateInputValue(d.date), localDateInputValue(d.date))
-              }))} height={100} preferredStep={200} />
+              <BarChart
+                data={dailySpend.map((d) => ({
+                  label: d.date.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }),
+                  axisLabel: d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'numeric' }),
+                  value: d.amount,
+                  onSelect: () => onOpenDateRange(d.date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }), localDateInputValue(d.date), localDateInputValue(d.date))
+                }))}
+                height={100}
+                preferredStep={200}
+                defaultSummary={`Averaging ${formatCurrency(dailySpend.reduce((s, d) => s + d.amount, 0) / dailySpend.length)}/day`}
+              />
             </div>
           ),
 
           monthlyTrend: monthlyTrend.some((d) => d.amount > 0) && (
             <div className="card" style={{ marginTop: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 12px' }}>Monthly Trend</span>
-              <BarChart data={monthlyTrend.map((d) => {
-                const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
-                return {
-                  label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
-                  axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
-                  value: d.amount,
-                  onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
-                }
-              })} height={100} preferredStep={2000} />
+              <BarChart
+                data={monthlyTrend.map((d) => {
+                  const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
+                  return {
+                    label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
+                    axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
+                    value: d.amount,
+                    onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
+                  }
+                })}
+                height={100}
+                preferredStep={2000}
+                defaultSummary={trendSummary(monthlyTrend.map((d) => d.amount), 'spending', true)}
+              />
             </div>
           ),
 
           netSavingsTrend: netSavingsTrend.some((d) => d.amount !== 0) && (
             <div className="card" style={{ marginTop: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 12px' }}>Net Savings Trend</span>
-              <BarChart data={netSavingsTrend.map((d) => {
-                const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
-                return {
-                  label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
-                  axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
-                  value: d.amount,
-                  onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
-                }
-              })} height={100} preferredStep={2000} />
+              <BarChart
+                data={netSavingsTrend.map((d) => {
+                  const monthEnd = new Date(d.periodStart.getFullYear(), d.periodStart.getMonth() + 1, d.periodStart.getDate() - 1)
+                  return {
+                    label: d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }),
+                    axisLabel: d.periodStart.toLocaleDateString('en-AU', { month: 'short' }),
+                    value: d.amount,
+                    onSelect: () => onOpenDateRange(d.periodStart.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' }), localDateInputValue(d.periodStart), localDateInputValue(monthEnd))
+                  }
+                })}
+                height={100}
+                preferredStep={2000}
+                defaultSummary={trendSummary(netSavingsTrend.map((d) => d.amount), 'net savings', true)}
+              />
             </div>
           ),
 
