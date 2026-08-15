@@ -14,7 +14,10 @@ export function useModalClose(onClose: () => void) {
   function requestClose(action?: () => void) {
     if (closing) return
     setClosing(true)
-    setTimeout(action ?? onClose, CLOSE_DURATION)
+    setTimeout(() => {
+      setClosing(false)
+      ;(action ?? onClose)()
+    }, CLOSE_DURATION)
   }
 
   return { closing, requestClose }

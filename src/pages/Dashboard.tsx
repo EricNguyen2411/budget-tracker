@@ -30,7 +30,12 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
 
   const topLevelForBudget = categories.filter((c) => !c.parentId)
   const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  // Spending categories only, for display — savings already gets its
+  // own line below (Savings & Investments This Month), so folding it in
+  // here too would show the same dollars twice even though the actual
+  // Safe to Spend total underneath is unaffected either way.
   const netSpentSoFar = topLevelForBudget
+    .filter((c) => !c.isSavingsCategory)
     .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
   // Prorated across the year rather than only counting what happens to
   // be due this exact month — an annual premium due in October still
@@ -94,13 +99,13 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 <span style={{ fontSize: 14 }}>Savings & Investments This Month</span>
                 <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}>
-                <span style={{ fontSize: 14 }}>Recurring & Subscriptions (Monthly Reserve)</span>
-                <span className="amount" style={{ color: 'var(--red)' }}>−{formatCurrency(monthlyRecurringReserve)}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0' }}>
+                <span style={{ fontSize: 14, minWidth: 0 }}>Recurring & Subscriptions (Monthly Reserve)</span>
+                <span className="amount" style={{ color: 'var(--red)', flexShrink: 0 }}>−{formatCurrency(monthlyRecurringReserve)}</span>
               </div>
               <p className="hint" style={{ marginTop: 4 }}>Yearly and weekly recurring items are prorated to a monthly share here (an annual premium becomes 1/12th), reserved year-round rather than only in the month it's actually due — so Safe to Spend already has it set aside.</p>
               <p className="hint" style={{ marginTop: 12 }}>
-                Safe to Spend is your Monthly Budget minus Net Spend So Far — including any savings contributions, since money set aside isn't available to spend on anything else — minus a monthly reserve for recurring bills and subscriptions (below), prorating yearly ones like an annual insurance premium into a monthly share.
+                Safe to Spend is Monthly Budget minus Net Spend So Far minus Savings & Investments minus the Recurring & Subscriptions reserve — four separate deductions, each shown as its own line below rather than folded into another, so nothing is counted twice. Savings contributions reduce it because money set aside isn't available to spend on anything else; yearly recurring items (an annual insurance premium) are prorated into a monthly share so they're reserved for year-round, not just the month they're actually due.
               </p>
             </div>
           </div>
