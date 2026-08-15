@@ -1,5 +1,6 @@
 import type { Category, Transaction } from '../types'
 import { netSpentForCategory, effectiveBudget, formatCurrency } from '../calculations'
+import AnimatedProgressBar from '../components/AnimatedProgressBar'
 
 interface Props {
   categories: Category[]
@@ -34,9 +35,7 @@ export default function Budgets({ categories, transactions, onOpenCategory }: Pr
               </span>
             </div>
             {budget > 0 && (
-              <div className="progress-track" style={{ marginTop: 10 }}>
-                <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: over ? 'var(--red)' : category.color }} />
-              </div>
+              <AnimatedProgressBar fraction={fraction} color={over ? 'var(--red)' : category.color} trackStyle={{ marginTop: 10 }} />
             )}
             {subs.length > 0 && (
               <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>

@@ -41,7 +41,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
-  const filtered = transactions.filter((t) => {
+  const filtered = useMemo(() => transactions.filter((t) => {
     if (filter === 'income' && t.isExpense) return false
     if (filter === 'expense' && !t.isExpense) return false
     if (filter === 'income' && unlinkedOnly && t.reimbursesExpenseId) return false
@@ -51,7 +51,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
       if (!haystack.includes(search.toLowerCase())) return false
     }
     return true
-  })
+  }), [transactions, filter, unlinkedOnly, search, categoryById])
 
   const groups = useMemo(() => {
     const map = new Map<string, Transaction[]>()

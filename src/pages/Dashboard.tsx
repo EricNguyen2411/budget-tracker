@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Category, Transaction, RecurringTransaction } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses } from '../calculations'
 import { generateInsights } from '../insights'
@@ -7,6 +7,8 @@ import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWid
 import { CameraIcon } from '../icons'
 import { useModalClose } from '../useModalClose'
 import { buildMonthRecap } from '../monthlyRecap'
+import AnimatedProgressBar from '../components/AnimatedProgressBar'
+import AnimatedNumber from '../components/AnimatedNumber'
 
 interface Props {
   categories: Category[]
@@ -22,7 +24,7 @@ interface Props {
 
 export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport }: Props) {
   const now = new Date()
-  const totals = computeDashboardTotals(categories, transactions, now, recurring)
+  const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
   const days = daysRemainingInMonth(now)
   const perDay = Math.max(0, totals.safeToSpend) / days
   const [showBreakdown, setShowBreakdown] = useState(false)
@@ -50,17 +52,17 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
     .sort((a, b) => b.spent / (b.budget || 1) - a.spent / (a.budget || 1))
     .slice(0, 5)
 
-  const insights = generateInsights(categories, transactions, now)
+  const insights = useMemo(() => generateInsights(categories, transactions, now), [categories, transactions, now.toDateString()])
   const goalCategories = categories.filter((c) => !c.parentId && isGoal(c))
 
-  const pieSlices = categoryBreakdown(categories, transactions, now)
-  const dailySpend = last14DaysSpend(transactions, categories, now)
-  const monthRecap = buildMonthRecap(categories, transactions, now)
+  const pieSlices = useMemo(() => categoryBreakdown(categories, transactions, now), [categories, transactions, now.toDateString()])
+  const dailySpend = useMemo(() => last14DaysSpend(transactions, categories, now), [categories, transactions, now.toDateString()])
+  const monthRecap = useMemo(() => buildMonthRecap(categories, transactions, now), [categories, transactions, now.toDateString()])
   const monthRecapLabel = now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
-  const monthlyTrend = last6PeriodsSpend(categories, transactions, now)
-  const netSavingsTrend = last6PeriodsNetSavings(categories, transactions, now)
+  const monthlyTrend = useMemo(() => last6PeriodsSpend(categories, transactions, now), [categories, transactions, now.toDateString()])
+  const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(categories, transactions, now), [categories, transactions, now.toDateString()])
   const hidden = getHiddenWidgets()
-  const topMerchants = topMerchantsThisMonth(transactions, categories, now)
+  const topMerchants = useMemo(() => topMerchantsThisMonth(transactions, categories, now), [categories, transactions, now.toDateString()])
 
   return (
     <div className="screen">
@@ -74,7 +76,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
 
       <div className="card hero-card">
         <span className="hero-label">Safe to Spend</span>
-        <span className="hero-amount amount">{formatCurrency(totals.safeToSpend)}</span>
+        <span className="hero-amount amount"><AnimatedNumber value={totals.safeToSpend} format={formatCurrency} /></span>
         <span className="hero-sub">{formatCurrency(perDay)}/day for {days} more day{days === 1 ? '' : 's'} this month</span>
         <button style={{ color: 'var(--blue)', fontSize: 13, marginTop: 8 }} onClick={() => setShowBreakdown(true)}>How is this calculated?</button>
       </div>
@@ -115,20 +117,20 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
       <div className="stat-grid">
         <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(255, 69, 58, 0.08)', borderColor: 'rgba(255, 69, 58, 0.18)' }} onClick={() => onOpenStat('spent')}>
           <span className="stat-label">Spent</span>
-          <span className="stat-value amount" style={{ color: 'var(--red)' }}>{formatCurrency(totals.spent)}</span>
+          <span className="stat-value amount" style={{ color: 'var(--red)' }}><AnimatedNumber value={totals.spent} format={formatCurrency} /></span>
         </button>
         <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(48, 209, 88, 0.08)', borderColor: 'rgba(48, 209, 88, 0.18)' }} onClick={() => onOpenStat('income')}>
           <span className="stat-label">Income</span>
-          <span className="stat-value amount" style={{ color: 'var(--green)' }}>{formatCurrency(totals.income)}</span>
+          <span className="stat-value amount" style={{ color: 'var(--green)' }}><AnimatedNumber value={totals.income} format={formatCurrency} /></span>
         </button>
         <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(100, 210, 255, 0.08)', borderColor: 'rgba(100, 210, 255, 0.18)' }} onClick={() => onOpenStat('reimbursed')}>
           <span className="stat-label">Reimbursed</span>
-          <span className="stat-value amount" style={{ color: 'var(--teal)' }}>{formatCurrency(totals.reimbursed)}</span>
+          <span className="stat-value amount" style={{ color: 'var(--teal)' }}><AnimatedNumber value={totals.reimbursed} format={formatCurrency} /></span>
         </button>
         {totals.saved > 0 && (
           <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(94, 92, 230, 0.08)', borderColor: 'rgba(94, 92, 230, 0.18)' }} onClick={() => onOpenStat('saved')}>
             <span className="stat-label">Saved</span>
-            <span className="stat-value amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
+            <span className="stat-value amount" style={{ color: 'var(--indigo)' }}><AnimatedNumber value={totals.saved} format={formatCurrency} /></span>
           </button>
         )}
       </div>
@@ -162,9 +164,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                         {fraction >= 1 ? 'Reached!' : `${Math.round(fraction * 100)}%`}
                       </span>
                     </div>
-                    <div className="progress-track">
-                      <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: fraction >= 1 ? 'var(--green)' : c.color }} />
-                    </div>
+                    <AnimatedProgressBar fraction={fraction} color={fraction >= 1 ? 'var(--green)' : c.color} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
                       <span className="amount">{formatCurrency(progress)} of {formatCurrency(c.goalTargetAmount)}</span>
                       {projected && <span>~{projected.toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })}</span>}
@@ -187,9 +187,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                       <span>{category.icon} {category.name}</span>
                       <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(spent)} / {formatCurrency(budget)}</span>
                     </div>
-                    <div className="progress-track">
-                      <div className="progress-fill" style={{ width: `${fraction * 100}%`, background: over ? 'var(--red)' : category.color }} />
-                    </div>
+                    <AnimatedProgressBar fraction={fraction} color={over ? 'var(--red)' : category.color} />
                   </button>
                 )
               })}

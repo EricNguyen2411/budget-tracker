@@ -3,6 +3,7 @@ import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, reimbursementNote, repaysNote } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
+import AnimatedProgressBar from '../components/AnimatedProgressBar'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
 
@@ -57,9 +58,7 @@ export default function CategoryDetail({ category, allCategories, transactions, 
               {Math.round(goalProgressFraction(category, transactions) * 100)}%
             </span>
           </div>
-          <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${goalProgressFraction(category, transactions) * 100}%`, background: category.color }} />
-          </div>
+          <AnimatedProgressBar fraction={goalProgressFraction(category, transactions)} color={category.color} />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>
             <span className="amount">{formatCurrency(goalProgress(category, transactions))} of {formatCurrency(category.goalTargetAmount)}</span>
             {(() => {
@@ -76,9 +75,7 @@ export default function CategoryDetail({ category, allCategories, transactions, 
             <span>Spent this period</span>
             <span className="amount" style={{ color: spent > budget ? 'var(--red)' : 'var(--text-dim)' }}>{formatCurrency(spent)} / {formatCurrency(budget)}</span>
           </div>
-          <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${Math.min(100, (spent / budget) * 100)}%`, background: spent > budget ? 'var(--red)' : category.color }} />
-          </div>
+          <AnimatedProgressBar fraction={budget > 0 ? spent / budget : 0} color={spent > budget ? 'var(--red)' : category.color} />
         </div>
       )}
 

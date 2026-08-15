@@ -4,6 +4,7 @@ import { buildMonthRecap, classify } from '../monthlyRecap'
 import { formatCurrency } from '../calculations'
 import { useSwipeBack } from '../useSwipeBack'
 import RecapBucketDetail, { type RecapBucket } from './RecapBucketDetail'
+import AnimatedProgressBar from '../components/AnimatedProgressBar'
 
 interface Props {
   categories: Category[]
@@ -125,9 +126,7 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
                       {g.fraction >= 1 ? 'Reached!' : g.onTrack === false ? 'Behind pace' : g.onTrack === true ? 'On track' : `${Math.round(g.fraction * 100)}%`}
                     </span>
                   </div>
-                  <div className="progress-track">
-                    <div className="progress-fill" style={{ width: `${Math.min(1, g.fraction) * 100}%`, background: g.fraction >= 1 ? 'var(--green)' : 'var(--indigo)' }} />
-                  </div>
+                  <AnimatedProgressBar fraction={g.fraction} color={g.fraction >= 1 ? 'var(--green)' : 'var(--indigo)'} />
                   <div className="amount" style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>{formatCurrency(g.progress)} of {formatCurrency(g.target)}</div>
                 </button>
               ))}
