@@ -2,7 +2,7 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
-import { learnMerchant } from './merchantRules'
+import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
 
 interface AutoBackupEntry {
   id: string
@@ -100,6 +100,7 @@ export async function deleteCategory(id: string) {
   }
 
   await tx.done
+  removeCategoryFromMerchantRules(id)
 }
 
 /** Reassigns every transaction, recurring item, and shopping list
@@ -130,6 +131,7 @@ export async function mergeCategoryInto(sourceId: string, targetId: string): Pro
 
   await tx.objectStore('categories').delete(sourceId)
   await tx.done
+  mergeCategoryInMerchantRules(sourceId, targetId)
 
   return { movedCount }
 }

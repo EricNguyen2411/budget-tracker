@@ -5,6 +5,7 @@ import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
 import { isInSamePeriod } from '../budgetPeriod'
+import { buildMonthRecap } from '../monthlyRecap'
 
 interface Props {
   categories: Category[]
@@ -13,9 +14,11 @@ interface Props {
   onOpenCategory: (id: string) => void
   onOpenStat: (kind: 'spent' | 'income' | 'reimbursed' | 'saved') => void
   onOpenDateRange: (title: string, start: string, end: string) => void
+  onOpenMonthRecap: () => void
+  onOpenCategoryBreakdown: () => void
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown }: Props) {
   const now = new Date()
   const totals = computeDashboardTotals(categories, transactions, now)
   const days = daysRemainingInMonth(now)
@@ -43,6 +46,8 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
 
   const pieSlices = categoryBreakdown(categories, transactions, now)
   const dailySpend = last14DaysSpend(transactions, categories, now)
+  const monthRecap = buildMonthRecap(categories, transactions, now)
+  const monthRecapLabel = now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
   const monthlyTrend = last6PeriodsSpend(categories, transactions, now)
   const netSavingsTrend = last6PeriodsNetSavings(categories, transactions, now)
   const hidden = getHiddenWidgets()
@@ -179,7 +184,9 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
             <div className="card" style={{ marginTop: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 12px' }}>Spending by Category</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-                <DonutChart slices={pieSlices.map((s) => ({ label: s.name, value: s.amount, color: s.color }))} />
+                <button onClick={onOpenCategoryBreakdown} style={{ flexShrink: 0 }}>
+                  <DonutChart slices={pieSlices.map((s) => ({ label: s.name, value: s.amount, color: s.color }))} />
+                </button>
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {pieSlices.slice(0, 6).map((s) => (
                     <button key={s.categoryId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, width: '100%', textAlign: 'left' }} onClick={() => onOpenCategory(s.categoryId)}>
@@ -191,6 +198,38 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 </div>
               </div>
             </div>
+          ),
+
+          monthRecap: monthRecap.income > 0 && (
+            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenMonthRecap}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Month in Review — {monthRecapLabel}</span>
+                <span className="chevron">›</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Needs</div>
+                  <div className="amount" style={{ fontSize: 15 }}>{formatCurrency(monthRecap.needsSpent)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Wants</div>
+                  <div className="amount" style={{ fontSize: 15 }}>{formatCurrency(monthRecap.wantsSpent)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Saved</div>
+                  <div className="amount" style={{ fontSize: 15, color: 'var(--indigo)' }}>{formatCurrency(monthRecap.totalSaved)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>Net</div>
+                  <div className="amount" style={{ fontSize: 15, color: (monthRecap.income - monthRecap.totalSaved - monthRecap.needsSpent - monthRecap.wantsSpent) >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {formatCurrency(monthRecap.income - monthRecap.totalSaved - monthRecap.needsSpent - monthRecap.wantsSpent)}
+                  </div>
+                </div>
+              </div>
+              {monthRecap.suggestions[0] && (
+                <p className="hint" style={{ margin: 0 }}>💡 {monthRecap.suggestions[0]}</p>
+              )}
+            </button>
           ),
 
           last14Days: dailySpend.some((d) => d.amount > 0) && (

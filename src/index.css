@@ -326,6 +326,8 @@ a {
 
 /* ---- List buttons (More page) ---- */
 .list-button {
+  display: block;
+  width: 100%;
   text-align: left;
   padding: 13px 0;
   color: var(--blue);

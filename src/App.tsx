@@ -137,6 +137,8 @@ export default function App() {
           onOpenCategory={(id) => setCategoryDetailId(id)}
           onOpenStat={(kind) => setStatDetail(kind)}
           onOpenDateRange={(title, start, end) => setDateRangeNav({ title, start, end })}
+          onOpenMonthRecap={() => setTab('monthlyrecap')}
+          onOpenCategoryBreakdown={() => setTab('categorybreakdown')}
         />
       )}
       {tab === 'transactions' && (
