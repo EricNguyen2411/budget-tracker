@@ -20,6 +20,7 @@ export default function RecurringPage({ categories, transactions, recurring, onC
   useSwipeBack(onBack)
   const [dismissed, setDismissed] = useState(getSettings().dismissedRecurringSuggestions)
   const [editingItem, setEditingItem] = useState<RecurringTransaction | null>(null)
+  const [creatingNew, setCreatingNew] = useState(false)
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
   const suggestions = useMemo(
@@ -61,7 +62,7 @@ export default function RecurringPage({ categories, transactions, recurring, onC
       <div className="screen-header-row">
         <button onClick={onBack} className="text-button">‹ More</button>
         <h1 className="screen-title" style={{ fontSize: 20 }}>Recurring</h1>
-        <span style={{ width: 40 }} />
+        <button onClick={() => setCreatingNew(true)} className="text-button text-button-primary" style={{ fontSize: 24, lineHeight: 1 }}>+</button>
       </div>
 
       {suggestions.length > 0 && (
@@ -110,12 +111,27 @@ export default function RecurringPage({ categories, transactions, recurring, onC
         )
       })}
 
-      {editingItem && (
+      {(editingItem || creatingNew) && (
         <RecurringEditor
           item={editingItem}
           categories={categories}
-          onSave={async (data) => { await saveRecurring({ ...editingItem, ...data }); onChanged() }}
-          onClose={() => setEditingItem(null)}
+          onSave={async (data) => {
+            if (editingItem) {
+              await saveRecurring({ ...editingItem, ...data })
+            } else {
+              await createRecurring({
+                note: data.note ?? '',
+                amount: data.amount ?? 0,
+                frequency: data.frequency ?? 'monthly',
+                nextDueDate: data.nextDueDate ?? new Date().toISOString(),
+                categoryId: data.categoryId ?? null,
+                isExpense: true,
+                isActive: true
+              })
+            }
+            onChanged()
+          }}
+          onClose={() => { setEditingItem(null); setCreatingNew(false) }}
         />
       )}
     </div>
@@ -123,16 +139,16 @@ export default function RecurringPage({ categories, transactions, recurring, onC
 }
 
 function RecurringEditor({ item, categories, onSave, onClose }: {
-  item: RecurringTransaction
+  item: RecurringTransaction | null
   categories: Category[]
   onSave: (data: Partial<RecurringTransaction>) => void
   onClose: () => void
 }) {
-  const [note, setNote] = useState(item.note)
-  const [amount, setAmount] = useState(String(item.amount))
-  const [frequency, setFrequency] = useState<RecurrenceFrequency>(item.frequency)
-  const [nextDueDate, setNextDueDate] = useState(localDateInputValue(new Date(item.nextDueDate)))
-  const [categoryId, setCategoryId] = useState<string | null>(item.categoryId)
+  const [note, setNote] = useState(item?.note ?? '')
+  const [amount, setAmount] = useState(item ? String(item.amount) : '')
+  const [frequency, setFrequency] = useState<RecurrenceFrequency>(item?.frequency ?? 'monthly')
+  const [nextDueDate, setNextDueDate] = useState(localDateInputValue(item ? new Date(item.nextDueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))
+  const [categoryId, setCategoryId] = useState<string | null>(item?.categoryId ?? null)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
   const category = categories.find((c) => c.id === categoryId)
   const { closing, requestClose } = useModalClose(onClose)
@@ -157,7 +173,7 @@ function RecurringEditor({ item, categories, onSave, onClose }: {
       <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <button onClick={() => requestClose()} className="text-button">Cancel</button>
-          <span className="modal-title">Edit Recurring</span>
+          <span className="modal-title">{item ? 'Edit Recurring' : 'New Recurring'}</span>
           <button onClick={handleSave} className="text-button text-button-primary">Save</button>
         </div>
         <div className="modal-body">
