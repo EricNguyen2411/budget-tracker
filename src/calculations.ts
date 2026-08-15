@@ -1,4 +1,4 @@
-import type { Category, Transaction } from './types'
+import type { Category, Transaction, RecurringTransaction } from './types'
 import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetPeriod'
 
 export function startOfMonth(date: Date): Date {
@@ -86,7 +86,23 @@ export interface DashboardTotals {
   safeToSpend: number
 }
 
-export function computeDashboardTotals(categories: Category[], transactions: Transaction[], referenceDate: Date): DashboardTotals {
+/** Prorates recurring expenses to a monthly-equivalent figure — a
+ * yearly insurance premium or car registration becomes 1/12th of its
+ * amount, a weekly one becomes roughly 4.33x. This is what lets an
+ * annual bill be accounted for in Safe to Spend every month, not just
+ * the one month it's actually due in. */
+export function monthlyEquivalentRecurringExpenses(recurring: RecurringTransaction[]): number {
+  return recurring
+    .filter((r) => r.isActive && r.isExpense)
+    .reduce((sum, r) => {
+      if (r.frequency === 'monthly') return sum + r.amount
+      if (r.frequency === 'yearly') return sum + r.amount / 12
+      if (r.frequency === 'weekly') return sum + (r.amount * 52) / 12
+      return sum
+    }, 0)
+}
+
+export function computeDashboardTotals(categories: Category[], transactions: Transaction[], referenceDate: Date, recurring: RecurringTransaction[] = []): DashboardTotals {
   const topLevel = categories.filter((c) => !c.parentId)
   const thisMonth = transactions.filter((t) => isInSamePeriod(new Date(t.date), referenceDate))
 
@@ -117,13 +133,22 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
       return sum
     }, 0)
 
-  // Savings categories are deliberately excluded here — contributing to
-  // a sinking fund (an annual insurance premium, car registration, etc)
-  // is money being set aside, not money being spent, and shouldn't
-  // reduce what's safe to spend on everything else this month.
-  const totalBudget = spendingCategories.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
-  const totalNetBudgetedSpent = spendingCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
-  const safeToSpend = totalBudget - totalNetBudgetedSpent
+  // A savings category counts toward Safe to Spend only if it has its
+  // own monthly budget explicitly set — that's the signal that it's a
+  // real monthly obligation being budgeted for (a sinking fund for an
+  // annual bill like insurance or car registration, where skipping a
+  // contribution means not having the money when it's actually due),
+  // not a discretionary "extra" goal (an iPhone, a holiday) sitting on
+  // top of the regular budget that shouldn't eat into it.
+  const budgetedCategories = topLevel.filter((c) => !c.isSavingsCategory || c.monthlyBudget > 0)
+  const totalBudget = budgetedCategories.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalNetBudgetedSpent = budgetedCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
+  // Prorated recurring bills (yearly ones especially) reserve their
+  // monthly-equivalent share year-round, not just in the month they're
+  // actually due — otherwise an annual premium looks "free" for 11
+  // months and then blows the budget the one month it lands.
+  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring)
+  const safeToSpend = totalBudget - totalNetBudgetedSpent - monthlyRecurringReserve
 
   return { spent, income, reimbursed, saved, totalBudget, safeToSpend }
 }

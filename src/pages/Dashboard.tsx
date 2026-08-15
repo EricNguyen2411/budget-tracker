@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import type { Category, Transaction, RecurringTransaction } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth } from '../calculations'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses } from '../calculations'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
 import { CameraIcon } from '../icons'
 import { useModalClose } from '../useModalClose'
-import { isInSamePeriod } from '../budgetPeriod'
 import { buildMonthRecap } from '../monthlyRecap'
 
 interface Props {
@@ -23,20 +22,29 @@ interface Props {
 
 export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport }: Props) {
   const now = new Date()
-  const totals = computeDashboardTotals(categories, transactions, now)
+  const totals = computeDashboardTotals(categories, transactions, now, recurring)
   const days = daysRemainingInMonth(now)
   const perDay = Math.max(0, totals.safeToSpend) / days
   const [showBreakdown, setShowBreakdown] = useState(false)
   const breakdownClose = useModalClose(() => setShowBreakdown(false))
 
   const topLevelForBudget = categories.filter((c) => !c.parentId)
-  const totalBudget = topLevelForBudget.filter((c) => !c.isSavingsCategory).reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalBudget = topLevelForBudget.filter((c) => !c.isSavingsCategory || c.monthlyBudget > 0).reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
   const netSpentSoFar = topLevelForBudget
-    .filter((c) => !c.isSavingsCategory)
+    .filter((c) => !c.isSavingsCategory || c.monthlyBudget > 0)
     .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
-  const billsDueThisMonth = recurring
-    .filter((r) => r.isActive && r.isExpense && isInSamePeriod(new Date(r.nextDueDate), now))
-    .reduce((sum, r) => sum + r.amount, 0)
+  // Prorated across the year rather than only counting what happens to
+  // be due this exact month — an annual premium due in October still
+  // needs a share set aside in March, otherwise it looks "free" for 11
+  // months and blows the budget the one month it actually lands.
+  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring)
+  // Only the discretionary (unbudgeted) portion — a savings category
+  // with its own monthly budget set is already reflected above in Net
+  // Spend So Far, so showing the full totals.saved here too would
+  // double-count that portion of it in the breakdown.
+  const unbudgetedSaved = topLevelForBudget
+    .filter((c) => c.isSavingsCategory && c.monthlyBudget === 0)
+    .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
 
   const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const budgetRows = topLevel
@@ -91,15 +99,16 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 <span className="amount" style={{ color: 'var(--red)' }}>−{formatCurrency(netSpentSoFar)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 14 }}>Savings & Investments This Month</span>
-                <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
+                <span style={{ fontSize: 14 }}>Discretionary Savings This Month</span>
+                <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(unbudgetedSaved)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}>
-                <span style={{ fontSize: 14 }}>Bills Due This Month</span>
-                <span className="amount" style={{ color: 'var(--amber)' }}>{formatCurrency(billsDueThisMonth)}</span>
+                <span style={{ fontSize: 14 }}>Recurring & Subscriptions (Monthly Reserve)</span>
+                <span className="amount" style={{ color: 'var(--red)' }}>−{formatCurrency(monthlyRecurringReserve)}</span>
               </div>
+              <p className="hint" style={{ marginTop: 4 }}>Yearly and weekly recurring items are prorated to a monthly share here (an annual premium becomes 1/12th), reserved year-round rather than only in the month it's actually due — so Safe to Spend already has it set aside.</p>
               <p className="hint" style={{ marginTop: 12 }}>
-                Safe to Spend is your Monthly Budget minus Net Spend So Far, across every spending category — savings categories and bills are tracked separately and don't reduce it directly, but are shown here so you can see the full picture at a glance.
+                Safe to Spend is your Monthly Budget minus Net Spend So Far, minus a monthly reserve for recurring bills and subscriptions (below). A savings category counts toward the budget too if you've given it its own monthly figure — treating it like a real bill you're setting aside for (an annual insurance premium, car registration). Without one set, it's treated as discretionary extra instead and shown separately below, since it doesn't reduce what's safe to spend on everything else.
               </p>
             </div>
           </div>
