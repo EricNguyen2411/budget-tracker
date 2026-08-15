@@ -10,6 +10,7 @@ export interface HealthFinding {
   detail: string
   severity: 'info' | 'warning'
   transactions: Transaction[]
+  renewableCategoryIds?: string[]
 }
 
 export function runHealthCheck(
@@ -122,6 +123,27 @@ export function runHealthCheck(
       detail: goalsOffPace.map((c) => c.name).join(', ') + ' — at the current contribution rate, won\u2019t reach the target by the date set. Increase the monthly amount or push the date out.',
       severity: 'warning',
       transactions: []
+    })
+  }
+
+  // Recurring annual goals (insurance, car registration) that have
+  // either been fully funded or reached their target date — either way
+  // it's time to renew into next year's cycle, since the bill is
+  // presumably due now regardless of whether the full amount was saved.
+  const goalsReadyToRenew = categories.filter((c) => {
+    if (!c.isSavingsCategory || !c.goalRecurring || !c.goalTargetDate || c.goalTargetAmount <= 0) return false
+    const reached = goalProgress(c, transactions) >= c.goalTargetAmount
+    const dueDatePassed = new Date(c.goalTargetDate) <= referenceDate
+    return reached || dueDatePassed
+  })
+  if (goalsReadyToRenew.length > 0) {
+    findings.push({
+      icon: '🔄',
+      title: `${goalsReadyToRenew.length} annual goal${goalsReadyToRenew.length === 1 ? '' : 's'} ready to renew`,
+      detail: goalsReadyToRenew.map((c) => c.name).join(', ') + ' — funded or due. Tap to roll each into next year\u2019s cycle (target date +1 year, progress tracking restarts fresh).',
+      severity: 'info',
+      transactions: [],
+      renewableCategoryIds: goalsReadyToRenew.map((c) => c.id)
     })
   }
 

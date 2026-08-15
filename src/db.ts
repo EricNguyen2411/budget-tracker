@@ -68,6 +68,26 @@ export async function saveCategory(category: Category) {
   await db.put('categories', category)
 }
 
+/** Rolls a recurring annual goal (insurance, car registration, etc.)
+ * into its next cycle — advances the target date by a year and resets
+ * the start date to now, so progress tracking for goalProgress begins
+ * fresh rather than still counting last year's contributions toward
+ * this year's target. Deliberately a one-tap action the person
+ * triggers, not silent — the premium may have changed, and they should
+ * see that happen rather than have it quietly roll over unnoticed. */
+export async function renewRecurringGoal(category: Category): Promise<Category> {
+  if (!category.goalTargetDate) return category
+  const oldTarget = new Date(category.goalTargetDate)
+  const newTarget = new Date(oldTarget.getFullYear() + 1, oldTarget.getMonth(), oldTarget.getDate())
+  const updated: Category = {
+    ...category,
+    goalTargetDate: newTarget.toISOString(),
+    goalStartDate: new Date().toISOString()
+  }
+  await saveCategory(updated)
+  return updated
+}
+
 export async function createCategory(data: Omit<Category, 'id'>): Promise<Category> {
   const db = await getDB()
   const category: Category = { ...data, id: uuid() }

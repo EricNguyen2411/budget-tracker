@@ -96,6 +96,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [isGoalToggle, setIsGoalToggle] = useState((category?.goalTargetAmount ?? 0) > 0)
   const [goalAmount, setGoalAmount] = useState(category?.goalTargetAmount ? String(category.goalTargetAmount) : '')
   const [hasGoalDate, setHasGoalDate] = useState(!!category?.goalTargetDate)
+  const [goalRecurring, setGoalRecurring] = useState(category?.goalRecurring ?? false)
   const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
   const [needWantType, setNeedWantType] = useState<'need' | 'want' | null>(category?.needWantType ?? null)
   const [showDeleteOptions, setShowDeleteOptions] = useState(false)
@@ -129,6 +130,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
       goalTargetAmount: isSavings && isGoalToggle ? (parseFloat(goalAmount) || 0) : 0,
       goalTargetDate: isSavings && isGoalToggle && hasGoalDate && goalDate ? new Date(goalDate).toISOString() : null,
       goalStartDate: isSavings && isGoalToggle ? (category?.goalStartDate ?? new Date().toISOString()) : null,
+      goalRecurring: isSavings && isGoalToggle && hasGoalDate ? goalRecurring : false,
       needWantType: isSavings ? null : needWantType
     }
     if (category) {
@@ -240,6 +242,15 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
                   </div>
                   {hasGoalDate && (
                     <input type="date" value={goalDate} onChange={(e) => setGoalDate(e.target.value)} style={{ marginTop: 8 }} />
+                  )}
+                  {hasGoalDate && (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                        <input type="checkbox" switch checked={goalRecurring} onChange={(e) => setGoalRecurring(e.target.checked)} />
+                        <span>Renews every year</span>
+                      </div>
+                      <p className="hint" style={{ marginTop: 4 }}>For annual bills like insurance or registration — once the target date passes, you'll get a one-tap prompt to renew for next year rather than needing to set this up from scratch each time.</p>
+                    </>
                   )}
                   <p className="hint" style={{ marginTop: 8 }}>Tracked cumulatively toward the target, not a monthly amount that resets.</p>
                 </>

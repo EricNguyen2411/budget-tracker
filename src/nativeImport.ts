@@ -151,7 +151,8 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       goalTargetAmount: def.goalTargetAmount ?? 0,
       goalTargetDate: def.goalTargetDate ?? null,
       goalStartDate: def.goalStartDate ?? null,
-      needWantType: null
+      needWantType: null,
+      goalRecurring: false
     })
   }
 
@@ -172,7 +173,8 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       goalTargetAmount: def.goalTargetAmount ?? 0,
       goalTargetDate: def.goalTargetDate ?? null,
       goalStartDate: def.goalStartDate ?? null,
-      needWantType: null
+      needWantType: null,
+      goalRecurring: false
     })
   }
 

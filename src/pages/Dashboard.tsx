@@ -30,7 +30,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const breakdownClose = useModalClose(() => setShowBreakdown(false))
 
   const topLevelForBudget = categories.filter((c) => !c.parentId)
-  const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalBudget = topLevelForBudget.filter((c) => !c.isSavingsCategory).reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
   const netSpentSoFar = topLevelForBudget
     .filter((c) => !c.isSavingsCategory)
     .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)

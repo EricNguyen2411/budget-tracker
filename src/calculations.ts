@@ -117,8 +117,12 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
       return sum
     }, 0)
 
-  const totalBudget = topLevel.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
-  const totalNetBudgetedSpent = topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
+  // Savings categories are deliberately excluded here — contributing to
+  // a sinking fund (an annual insurance premium, car registration, etc)
+  // is money being set aside, not money being spent, and shouldn't
+  // reduce what's safe to spend on everything else this month.
+  const totalBudget = spendingCategories.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalNetBudgetedSpent = spendingCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
   const safeToSpend = totalBudget - totalNetBudgetedSpent
 
   return { spent, income, reimbursed, saved, totalBudget, safeToSpend }

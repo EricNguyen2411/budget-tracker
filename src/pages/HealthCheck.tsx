@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Category, RecurringTransaction, Transaction } from '../types'
 import { runHealthCheck, type HealthFinding } from '../healthCheck'
 import { formatCurrency, netAmount } from '../calculations'
+import { renewRecurringGoal } from '../db'
 import TransactionEditor from '../components/TransactionEditor'
 import { useModalClose } from '../useModalClose'
 import { useSwipeBack } from '../useSwipeBack'
@@ -13,10 +14,11 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onOpenDuplicateCheck: () => void
+  onCategoriesChanged: () => void
   onBack: () => void
 }
 
-export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onBack }: Props) {
+export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onCategoriesChanged, onBack }: Props) {
   useSwipeBack(onBack)
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
@@ -28,12 +30,27 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
     setFindings(runHealthCheck(transactions, recurring, categories))
   }
 
-  function handleFindingTap(f: HealthFinding) {
+  async function handleFindingTap(f: HealthFinding) {
     // Duplicates has its own dedicated tool with real resolve actions
     // (dismiss a group as not-a-duplicate, delete inline, grouped by
     // confidence) that this drill-down doesn't have and isn't trying to
     // rebuild — go straight there instead of a lighter-weight list.
     if (f.icon === '📑') { onOpenDuplicateCheck(); return }
+
+    // Recurring annual goals ready to renew — a direct action, not a
+    // list to drill into, since there's nothing to review per-item.
+    if (f.renewableCategoryIds && f.renewableCategoryIds.length > 0) {
+      const names = f.renewableCategoryIds.map((id) => catById.get(id)?.name).filter(Boolean).join(', ')
+      if (!confirm(`Renew ${names} for next year? Each target date moves forward a year and progress tracking restarts fresh.`)) return
+      for (const id of f.renewableCategoryIds) {
+        const cat = catById.get(id)
+        if (cat) await renewRecurringGoal(cat)
+      }
+      onCategoriesChanged()
+      setFindings(runHealthCheck(transactions, recurring, categories))
+      return
+    }
+
     if (f.transactions.length > 0) setDrillDown(f)
   }
 
@@ -67,7 +84,7 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
               <div style={{ fontWeight: 600, fontSize: 14, color: f.severity === 'warning' ? 'var(--amber)' : 'var(--blue)' }}>{f.title}</div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{f.detail}</div>
             </div>
-            {(f.transactions.length > 0 || f.icon === '📑') && <span style={{ color: 'var(--text-faint)' }}>›</span>}
+            {(f.transactions.length > 0 || f.icon === '📑' || (f.renewableCategoryIds && f.renewableCategoryIds.length > 0)) && <span style={{ color: 'var(--text-faint)' }}>›</span>}
           </div>
         </button>
       ))}

@@ -176,6 +176,7 @@ export default function App() {
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
           onOpenDuplicateCheck={() => { setReturnTab('health'); setTab('duplicates') }}
+          onCategoriesChanged={reload}
           onBack={() => setTab('more')}
         />
       )}
