@@ -38,6 +38,7 @@ export default function App() {
   // return to wherever the person actually came from, not always
   // assume the More menu.
   const [returnTab, setReturnTab] = useState<Tab>('more')
+  const [pendingImportFiles, setPendingImportFiles] = useState<FileList | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
@@ -144,6 +145,7 @@ export default function App() {
           onOpenDateRange={(title, start, end) => setDateRangeNav({ title, start, end })}
           onOpenMonthRecap={() => { setReturnTab('dashboard'); setTab('monthlyrecap') }}
           onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
+          onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
         />
       )}
       {tab === 'transactions' && (
@@ -179,7 +181,15 @@ export default function App() {
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
-      {tab === 'import' && <StatementImport categories={categories} existingTransactions={transactions} onBack={() => setTab('more')} onImported={reload} />}
+      {tab === 'import' && (
+        <StatementImport
+          categories={categories}
+          existingTransactions={transactions}
+          onBack={() => { setPendingImportFiles(null); setTab(returnTab) }}
+          onImported={reload}
+          initialFiles={pendingImportFiles}
+        />
+      )}
       {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} transactions={transactions} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={reload} />}
       {tab === 'categorybreakdown' && (

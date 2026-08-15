@@ -4,6 +4,7 @@ import { detectRecurring, frequencyLabel } from '../recurring'
 import { formatCurrency, localDateInputValue } from '../calculations'
 import { getSettings, updateSettings } from '../budgetPeriod'
 import { createRecurring, saveRecurring, deleteRecurring } from '../db'
+import SwipeableRow from '../components/SwipeableRow'
 
 interface Props {
   categories: Category[]
@@ -85,18 +86,19 @@ export default function RecurringPage({ categories, transactions, recurring, onC
       {recurring.map((item) => {
         const cat = item.categoryId ? catById.get(item.categoryId) : undefined
         return (
-          <div className="card" key={item.id} style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '🔁'}</div>
-            <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setEditingItem(item)}>
-              <div style={{ fontSize: 14 }}>{item.note}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-                {frequencyLabel(item.frequency)} · next {new Date(item.nextDueDate).toLocaleDateString('en-AU')}
-              </div>
-            </button>
-            <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(item.amount)}</span>
-            <input type="checkbox" switch checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
-            <button onClick={() => remove(item.id)} style={{ color: 'var(--red)', fontSize: 12 }}>Delete</button>
-          </div>
+          <SwipeableRow key={item.id} onDelete={() => remove(item.id)} borderRadius={16}>
+            <div className="card" style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '🔁'}</div>
+              <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setEditingItem(item)}>
+                <div style={{ fontSize: 14 }}>{item.note}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+                  {frequencyLabel(item.frequency)} · next {new Date(item.nextDueDate).toLocaleDateString('en-AU')}
+                </div>
+              </button>
+              <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(item.amount)}</span>
+              <input type="checkbox" switch checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
+            </div>
+          </SwipeableRow>
         )
       })}
 

@@ -4,6 +4,7 @@ import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentF
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
+import { CameraIcon } from '../icons'
 import { isInSamePeriod } from '../budgetPeriod'
 import { buildMonthRecap } from '../monthlyRecap'
 
@@ -16,9 +17,10 @@ interface Props {
   onOpenDateRange: (title: string, start: string, end: string) => void
   onOpenMonthRecap: () => void
   onOpenCategoryBreakdown: () => void
+  onOpenImport: (files: FileList) => void
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport }: Props) {
   const now = new Date()
   const totals = computeDashboardTotals(categories, transactions, now)
   const days = daysRemainingInMonth(now)
@@ -55,7 +57,13 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
 
   return (
     <div className="screen">
-      <h1 className="screen-title">Dashboard</h1>
+      <div className="screen-header-row" style={{ marginBottom: 4 }}>
+        <h1 className="screen-title" style={{ margin: 0 }}>Dashboard</h1>
+        <label className="dashboard-import-btn" aria-label="Import statement from photo">
+          <CameraIcon />
+          <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { if (e.target.files && e.target.files.length > 0) onOpenImport(e.target.files) }} />
+        </label>
+      </div>
 
       <div className="card hero-card">
         <span className="hero-label">Safe to Spend</span>

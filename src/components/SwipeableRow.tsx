@@ -4,12 +4,13 @@ interface Props {
   onDelete: () => void
   children: React.ReactNode
   disabled?: boolean
+  borderRadius?: number
 }
 
 const DELETE_WIDTH = 76
 const TRIGGER_THRESHOLD = 40
 
-export default function SwipeableRow({ onDelete, children, disabled }: Props) {
+export default function SwipeableRow({ onDelete, children, disabled, borderRadius = 0 }: Props) {
   const [offset, setOffset] = useState(0)
   const [dragging, setDragging] = useState(false)
   const startX = useRef(0)
@@ -53,12 +54,13 @@ export default function SwipeableRow({ onDelete, children, disabled }: Props) {
   }
 
   return (
-    <div style={{ position: 'relative', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', overflow: 'hidden', borderRadius }}>
       <div
         style={{
           position: 'absolute', top: 0, right: 0, bottom: 0, width: DELETE_WIDTH,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'var(--red)', opacity: offset < -4 ? 1 : 0, transition: dragging ? 'none' : 'opacity 0.15s ease'
+          background: 'var(--red)', opacity: offset < -4 ? 1 : 0, transition: dragging ? 'none' : 'opacity 0.15s ease',
+          borderRadius: `0 ${borderRadius}px ${borderRadius}px 0`
         }}
       >
         <button onClick={() => { setOffset(0); onDelete() }} style={{ color: '#fff', fontWeight: 600, fontSize: 13, width: '100%', height: '100%' }}>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
@@ -12,6 +12,7 @@ interface Props {
   existingTransactions: Transaction[]
   onBack: () => void
   onImported: () => void
+  initialFiles?: FileList | null
 }
 
 const FORMAT_LABELS: Record<DetectedFormat, string> = {
@@ -20,7 +21,7 @@ const FORMAT_LABELS: Record<DetectedFormat, string> = {
   unknown: 'Unrecognized format'
 }
 
-export default function StatementImport({ categories, existingTransactions, onBack, onImported }: Props) {
+export default function StatementImport({ categories, existingTransactions, onBack, onImported, initialFiles }: Props) {
   useSwipeBack(onBack)
   const [status, setStatus] = useState<'idle' | 'scanning' | 'done'>('idle')
   const [scanProgress, setScanProgress] = useState('')
@@ -28,6 +29,17 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [skippedRows, setSkippedRows] = useState<string[]>([])
   const [formatsSeen, setFormatsSeen] = useState<Set<DetectedFormat>>(new Set())
   const [included, setIncluded] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    // Files already selected before this screen even mounted — the
+    // Dashboard's camera button opens the OS photo picker directly
+    // (has to, for the click-to-open to work on iOS Safari at all) and
+    // hands the result over here, so scanning can start immediately
+    // instead of asking the person to tap "Choose Photo(s)" again for a
+    // photo they already picked.
+    if (initialFiles && initialFiles.length > 0) handleFiles(initialFiles)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [sort, setSort] = useState<'recent' | 'oldest'>('recent')
   const [categoryOverrides, setCategoryOverrides] = useState<Map<string, string | null>>(new Map())
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)

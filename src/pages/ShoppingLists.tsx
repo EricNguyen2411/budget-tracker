@@ -3,6 +3,7 @@ import type { Category, ShoppingList, ShoppingListItem, Transaction } from '../t
 import { formatCurrency, effectiveBudget, netSpentForCategory } from '../calculations'
 import { createShoppingList, saveShoppingList, deleteShoppingList, createTransaction, newId } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
+import SwipeableRow from '../components/SwipeableRow'
 
 interface Props {
   lists: ShoppingList[]
@@ -154,14 +155,15 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
         {list.items.length === 0 && <p style={{ padding: 16, fontSize: 13, color: 'var(--text-dim)' }}>No items yet.</p>}
         {list.items.map((item, i) => (
-          <div key={item.id} className="transaction-row" style={{ borderBottom: i < list.items.length - 1 ? '1px solid var(--border)' : 'none' }}>
-            <input type="checkbox" checked={item.isChecked} onChange={() => toggleItem(item.id)} style={{ width: 18, height: 18 }} />
-            <button className="tx-info" style={{ textAlign: 'left' }} onClick={() => setEditingItem(item)}>
-              <span className="tx-note" style={{ textDecoration: item.isChecked ? 'line-through' : 'none', opacity: item.isChecked ? 0.5 : 1 }}>{item.name}</span>
-            </button>
-            <span className="amount">{formatCurrency(item.estimatedPrice)}</span>
-            <button onClick={() => removeItem(item.id)} style={{ color: 'var(--text-faint)', marginLeft: 8 }}>✕</button>
-          </div>
+          <SwipeableRow key={item.id} onDelete={() => removeItem(item.id)}>
+            <div className="transaction-row" style={{ borderBottom: i < list.items.length - 1 ? '1px solid var(--border)' : 'none' }}>
+              <input type="checkbox" checked={item.isChecked} onChange={() => toggleItem(item.id)} style={{ width: 18, height: 18 }} />
+              <button className="tx-info" style={{ textAlign: 'left' }} onClick={() => setEditingItem(item)}>
+                <span className="tx-note" style={{ textDecoration: item.isChecked ? 'line-through' : 'none', opacity: item.isChecked ? 0.5 : 1 }}>{item.name}</span>
+              </button>
+              <span className="amount">{formatCurrency(item.estimatedPrice)}</span>
+            </div>
+          </SwipeableRow>
         ))}
       </div>
 
