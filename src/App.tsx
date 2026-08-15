@@ -165,9 +165,9 @@ export default function App() {
           transactions={transactions}
         />
       )}
-      {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} />}
+      {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} onBack={() => setTab('more')} />}
       {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
-      {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} />}
+      {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} onBack={() => setTab(returnTab)} />}
       {tab === 'health' && (
         <HealthCheck
           transactions={transactions}
@@ -175,7 +175,8 @@ export default function App() {
           categories={categories}
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
-          onOpenDuplicateCheck={() => setTab('duplicates')}
+          onOpenDuplicateCheck={() => { setReturnTab('health'); setTab('duplicates') }}
+          onBack={() => setTab('more')}
         />
       )}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}

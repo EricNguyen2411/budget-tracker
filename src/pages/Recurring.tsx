@@ -6,15 +6,18 @@ import { getSettings, updateSettings } from '../budgetPeriod'
 import { createRecurring, saveRecurring, deleteRecurring } from '../db'
 import SwipeableRow from '../components/SwipeableRow'
 import { useModalClose } from '../useModalClose'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   categories: Category[]
   transactions: Transaction[]
   recurring: RecurringTransaction[]
   onChanged: () => void
+  onBack: () => void
 }
 
-export default function RecurringPage({ categories, transactions, recurring, onChanged }: Props) {
+export default function RecurringPage({ categories, transactions, recurring, onChanged, onBack }: Props) {
+  useSwipeBack(onBack)
   const [dismissed, setDismissed] = useState(getSettings().dismissedRecurringSuggestions)
   const [editingItem, setEditingItem] = useState<RecurringTransaction | null>(null)
   const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
@@ -55,7 +58,11 @@ export default function RecurringPage({ categories, transactions, recurring, onC
 
   return (
     <div className="screen">
-      <h1 className="screen-title">Recurring</h1>
+      <div className="screen-header-row">
+        <button onClick={onBack} className="text-button">‹ More</button>
+        <h1 className="screen-title" style={{ fontSize: 20 }}>Recurring</h1>
+        <span style={{ width: 40 }} />
+      </div>
 
       {suggestions.length > 0 && (
         <>

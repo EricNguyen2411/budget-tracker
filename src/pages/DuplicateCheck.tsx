@@ -3,13 +3,16 @@ import type { Transaction } from '../types'
 import { findDuplicates, type PotentialDuplicateGroup } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { deleteTransaction } from '../db'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   transactions: Transaction[]
   onChanged: () => void
+  onBack: () => void
 }
 
-export default function DuplicateCheck({ transactions, onChanged }: Props) {
+export default function DuplicateCheck({ transactions, onChanged, onBack }: Props) {
+  useSwipeBack(onBack)
   const [groups, setGroups] = useState<PotentialDuplicateGroup[] | null>(null)
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
 
@@ -28,7 +31,11 @@ export default function DuplicateCheck({ transactions, onChanged }: Props) {
 
   return (
     <div className="screen">
-      <h1 className="screen-title">Duplicate Check</h1>
+      <div className="screen-header-row">
+        <button onClick={onBack} className="text-button">‹ More</button>
+        <h1 className="screen-title" style={{ fontSize: 20 }}>Duplicate Check</h1>
+        <span style={{ width: 40 }} />
+      </div>
 
       {groups === null && (
         <div className="card">

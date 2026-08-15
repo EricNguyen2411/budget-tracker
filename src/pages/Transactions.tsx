@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote, reimbursementsFor } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import TransactionEditor from '../components/TransactionEditor'
 import SwipeableRow from '../components/SwipeableRow'
@@ -140,6 +140,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               const reimbursedNote = reimbursementNote(t, transactions)
               const excessNote = excessIncomeNote(t, transactions)
               const repayNote = repaysNote(t, transactions)
+              const reimbursementCount = t.isExpense ? reimbursementsFor(t, transactions).length : 0
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
                   <button
@@ -160,6 +161,11 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                         {repayNote && ` · ${repayNote}`}
                         {excessNote && ` · ${excessNote}`}
                       </span>
+                      {reimbursementCount > 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 500 }}>
+                          Reimbursed by {reimbursementCount} transaction{reimbursementCount === 1 ? '' : 's'}
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
                       {reimbursedNote && (

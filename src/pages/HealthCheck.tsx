@@ -4,6 +4,7 @@ import { runHealthCheck, type HealthFinding } from '../healthCheck'
 import { formatCurrency, netAmount } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
 import { useModalClose } from '../useModalClose'
+import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   transactions: Transaction[]
@@ -12,9 +13,11 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onOpenDuplicateCheck: () => void
+  onBack: () => void
 }
 
-export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck }: Props) {
+export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onBack }: Props) {
+  useSwipeBack(onBack)
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
   const drillDownClose = useModalClose(() => setDrillDown(null))
@@ -36,7 +39,11 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
 
   return (
     <div className="screen">
-      <h1 className="screen-title">Health Check</h1>
+      <div className="screen-header-row">
+        <button onClick={onBack} className="text-button">‹ More</button>
+        <h1 className="screen-title" style={{ fontSize: 20 }}>Health Check</h1>
+        <span style={{ width: 40 }} />
+      </div>
 
       {findings === null && (
         <div className="card">
