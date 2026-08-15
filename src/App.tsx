@@ -33,6 +33,11 @@ type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'sh
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
+  // Some pages (Month in Review, Spending by Category) are reachable
+  // both from a Dashboard widget and from More → Tools — back needs to
+  // return to wherever the person actually came from, not always
+  // assume the More menu.
+  const [returnTab, setReturnTab] = useState<Tab>('more')
   const [categories, setCategories] = useState<Category[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
@@ -137,8 +142,8 @@ export default function App() {
           onOpenCategory={(id) => setCategoryDetailId(id)}
           onOpenStat={(kind) => setStatDetail(kind)}
           onOpenDateRange={(title, start, end) => setDateRangeNav({ title, start, end })}
-          onOpenMonthRecap={() => setTab('monthlyrecap')}
-          onOpenCategoryBreakdown={() => setTab('categorybreakdown')}
+          onOpenMonthRecap={() => { setReturnTab('dashboard'); setTab('monthlyrecap') }}
+          onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
         />
       )}
       {tab === 'transactions' && (
@@ -154,14 +159,23 @@ export default function App() {
         <More
           categories={categories}
           onCategoriesChanged={reload}
-          onNavigate={(t) => setTab(t as Tab)}
+          onNavigate={(t) => { setReturnTab('more'); setTab(t as Tab) }}
           transactions={transactions}
         />
       )}
       {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} />}
       {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
       {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} />}
-      {tab === 'health' && <HealthCheck transactions={transactions} recurring={recurring} categories={categories} onSave={handleSaveTransaction} onDelete={handleDeleteTransaction} />}
+      {tab === 'health' && (
+        <HealthCheck
+          transactions={transactions}
+          recurring={recurring}
+          categories={categories}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onOpenDuplicateCheck={() => setTab('duplicates')}
+        />
+      )}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
@@ -172,7 +186,7 @@ export default function App() {
         <CategoryBreakdownByMonth
           categories={categories}
           transactions={transactions}
-          onBack={() => setTab('more')}
+          onBack={() => setTab(returnTab)}
           onOpenPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
         />
       )}
@@ -180,10 +194,11 @@ export default function App() {
         <MonthlyRecapPage
           categories={categories}
           transactions={transactions}
-          onBack={() => setTab('more')}
+          onBack={() => setTab(returnTab)}
           onSaveTransaction={handleSaveTransaction}
           onDeleteTransaction={handleDeleteTransaction}
           onOpenCategoryPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
+          initialMonthOffset={returnTab === 'dashboard' ? 0 : -1}
         />
       )}
 

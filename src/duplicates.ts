@@ -29,7 +29,11 @@ function isDisjoint(a: Set<string>, b: Set<string>): boolean {
  * enough on its own: two purchases at the same cafe three months apart
  * are legitimately different transactions, not duplicates, and treating
  * name-match as sufficient regardless of date produced exactly that
- * false-positive pattern. */
+ * false-positive pattern. The optional `generic` set filters out tokens
+ * that show up across many different merchants (most often a shared
+ * suburb name) — without it, two unrelated businesses in the same
+ * suburb with a coincidentally matching amount could be flagged as
+ * duplicates purely from sharing a location word. */
 interface DuplicateCandidate {
   amount: number
   isExpense: boolean
@@ -37,7 +41,7 @@ interface DuplicateCandidate {
   note: string
 }
 
-export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, windowDays = 3): boolean {
+export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, windowDays = 3, generic: Set<string> = new Set()): boolean {
   if (Math.abs(a.amount - b.amount) >= 0.01) return false
   if (a.isExpense !== b.isExpense) return false
 
@@ -48,11 +52,13 @@ export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, 
   const withinWindow = dayDiffMs <= windowDays * 24 * 60 * 60 * 1000
   if (!withinWindow) return false
 
-  const sharesToken = !isDisjoint(significantTokens(a.note), significantTokens(b.note))
-  return sharesToken
+  const aTokens = new Set([...significantTokens(a.note)].filter((t) => !generic.has(t)))
+  const bTokens = new Set([...significantTokens(b.note)].filter((t) => !generic.has(t)))
+  return !isDisjoint(aTokens, bTokens)
 }
 
 export function findDuplicates(transactions: Transaction[], windowDays = 3): PotentialDuplicateGroup[] {
+  const generic = genericTokens(transactions)
   const sorted = [...transactions].sort((a, b) => (a.amount !== b.amount ? a.amount - b.amount : a.date.localeCompare(b.date)))
   const used = new Set<string>()
   const groups: { transactions: Transaction[]; hasSharedToken: boolean }[] = []
@@ -60,7 +66,7 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
   for (let i = 0; i < sorted.length; i++) {
     const anchor = sorted[i]
     if (used.has(anchor.id)) continue
-    const anchorTokens = significantTokens(anchor.note)
+    const anchorTokens = new Set([...significantTokens(anchor.note)].filter((t) => !generic.has(t)))
     const cluster = [anchor]
     let hasSharedToken = false
 
@@ -68,9 +74,10 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
       const candidate = sorted[j]
       if (used.has(candidate.id)) continue
       if (Math.abs(candidate.amount - anchor.amount) >= 0.01) break
-      if (!isLikelyDuplicate(anchor, candidate, windowDays)) continue
+      if (!isLikelyDuplicate(anchor, candidate, windowDays, generic)) continue
 
-      const sharesToken = !isDisjoint(anchorTokens, significantTokens(candidate.note))
+      const candidateTokens = new Set([...significantTokens(candidate.note)].filter((t) => !generic.has(t)))
+      const sharesToken = !isDisjoint(anchorTokens, candidateTokens)
       cluster.push(candidate)
       if (sharesToken) hasSharedToken = true
     }
@@ -86,8 +93,6 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
     .sort((a, b) => b.transactions[0].date.localeCompare(a.transactions[0].date))
 }
 
-/** Explicitly excludes Beem, even though it's already a stop word, since other tokens
- * (like a sender's name) can still coincidentally match unrelated Beem payments. */
 /** Tokens that show up across many genuinely different merchants aren't
  * merchant-identifying — most commonly a shared suburb or street name
  * (e.g. "CANLEY HEIGHT" appearing in several unrelated businesses'
@@ -96,7 +101,7 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
  * several distinct notes is treated as generic and ignored for
  * similarity matching, keeping only the words that actually identify
  * one specific merchant. */
-function genericTokens(transactions: Transaction[]): Set<string> {
+export function genericTokens(transactions: Transaction[]): Set<string> {
   const tokenToNotes = new Map<string, Set<string>>()
   for (const t of transactions) {
     const noteKey = t.note.trim().toLowerCase()

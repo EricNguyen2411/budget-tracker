@@ -10,9 +10,10 @@ interface Props {
   categories: Category[]
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
+  onOpenDuplicateCheck: () => void
 }
 
-export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete }: Props) {
+export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck }: Props) {
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
   const [editing, setEditing] = useState<Transaction | null>(null)
@@ -20,6 +21,15 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
 
   function run() {
     setFindings(runHealthCheck(transactions, recurring, categories))
+  }
+
+  function handleFindingTap(f: HealthFinding) {
+    // Duplicates has its own dedicated tool with real resolve actions
+    // (dismiss a group as not-a-duplicate, delete inline, grouped by
+    // confidence) that this drill-down doesn't have and isn't trying to
+    // rebuild — go straight there instead of a lighter-weight list.
+    if (f.icon === '📑') { onOpenDuplicateCheck(); return }
+    if (f.transactions.length > 0) setDrillDown(f)
   }
 
   return (
@@ -41,14 +51,14 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
 
       {findings?.map((f, i) => (
         <button key={i} className="card" style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 10 }}
-          onClick={() => f.transactions.length > 0 && setDrillDown(f)}>
+          onClick={() => handleFindingTap(f)}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <span>{f.icon}</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, fontSize: 14, color: f.severity === 'warning' ? 'var(--amber)' : 'var(--blue)' }}>{f.title}</div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{f.detail}</div>
             </div>
-            {f.transactions.length > 0 && <span style={{ color: 'var(--text-faint)' }}>›</span>}
+            {(f.transactions.length > 0 || f.icon === '📑') && <span style={{ color: 'var(--text-faint)' }}>›</span>}
           </div>
         </button>
       ))}

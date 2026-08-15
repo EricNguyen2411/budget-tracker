@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
-import { isLikelyDuplicate, significantTokens } from '../duplicates'
+import { isLikelyDuplicate, significantTokens, genericTokens } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { createTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
@@ -36,8 +36,13 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
   const [viewingDuplicateFor, setViewingDuplicateFor] = useState<ParsedTransaction | null>(null)
 
+  const importGeneric = useMemo(
+    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null } as Transaction))]),
+    [existingTransactions, results]
+  )
+
   function matchingExisting(r: ParsedTransaction): Transaction[] {
-    return existingTransactions.filter((t) => isLikelyDuplicate(t, r))
+    return existingTransactions.filter((t) => isLikelyDuplicate(t, r, 3, importGeneric))
   }
 
   const duplicateIds = new Set(results.filter((r) => matchingExisting(r).length > 0).map((r) => r.id))

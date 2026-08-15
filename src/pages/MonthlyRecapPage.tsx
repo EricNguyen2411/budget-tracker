@@ -12,11 +12,12 @@ interface Props {
   onSaveTransaction: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDeleteTransaction: (id: string) => void
   onOpenCategoryPeriod: (title: string, start: string, end: string, categoryId: string) => void
+  initialMonthOffset?: number
 }
 
-export default function MonthlyRecapPage({ categories, transactions, onBack, onSaveTransaction, onDeleteTransaction, onOpenCategoryPeriod }: Props) {
+export default function MonthlyRecapPage({ categories, transactions, onBack, onSaveTransaction, onDeleteTransaction, onOpenCategoryPeriod, initialMonthOffset = -1 }: Props) {
   useSwipeBack(onBack)
-  const [monthOffset, setMonthOffset] = useState(-1) // default to last full month, not the still-in-progress current one
+  const [monthOffset, setMonthOffset] = useState(initialMonthOffset) // last full month by default when opened standalone; the Dashboard widget passes 0 to stay on the month it already showed
   const [openBucket, setOpenBucket] = useState<RecapBucket | null>(null)
 
   const now = new Date()
