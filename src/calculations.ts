@@ -140,9 +140,12 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
   // contribution means not having the money when it's actually due),
   // not a discretionary "extra" goal (an iPhone, a holiday) sitting on
   // top of the regular budget that shouldn't eat into it.
-  const budgetedCategories = topLevel.filter((c) => !c.isSavingsCategory || c.monthlyBudget > 0)
-  const totalBudget = budgetedCategories.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
-  const totalNetBudgetedSpent = budgetedCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
+  // Confirmed against the original app's real behavior: every dollar
+  // that goes toward savings reduces Safe to Spend, not just amounts
+  // with a monthly budget explicitly set on the category — money set
+  // aside isn't available to spend on anything else, budgeted or not.
+  const totalBudget = topLevel.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalNetBudgetedSpent = topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
   // Prorated recurring bills (yearly ones especially) reserve their
   // monthly-equivalent share year-round, not just in the month they're
   // actually due — otherwise an annual premium looks "free" for 11

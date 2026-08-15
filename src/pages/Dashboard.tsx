@@ -29,22 +29,14 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const breakdownClose = useModalClose(() => setShowBreakdown(false))
 
   const topLevelForBudget = categories.filter((c) => !c.parentId)
-  const totalBudget = topLevelForBudget.filter((c) => !c.isSavingsCategory || c.monthlyBudget > 0).reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
   const netSpentSoFar = topLevelForBudget
-    .filter((c) => !c.isSavingsCategory || c.monthlyBudget > 0)
     .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
   // Prorated across the year rather than only counting what happens to
   // be due this exact month — an annual premium due in October still
   // needs a share set aside in March, otherwise it looks "free" for 11
   // months and blows the budget the one month it actually lands.
   const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring)
-  // Only the discretionary (unbudgeted) portion — a savings category
-  // with its own monthly budget set is already reflected above in Net
-  // Spend So Far, so showing the full totals.saved here too would
-  // double-count that portion of it in the breakdown.
-  const unbudgetedSaved = topLevelForBudget
-    .filter((c) => c.isSavingsCategory && c.monthlyBudget === 0)
-    .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
 
   const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const budgetRows = topLevel
@@ -99,8 +91,8 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 <span className="amount" style={{ color: 'var(--red)' }}>−{formatCurrency(netSpentSoFar)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 14 }}>Discretionary Savings This Month</span>
-                <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(unbudgetedSaved)}</span>
+                <span style={{ fontSize: 14 }}>Savings & Investments This Month</span>
+                <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0' }}>
                 <span style={{ fontSize: 14 }}>Recurring & Subscriptions (Monthly Reserve)</span>
@@ -108,7 +100,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
               </div>
               <p className="hint" style={{ marginTop: 4 }}>Yearly and weekly recurring items are prorated to a monthly share here (an annual premium becomes 1/12th), reserved year-round rather than only in the month it's actually due — so Safe to Spend already has it set aside.</p>
               <p className="hint" style={{ marginTop: 12 }}>
-                Safe to Spend is your Monthly Budget minus Net Spend So Far, minus a monthly reserve for recurring bills and subscriptions (below). A savings category counts toward the budget too if you've given it its own monthly figure — treating it like a real bill you're setting aside for (an annual insurance premium, car registration). Without one set, it's treated as discretionary extra instead and shown separately below, since it doesn't reduce what's safe to spend on everything else.
+                Safe to Spend is your Monthly Budget minus Net Spend So Far — including any savings contributions, since money set aside isn't available to spend on anything else — minus a monthly reserve for recurring bills and subscriptions (below), prorating yearly ones like an annual insurance premium into a monthly share.
               </p>
             </div>
           </div>
