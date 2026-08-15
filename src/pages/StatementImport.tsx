@@ -7,6 +7,7 @@ import { formatCurrency } from '../calculations'
 import { createTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
@@ -44,10 +45,13 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [sort, setSort] = useState<'recent' | 'oldest'>('recent')
   const [categoryOverrides, setCategoryOverrides] = useState<Map<string, string | null>>(new Map())
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)
+  const pickingCategoryClose = useModalClose(() => setPickingCategoryFor(null))
   const [similarPrompt, setSimilarPrompt] = useState<{ categoryId: string | null; matchIds: string[] } | null>(null)
+  const similarBatchClose = useModalClose(() => setSimilarPrompt(null))
   const [hideDuplicates, setHideDuplicates] = useState(false)
 
   const [viewingDuplicateFor, setViewingDuplicateFor] = useState<ParsedTransaction | null>(null)
+  const viewingDuplicateClose = useModalClose(() => setViewingDuplicateFor(null))
 
   const importGeneric = useMemo(
     () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null } as Transaction))]),
@@ -320,23 +324,23 @@ export default function StatementImport({ categories, existingTransactions, onBa
       )}
 
       {pickingCategoryFor && (
-        <div className="modal-backdrop" onClick={() => setPickingCategoryFor(null)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${pickingCategoryClose.closing ? ' modal-closing' : ''}`} onClick={() => pickingCategoryClose.requestClose()}>
+          <div className={`modal-sheet${pickingCategoryClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Category</span>
-              <button className="text-button text-button-primary" onClick={() => setPickingCategoryFor(null)}>Done</button>
+              <button className="text-button text-button-primary" onClick={() => pickingCategoryClose.requestClose()}>Done</button>
             </div>
             <div className="modal-body">
-              <button className="picker-row" onClick={() => applyCategory(pickingCategoryFor, null)}>
+              <button className="picker-row" onClick={() => pickingCategoryClose.requestClose(() => applyCategory(pickingCategoryFor, null))}>
                 <span>None</span>
               </button>
               {categories.filter((c) => !c.parentId).map((c) => (
                 <div key={c.id}>
-                  <button className="picker-row" onClick={() => applyCategory(pickingCategoryFor, c.id)}>
+                  <button className="picker-row" onClick={() => pickingCategoryClose.requestClose(() => applyCategory(pickingCategoryFor, c.id))}>
                     <span>{c.icon} {c.name}</span>
                   </button>
                   {categories.filter((s) => s.parentId === c.id).map((s) => (
-                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => applyCategory(pickingCategoryFor, s.id)}>
+                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => pickingCategoryClose.requestClose(() => applyCategory(pickingCategoryFor, s.id))}>
                       <span>{s.icon} {s.name}</span>
                     </button>
                   ))}
@@ -347,11 +351,11 @@ export default function StatementImport({ categories, existingTransactions, onBa
         </div>
       )}
       {viewingDuplicateFor && (
-        <div className="modal-backdrop" onClick={() => setViewingDuplicateFor(null)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${viewingDuplicateClose.closing ? ' modal-closing' : ''}`} onClick={() => viewingDuplicateClose.requestClose()}>
+          <div className={`modal-sheet${viewingDuplicateClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Compare</span>
-              <button className="text-button" onClick={() => setViewingDuplicateFor(null)}>Close</button>
+              <button className="text-button" onClick={() => viewingDuplicateClose.requestClose()}>Close</button>
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>This scanned row:</p>
@@ -376,11 +380,11 @@ export default function StatementImport({ categories, existingTransactions, onBa
         const cat = similarPrompt.categoryId ? catById.get(similarPrompt.categoryId) : undefined
         const matches = results.filter((r) => similarPrompt.matchIds.includes(r.id))
         return (
-          <div className="modal-backdrop" onClick={() => setSimilarPrompt(null)}>
-            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+          <div className={`modal-backdrop${similarBatchClose.closing ? ' modal-closing' : ''}`} onClick={() => similarBatchClose.requestClose()}>
+            <div className={`modal-sheet${similarBatchClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
               <div className="modal-header">
                 <span className="modal-title">Similar in This Batch</span>
-                <button className="text-button" onClick={() => setSimilarPrompt(null)}>Close</button>
+                <button className="text-button" onClick={() => similarBatchClose.requestClose()}>Close</button>
               </div>
               <div className="modal-body">
                 <p style={{ fontSize: 14, marginBottom: 12 }}>
@@ -395,8 +399,8 @@ export default function StatementImport({ categories, existingTransactions, onBa
                   ))}
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
-                  <button className="list-button" style={{ flex: 1, textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not now</button>
-                  <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, fontWeight: 600 }} onClick={confirmSimilarPrompt}>Apply to All</button>
+                  <button className="list-button" style={{ flex: 1, textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => similarBatchClose.requestClose()}>Not now</button>
+                  <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, fontWeight: 600 }} onClick={() => similarBatchClose.requestClose(confirmSimilarPrompt)}>Apply to All</button>
                 </div>
               </div>
             </div>

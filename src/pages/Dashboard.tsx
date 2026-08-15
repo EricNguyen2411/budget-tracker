@@ -5,6 +5,7 @@ import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
 import { CameraIcon } from '../icons'
+import { useModalClose } from '../useModalClose'
 import { isInSamePeriod } from '../budgetPeriod'
 import { buildMonthRecap } from '../monthlyRecap'
 
@@ -26,6 +27,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const days = daysRemainingInMonth(now)
   const perDay = Math.max(0, totals.safeToSpend) / days
   const [showBreakdown, setShowBreakdown] = useState(false)
+  const breakdownClose = useModalClose(() => setShowBreakdown(false))
 
   const topLevelForBudget = categories.filter((c) => !c.parentId)
   const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
@@ -73,11 +75,11 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
       </div>
 
       {showBreakdown && (
-        <div className="modal-backdrop" onClick={() => setShowBreakdown(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${breakdownClose.closing ? ' modal-closing' : ''}`} onClick={() => breakdownClose.requestClose()}>
+          <div className={`modal-sheet${breakdownClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">How Safe to Spend Works</span>
-              <button className="text-button text-button-primary" onClick={() => setShowBreakdown(false)}>Done</button>
+              <button className="text-button text-button-primary" onClick={() => breakdownClose.requestClose()}>Done</button>
             </div>
             <div className="modal-body">
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>

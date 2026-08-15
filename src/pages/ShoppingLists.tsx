@@ -4,6 +4,7 @@ import { formatCurrency, effectiveBudget, netSpentForCategory } from '../calcula
 import { createShoppingList, saveShoppingList, deleteShoppingList, createTransaction, newId } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 import SwipeableRow from '../components/SwipeableRow'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   lists: ShoppingList[]
@@ -187,18 +188,18 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
 function ItemEditor({ item, onSave, onClose }: { item: ShoppingListItem; onSave: (id: string, name: string, price: number) => void; onClose: () => void }) {
   const [name, setName] = useState(item.name)
   const [price, setPrice] = useState(String(item.estimatedPrice))
+  const { closing, requestClose } = useModalClose(onClose)
 
   function handleSave() {
     if (!name.trim()) return
-    onSave(item.id, name.trim(), parseFloat(price) || 0)
-    onClose()
+    requestClose(() => onSave(item.id, name.trim(), parseFloat(price) || 0))
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <button onClick={onClose} className="text-button">Cancel</button>
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
           <span className="modal-title">Edit Item</span>
           <button onClick={handleSave} className="text-button text-button-primary">Save</button>
         </div>

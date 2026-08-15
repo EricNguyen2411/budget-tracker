@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, localDateInputValue } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   transaction: Transaction | null
@@ -13,14 +14,17 @@ interface Props {
 }
 
 export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose }: Props) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false)
+  const [showExpensePicker, setShowExpensePicker] = useState(false)
+  const categoryPickerClose = useModalClose(() => setShowCategoryPicker(false))
+  const expensePickerClose = useModalClose(() => setShowExpensePicker(false))
   const [amount, setAmount] = useState(transaction ? String(transaction.amount) : '')
   const [note, setNote] = useState(transaction?.note ?? '')
   const [date, setDate] = useState(transaction ? localDateInputValue(new Date(transaction.date)) : localDateInputValue(new Date()))
   const [isExpense, setIsExpense] = useState(transaction?.isExpense ?? true)
   const [categoryId, setCategoryId] = useState<string | null>(transaction?.categoryId ?? null)
   const [reimbursesId, setReimbursesId] = useState<string | null>(transaction?.reimbursesExpenseId ?? null)
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false)
-  const [showExpensePicker, setShowExpensePicker] = useState(false)
 
   const selectedCategory = categories.find((c) => c.id === categoryId)
   const reimbursedExpense = allTransactions.find((t) => t.id === reimbursesId)
@@ -70,12 +74,12 @@ export default function TransactionEditor({ transaction, categories, allTransact
     })
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <button onClick={onClose} className="text-button">Cancel</button>
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
           <span className="modal-title">{transaction ? 'Edit' : 'New Transaction'}</span>
-          <button onClick={handleSave} className="text-button text-button-primary">Save</button>
+          <button onClick={() => requestClose(handleSave)} className="text-button text-button-primary">Save</button>
         </div>
 
         <div className="modal-body">
@@ -139,79 +143,91 @@ export default function TransactionEditor({ transaction, categories, allTransact
         </div>
       </div>
 
-      {showCategoryPicker && (
-        <div className="modal-backdrop" onClick={() => setShowCategoryPicker(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">Category</span>
-              <button onClick={() => setShowCategoryPicker(false)} className="text-button text-button-primary">Done</button>
-            </div>
-            <div className="modal-body">
-              {(() => {
-                const recentIds: string[] = []
-                for (const t of [...allTransactions].sort((a, b) => b.date.localeCompare(a.date))) {
-                  if (t.categoryId && !recentIds.includes(t.categoryId) && t.categoryId !== categoryId) recentIds.push(t.categoryId)
-                  if (recentIds.length >= 6) break
-                }
-                const recentCategories = recentIds.map((id) => categories.find((c) => c.id === id)).filter((c): c is Category => !!c)
-                if (recentCategories.length === 0) return null
-                return (
-                  <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 2 }}>
-                    {recentCategories.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}
-                        style={{ whiteSpace: 'nowrap', fontSize: 13, padding: '6px 14px', borderRadius: 16, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 5 }}
-                      >
-                        <span>{c.icon}</span><span>{c.name}</span>
+      {showCategoryPicker && (() => {
+        const { closing: catClosing, requestClose: requestCatClose } = categoryPickerClose
+        function selectCategory(id: string | null) {
+          requestCatClose(() => { setCategoryId(id); setShowCategoryPicker(false) })
+        }
+        return (
+          <div className={`modal-backdrop${catClosing ? ' modal-closing' : ''}`} onClick={() => requestCatClose(() => setShowCategoryPicker(false))}>
+            <div className={`modal-sheet${catClosing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Category</span>
+                <button onClick={() => requestCatClose(() => setShowCategoryPicker(false))} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                {(() => {
+                  const recentIds: string[] = []
+                  for (const t of [...allTransactions].sort((a, b) => b.date.localeCompare(a.date))) {
+                    if (t.categoryId && !recentIds.includes(t.categoryId) && t.categoryId !== categoryId) recentIds.push(t.categoryId)
+                    if (recentIds.length >= 6) break
+                  }
+                  const recentCategories = recentIds.map((id) => categories.find((c) => c.id === id)).filter((c): c is Category => !!c)
+                  if (recentCategories.length === 0) return null
+                  return (
+                    <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 2 }}>
+                      {recentCategories.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => selectCategory(c.id)}
+                          style={{ whiteSpace: 'nowrap', fontSize: 13, padding: '6px 14px', borderRadius: 16, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 5 }}
+                        >
+                          <span>{c.icon}</span><span>{c.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
+                <button className="picker-row" onClick={() => selectCategory(null)}>
+                  <span>None</span>
+                </button>
+                {categories.filter((c) => !c.parentId).map((c) => (
+                  <div key={c.id}>
+                    <button className="picker-row" onClick={() => selectCategory(c.id)}>
+                      <span>{c.icon} {c.name}</span>
+                      {categoryId === c.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                    </button>
+                    {categories.filter((s) => s.parentId === c.id).map((s) => (
+                      <button key={s.id} className="picker-row picker-row-sub" onClick={() => selectCategory(s.id)}>
+                        <span>{s.icon} {s.name}</span>
+                        {categoryId === s.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
                       </button>
                     ))}
                   </div>
-                )
-              })()}
-              <button className="picker-row" onClick={() => { setCategoryId(null); setShowCategoryPicker(false) }}>
-                <span>None</span>
-              </button>
-              {categories.filter((c) => !c.parentId).map((c) => (
-                <div key={c.id}>
-                  <button className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
-                    <span>{c.icon} {c.name}</span>
-                    {categoryId === c.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                  </button>
-                  {categories.filter((s) => s.parentId === c.id).map((s) => (
-                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => { setCategoryId(s.id); setShowCategoryPicker(false) }}>
-                      <span>{s.icon} {s.name}</span>
-                      {categoryId === s.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                    </button>
-                  ))}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
-      {showExpensePicker && (
-        <div className="modal-backdrop" onClick={() => setShowExpensePicker(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">Reimburses Which Expense?</span>
-              <button onClick={() => setShowExpensePicker(false)} className="text-button text-button-primary">Done</button>
-            </div>
-            <div className="modal-body">
-              <button className="picker-row" onClick={() => { setReimbursesId(null); setShowExpensePicker(false) }}>
-                <span>None</span>
-              </button>
-              {expenseCandidates.slice(0, 40).map((e) => (
-                <button key={e.id} className="picker-row" onClick={() => { setReimbursesId(e.id); setShowExpensePicker(false) }}>
-                  <span>{e.note || 'Untitled'} · {new Date(e.date).toLocaleDateString()}</span>
-                  <span className="amount">{formatCurrency(e.amount)}</span>
+      {showExpensePicker && (() => {
+        const { closing: expClosing, requestClose: requestExpClose } = expensePickerClose
+        function selectExpense(id: string | null) {
+          requestExpClose(() => { setReimbursesId(id); setShowExpensePicker(false) })
+        }
+        return (
+          <div className={`modal-backdrop${expClosing ? ' modal-closing' : ''}`} onClick={() => requestExpClose(() => setShowExpensePicker(false))}>
+            <div className={`modal-sheet${expClosing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Reimburses Which Expense?</span>
+                <button onClick={() => requestExpClose(() => setShowExpensePicker(false))} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                <button className="picker-row" onClick={() => selectExpense(null)}>
+                  <span>None</span>
                 </button>
-              ))}
+                {expenseCandidates.slice(0, 40).map((e) => (
+                  <button key={e.id} className="picker-row" onClick={() => selectExpense(e.id)}>
+                    <span>{e.note || 'Untitled'} · {new Date(e.date).toLocaleDateString()}</span>
+                    <span className="amount">{formatCurrency(e.amount)}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

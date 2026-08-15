@@ -5,6 +5,7 @@ import { formatCurrency, localDateInputValue } from '../calculations'
 import { getSettings, updateSettings } from '../budgetPeriod'
 import { createRecurring, saveRecurring, deleteRecurring } from '../db'
 import SwipeableRow from '../components/SwipeableRow'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
@@ -127,6 +128,8 @@ function RecurringEditor({ item, categories, onSave, onClose }: {
   const [categoryId, setCategoryId] = useState<string | null>(item.categoryId)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
   const category = categories.find((c) => c.id === categoryId)
+  const { closing, requestClose } = useModalClose(onClose)
+  const categoryPickerClose = useModalClose(() => setShowCategoryPicker(false))
 
   function handleSave() {
     const parsed = parseFloat(amount)
@@ -139,14 +142,14 @@ function RecurringEditor({ item, categories, onSave, onClose }: {
       nextDueDate: new Date(y, m - 1, d).toISOString(),
       categoryId
     })
-    onClose()
+    requestClose()
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <button onClick={onClose} className="text-button">Cancel</button>
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
           <span className="modal-title">Edit Recurring</span>
           <button onClick={handleSave} className="text-button text-button-primary">Save</button>
         </div>
@@ -175,24 +178,26 @@ function RecurringEditor({ item, categories, onSave, onClose }: {
         </div>
       </div>
 
-      {showCategoryPicker && (
-        <div className="modal-backdrop" onClick={() => setShowCategoryPicker(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+      {showCategoryPicker && (() => { const { closing: cc, requestClose: rcc } = categoryPickerClose
+        function pick(id: string | null) { rcc(() => { setCategoryId(id); setShowCategoryPicker(false) }) }
+        return (
+        <div className={`modal-backdrop${cc ? ' modal-closing' : ''}`} onClick={() => rcc(() => setShowCategoryPicker(false))}>
+          <div className={`modal-sheet${cc ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Category</span>
-              <button onClick={() => setShowCategoryPicker(false)} className="text-button text-button-primary">Done</button>
+              <button onClick={() => rcc(() => setShowCategoryPicker(false))} className="text-button text-button-primary">Done</button>
             </div>
             <div className="modal-body">
-              <button className="picker-row" onClick={() => { setCategoryId(null); setShowCategoryPicker(false) }}>
+              <button className="picker-row" onClick={() => pick(null)}>
                 <span>None</span>
               </button>
               {categories.filter((c) => !c.parentId).map((c) => (
                 <div key={c.id}>
-                  <button className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
+                  <button className="picker-row" onClick={() => pick(c.id)}>
                     <span>{c.icon} {c.name}</span>
                   </button>
                   {categories.filter((s) => s.parentId === c.id).map((s) => (
-                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => { setCategoryId(s.id); setShowCategoryPicker(false) }}>
+                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => pick(s.id)}>
                       <span>{s.icon} {s.name}</span>
                     </button>
                   ))}
@@ -201,7 +206,8 @@ function RecurringEditor({ item, categories, onSave, onClose }: {
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

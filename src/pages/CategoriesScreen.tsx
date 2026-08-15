@@ -3,6 +3,7 @@ import type { Category } from '../types'
 import { createCategory, saveCategory, deleteCategory, mergeCategoryInto } from '../db'
 import { localDateInputValue } from '../calculations'
 import { useSwipeBack } from '../useSwipeBack'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
@@ -98,6 +99,8 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
   const [needWantType, setNeedWantType] = useState<'need' | 'want' | null>(category?.needWantType ?? null)
   const [showDeleteOptions, setShowDeleteOptions] = useState(false)
+  const { closing, requestClose } = useModalClose(onClose)
+  const deleteOptionsClose = useModalClose(() => setShowDeleteOptions(false))
 
   // A same-name category elsewhere is very likely the exact duplicate
   // situation this is for — surfaced as the suggested merge target,
@@ -134,7 +137,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
       await createCategory(data)
     }
     onChanged()
-    onClose()
+    requestClose()
   }
 
   function handleDelete() {
@@ -155,7 +158,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
     const { movedCount } = await mergeCategoryInto(category.id, targetId)
     alert(`Moved ${movedCount} transaction${movedCount === 1 ? '' : 's'} into "${target.name}".`)
     onChanged()
-    onClose()
+    requestClose()
   }
 
   async function handlePlainDelete() {
@@ -163,14 +166,14 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
     if (!confirm(`Delete "${category.name}"? Any transactions using it will become uncategorized rather than being reassigned.`)) return
     await deleteCategory(category.id)
     onChanged()
-    onClose()
+    requestClose()
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <button onClick={onClose} className="text-button">Cancel</button>
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
           <span className="modal-title">{category ? 'Edit Category' : 'New Category'}</span>
           <button onClick={handleSave} className="text-button text-button-primary">Save</button>
         </div>
@@ -254,11 +257,11 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
       </div>
 
       {showDeleteOptions && category && (
-        <div className="modal-backdrop" onClick={() => setShowDeleteOptions(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${deleteOptionsClose.closing ? ' modal-closing' : ''}`} onClick={() => deleteOptionsClose.requestClose()}>
+          <div className={`modal-sheet${deleteOptionsClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Delete "{category.name}"</span>
-              <button className="text-button" onClick={() => setShowDeleteOptions(false)}>Cancel</button>
+              <button className="text-button" onClick={() => deleteOptionsClose.requestClose()}>Cancel</button>
             </div>
             <div className="modal-body">
               {likelyDuplicate && (

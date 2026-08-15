@@ -3,6 +3,7 @@ import type { Category, RecurringTransaction, Transaction } from '../types'
 import { runHealthCheck, type HealthFinding } from '../healthCheck'
 import { formatCurrency, netAmount } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   transactions: Transaction[]
@@ -16,6 +17,7 @@ interface Props {
 export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck }: Props) {
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
+  const drillDownClose = useModalClose(() => setDrillDown(null))
   const [editing, setEditing] = useState<Transaction | null>(null)
   const catById = new Map(categories.map((c) => [c.id, c]))
 
@@ -68,11 +70,11 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
       )}
 
       {drillDown && (
-        <div className="modal-backdrop" onClick={() => setDrillDown(null)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${drillDownClose.closing ? ' modal-closing' : ''}`} onClick={() => drillDownClose.requestClose()}>
+          <div className={`modal-sheet${drillDownClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">{drillDown.title}</span>
-              <button className="text-button text-button-primary" onClick={() => setDrillDown(null)}>Done</button>
+              <button className="text-button text-button-primary" onClick={() => drillDownClose.requestClose()}>Done</button>
             </div>
             <div className="modal-body">
               <p className="hint" style={{ marginBottom: 12 }}>Tap any transaction to fix it directly.</p>

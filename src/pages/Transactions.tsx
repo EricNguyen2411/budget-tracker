@@ -5,6 +5,7 @@ import { transactionsWithSimilarName } from '../duplicates'
 import TransactionEditor from '../components/TransactionEditor'
 import SwipeableRow from '../components/SwipeableRow'
 import { PlusIcon } from '../icons'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
@@ -32,9 +33,11 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [creating, setCreating] = useState(false)
   const [similarPrompt, setSimilarPrompt] = useState<{ note: string; categoryId: string; matches: Transaction[] } | null>(null)
+  const similarPromptClose = useModalClose(() => setSimilarPrompt(null))
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false)
+  const bulkPickerClose = useModalClose(() => setShowBulkCategoryPicker(false))
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
@@ -211,11 +214,11 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
       )}
 
       {similarPrompt && (
-        <div className="modal-backdrop" onClick={() => setSimilarPrompt(null)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${similarPromptClose.closing ? ' modal-closing' : ''}`} onClick={() => similarPromptClose.requestClose()}>
+          <div className={`modal-sheet${similarPromptClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Similar Transactions</span>
-              <button className="text-button" onClick={() => setSimilarPrompt(null)}>Close</button>
+              <button className="text-button" onClick={() => similarPromptClose.requestClose()}>Close</button>
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
@@ -224,36 +227,36 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               <button
                 className="list-button"
                 style={{ width: '100%', textAlign: 'center', background: 'var(--blue)', color: '#FFFFFF', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 8 }}
-                onClick={async () => {
+                onClick={() => similarPromptClose.requestClose(async () => {
                   for (const t of similarPrompt.matches) {
                     await onSave({ ...t, categoryId: similarPrompt.categoryId }, t.id)
                   }
                   setSimilarPrompt(null)
-                }}
+                })}
               >
                 Categorize {similarPrompt.matches.length}
               </button>
-              <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => setSimilarPrompt(null)}>Not Now</button>
+              <button className="list-button" style={{ width: '100%', textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => similarPromptClose.requestClose()}>Not Now</button>
             </div>
           </div>
         </div>
       )}
 
       {showBulkCategoryPicker && (
-        <div className="modal-backdrop" onClick={() => setShowBulkCategoryPicker(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop${bulkPickerClose.closing ? ' modal-closing' : ''}`} onClick={() => bulkPickerClose.requestClose()}>
+          <div className={`modal-sheet${bulkPickerClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Change {selectedIds.size} to</span>
-              <button className="text-button text-button-primary" onClick={() => setShowBulkCategoryPicker(false)}>Cancel</button>
+              <button className="text-button text-button-primary" onClick={() => bulkPickerClose.requestClose()}>Cancel</button>
             </div>
             <div className="modal-body">
               {categories.filter((c) => !c.parentId).map((c) => (
                 <div key={c.id}>
-                  <button className="picker-row" onClick={() => bulkCategorize(c.id)}>
+                  <button className="picker-row" onClick={() => bulkPickerClose.requestClose(() => bulkCategorize(c.id))}>
                     <span>{c.icon} {c.name}</span>
                   </button>
                   {categories.filter((s) => s.parentId === c.id).map((s) => (
-                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => bulkCategorize(s.id)}>
+                    <button key={s.id} className="picker-row picker-row-sub" onClick={() => bulkPickerClose.requestClose(() => bulkCategorize(s.id))}>
                       <span>{s.icon} {s.name}</span>
                     </button>
                   ))}

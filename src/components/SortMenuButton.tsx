@@ -14,6 +14,13 @@ interface Props<T extends string> {
 
 export default function SortMenuButton<T extends string>({ options, value, onChange }: Props<T>) {
   const [open, setOpen] = useState(false)
+  const [closing, setClosing] = useState(false)
+
+  function requestClose() {
+    if (closing) return
+    setClosing(true)
+    setTimeout(() => { setOpen(false); setClosing(false) }, 240)
+  }
 
   return (
     <>
@@ -22,22 +29,22 @@ export default function SortMenuButton<T extends string>({ options, value, onCha
       </button>
 
       {open && (
-        <div className="modal-backdrop action-sheet-backdrop" onClick={() => setOpen(false)}>
-          <div className="action-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className={`modal-backdrop action-sheet-backdrop${closing ? ' modal-closing' : ''}`} onClick={requestClose}>
+          <div className={`action-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="action-sheet-group">
               {options.map((opt, i) => (
                 <button
                   key={opt.value}
                   className="action-sheet-row"
                   style={{ borderBottom: i < options.length - 1 ? '0.5px solid var(--border)' : 'none' }}
-                  onClick={() => { onChange(opt.value); setOpen(false) }}
+                  onClick={() => { onChange(opt.value); requestClose() }}
                 >
                   <span style={{ fontWeight: value === opt.value ? 600 : 400 }}>{opt.label}</span>
                   {value === opt.value && <span style={{ color: 'var(--blue)' }}>✓</span>}
                 </button>
               ))}
             </div>
-            <button className="action-sheet-cancel" onClick={() => setOpen(false)}>Cancel</button>
+            <button className="action-sheet-cancel" onClick={requestClose}>Cancel</button>
           </div>
         </div>
       )}

@@ -4,6 +4,7 @@ import { formatCurrency, netAmount, categoryAndDescendantIds } from '../calculat
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
+import CategoryFilterButton from '../components/CategoryFilterButton'
 
 interface Props {
   title: string
@@ -70,31 +71,7 @@ export default function PeriodDetail({ title, start, end, categories, transactio
       </div>
 
       {categoriesInPeriod.length > 1 && (
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 16, paddingBottom: 2 }}>
-          <button
-            onClick={() => setCategoryFilter(null)}
-            style={{
-              whiteSpace: 'nowrap', fontSize: 13, padding: '6px 14px', borderRadius: 16,
-              background: categoryFilter === null ? 'var(--blue)' : 'var(--surface-2)',
-              color: categoryFilter === null ? '#fff' : 'var(--text-dim)', fontWeight: categoryFilter === null ? 600 : 400
-            }}
-          >
-            All
-          </button>
-          {categoriesInPeriod.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setCategoryFilter(categoryFilter === c.id ? null : c.id)}
-              style={{
-                whiteSpace: 'nowrap', fontSize: 13, padding: '6px 14px', borderRadius: 16, display: 'flex', alignItems: 'center', gap: 5,
-                background: categoryFilter === c.id ? 'var(--blue)' : 'var(--surface-2)',
-                color: categoryFilter === c.id ? '#fff' : 'var(--text-dim)', fontWeight: categoryFilter === c.id ? 600 : 400
-              }}
-            >
-              <span>{c.icon}</span><span>{c.name}</span>
-            </button>
-          ))}
-        </div>
+        <CategoryFilterButton categories={categoriesInPeriod} value={categoryFilter} onChange={setCategoryFilter} allLabel="All" />
       )}
 
 

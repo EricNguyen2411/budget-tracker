@@ -356,6 +356,22 @@ a {
   to { transform: translateY(0); }
 }
 
+@keyframes modal-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes modal-slide-down {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+.modal-backdrop.modal-closing {
+  animation: modal-fade-out 0.24s ease forwards;
+}
+.modal-sheet.modal-sheet-closing,
+.action-sheet.modal-sheet-closing {
+  animation: modal-slide-down 0.24s cubic-bezier(0.32, 0.72, 0, 1) forwards;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -376,7 +392,8 @@ a {
   border-radius: 20px 20px 0 0;
   border: 0.5px solid rgba(255, 255, 255, 0.08);
   border-bottom: none;
-  height: 94dvh;
+  height: auto;
+  max-height: 90dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -537,6 +554,23 @@ a {
   backdrop-filter: blur(30px) saturate(180%);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
   border-radius: 14px;
+}
+
+.category-filter-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  width: 100%;
+  margin-bottom: 16px;
+}
+.category-filter-chevron {
+  color: var(--text-faint);
+  margin-left: auto;
+  font-size: 13px;
 }
 
 .picker-row {
