@@ -4,6 +4,7 @@ import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
+import SortMenuButton from '../components/SortMenuButton'
 
 interface Props {
   category: Category
@@ -41,7 +42,11 @@ export default function CategoryDetail({ category, allCategories, transactions, 
       <div className="screen-header-row">
         <button onClick={onBack} className="text-button">‹ Back</button>
         <h1 className="screen-title" style={{ fontSize: 20 }}>{category.icon} {category.name}</h1>
-        <span style={{ width: 40 }} />
+        <SortMenuButton
+          options={[{ value: 'recent', label: 'Newest First' }, { value: 'price', label: 'Highest Price First' }]}
+          value={sort}
+          onChange={setSort}
+        />
       </div>
 
       {goal && (
@@ -95,14 +100,9 @@ export default function CategoryDetail({ category, allCategories, transactions, 
         </>
       )}
 
-      <div className="segmented" style={{ marginBottom: 10 }}>
+      <div className="segmented" style={{ marginBottom: 16 }}>
         <button className={!showAllTime ? 'segmented-active' : ''} onClick={() => setShowAllTime(false)}>This Period</button>
         <button className={showAllTime ? 'segmented-active' : ''} onClick={() => setShowAllTime(true)}>All Time</button>
-      </div>
-
-      <div className="segmented" style={{ marginBottom: 16 }}>
-        <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
-        <button className={sort === 'price' ? 'segmented-active' : ''} onClick={() => setSort('price')}>Highest Price</button>
       </div>
 
       {sorted.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing logged {showAllTime ? '' : 'this period'} yet.</p>}

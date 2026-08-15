@@ -347,6 +347,15 @@ a {
 }
 
 /* ---- Modal ---- */
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -355,6 +364,7 @@ a {
   align-items: flex-end;
   z-index: 50;
   overscroll-behavior: contain;
+  animation: modal-fade-in 0.22s ease;
 }
 .modal-sheet {
   background: rgba(28, 28, 30, 0.88);
@@ -366,10 +376,11 @@ a {
   border-radius: 20px 20px 0 0;
   border: 0.5px solid rgba(255, 255, 255, 0.08);
   border-bottom: none;
-  max-height: 85dvh;
+  height: 94dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  animation: modal-slide-up 0.32s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .modal-header {
   display: flex;
@@ -473,6 +484,59 @@ a {
   width: 22px;
   height: 22px;
   display: block;
+}
+
+.sort-menu-trigger {
+  padding: 8px;
+  margin: -8px;
+  color: var(--blue);
+}
+.sort-menu-trigger svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+
+.action-sheet-backdrop {
+  align-items: flex-end;
+  padding: 0 8px calc(8px + env(safe-area-inset-bottom));
+}
+.action-sheet {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: modal-slide-up 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.action-sheet-group {
+  background: rgba(44, 44, 46, 0.92);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.action-sheet-row {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  font-size: 16px;
+}
+.action-sheet-cancel {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 16px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--blue);
+  background: rgba(44, 44, 46, 0.92);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-radius: 14px;
 }
 
 .picker-row {

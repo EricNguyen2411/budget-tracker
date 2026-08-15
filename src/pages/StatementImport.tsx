@@ -6,6 +6,7 @@ import { isLikelyDuplicate, significantTokens, genericTokens } from '../duplicat
 import { formatCurrency } from '../calculations'
 import { createTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
+import SortMenuButton from '../components/SortMenuButton'
 
 interface Props {
   categories: Category[]
@@ -195,7 +196,14 @@ export default function StatementImport({ categories, existingTransactions, onBa
         <button onClick={onBack} className="text-button">‹ Back</button>
         <h1 className="screen-title" style={{ fontSize: 20 }}>Import Statement</h1>
         {status === 'done' && (
-          <button className="text-button text-button-primary" onClick={handleImport}>Import ({included.size})</button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <SortMenuButton
+              options={[{ value: 'recent', label: 'Newest First' }, { value: 'oldest', label: 'Oldest First' }]}
+              value={sort}
+              onChange={setSort}
+            />
+            <button className="text-button text-button-primary" onClick={handleImport}>Import ({included.size})</button>
+          </div>
         )}
         {status !== 'done' && <span style={{ width: 60 }} />}
       </div>
@@ -270,11 +278,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
           )}
 
           {results.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>No transactions found — try a clearer photo, or add these manually.</p>}
-
-          <div className="segmented" style={{ marginBottom: 12 }}>
-            <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
-            <button className={sort === 'oldest' ? 'segmented-active' : ''} onClick={() => setSort('oldest')}>Oldest</button>
-          </div>
 
           {(() => {
             const visible = (hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)

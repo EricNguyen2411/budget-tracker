@@ -3,6 +3,7 @@ import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, categoryAndDescendantIds } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
+import SortMenuButton from '../components/SortMenuButton'
 
 interface Props {
   title: string
@@ -56,7 +57,11 @@ export default function PeriodDetail({ title, start, end, categories, transactio
       <div className="screen-header-row">
         <button onClick={onBack} className="text-button">‹ Back</button>
         <h1 className="screen-title" style={{ fontSize: 20 }}>{title}</h1>
-        <span style={{ width: 40 }} />
+        <SortMenuButton
+          options={[{ value: 'recent', label: 'Newest First' }, { value: 'price', label: 'Highest Price First' }]}
+          value={sort}
+          onChange={setSort}
+        />
       </div>
 
       <div className="card hero-card" style={{ marginBottom: 16 }}>
@@ -92,10 +97,6 @@ export default function PeriodDetail({ title, start, end, categories, transactio
         </div>
       )}
 
-      <div className="segmented" style={{ marginBottom: 16 }}>
-        <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
-        <button className={sort === 'price' ? 'segmented-active' : ''} onClick={() => setSort('price')}>Highest Price</button>
-      </div>
 
       {sorted.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', marginTop: 20 }}>Nothing here.</p>}
 

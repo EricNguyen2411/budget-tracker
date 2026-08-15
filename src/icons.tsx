@@ -62,3 +62,14 @@ export function PlusIcon() {
     </svg>
   )
 }
+
+export function SortIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 4v16" />
+      <path d="M3.5 7.5L7 4l3.5 3.5" />
+      <path d="M17 20V4" />
+      <path d="M13.5 16.5L17 20l3.5-3.5" />
+    </svg>
+  )
+}

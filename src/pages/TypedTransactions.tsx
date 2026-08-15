@@ -4,6 +4,7 @@ import { formatCurrency, netAmount, reimbursementNote, repaysNote, excessForReim
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
+import SortMenuButton from '../components/SortMenuButton'
 
 export type StatKind = 'spent' | 'income' | 'reimbursed' | 'saved'
 
@@ -69,17 +70,16 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
       <div className="screen-header-row">
         <button onClick={onBack} className="text-button">‹ Back</button>
         <h1 className="screen-title" style={{ fontSize: 20 }}>{TITLES[kind]}</h1>
-        <span style={{ width: 40 }} />
+        <SortMenuButton
+          options={[{ value: 'recent', label: 'Newest First' }, { value: 'price', label: 'Highest Price First' }]}
+          value={sort}
+          onChange={setSort}
+        />
       </div>
 
       <div className="card" style={{ marginBottom: 16, textAlign: 'center' }}>
         <span className="hero-label">{TITLES[kind]} this period</span>
         <div className="hero-amount amount" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
-      </div>
-
-      <div className="segmented" style={{ marginBottom: 16 }}>
-        <button className={sort === 'recent' ? 'segmented-active' : ''} onClick={() => setSort('recent')}>Recent</button>
-        <button className={sort === 'price' ? 'segmented-active' : ''} onClick={() => setSort('price')}>Highest Price</button>
       </div>
 
       {sorted.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing here this period.</p>}
