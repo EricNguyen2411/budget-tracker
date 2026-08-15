@@ -40,9 +40,9 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
           return (
             <div key={c.id}>
               <div className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <button onClick={() => move(c, 'up')} disabled={i === 0} style={{ color: i === 0 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1, padding: '10px 14px' }}>▲</button>
-                  <button onClick={() => move(c, 'down')} disabled={i === topLevel.length - 1} style={{ color: i === topLevel.length - 1 ? 'var(--text-faint)' : 'var(--blue)', fontSize: 14, lineHeight: 1, padding: '10px 14px' }}>▼</button>
+                <div className="reorder-stepper">
+                  <button onClick={() => move(c, 'up')} disabled={i === 0}>▲</button>
+                  <button onClick={() => move(c, 'down')} disabled={i === topLevel.length - 1}>▼</button>
                 </div>
                 <button className="transaction-row" style={{ padding: 0, flex: 1 }} onClick={() => setEditingCategory(c)}>
                   <div className="tx-icon" style={{ background: c.color + '33' }}>{c.icon}</div>
@@ -174,20 +174,20 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
           <span className="modal-title">{category ? 'Edit Category' : 'New Category'}</span>
           <button onClick={handleSave} className="text-button text-button-primary">Save</button>
         </div>
-        {category && (
-          <button onClick={handleDelete} style={{ color: 'var(--red)', fontSize: 13, textAlign: 'center', padding: '10px 16px', borderBottom: '1px solid var(--border)' }}>
-            Delete Category
-          </button>
-        )}
         <div className="modal-body">
           <label className="field-label">Name</label>
           <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
 
-          <label className="field-label">Icon (emoji)</label>
-          <input type="text" value={icon} onChange={(e) => setIcon(e.target.value)} style={{ width: 60 }} />
-
-          <label className="field-label">Color</label>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: 60, padding: 2 }} />
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label className="field-label">Icon (emoji)</label>
+              <input type="text" value={icon} onChange={(e) => setIcon(e.target.value)} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label className="field-label">Color</label>
+              <input type="color" value={color} onChange={(e) => setColor(e.target.value)} style={{ width: '100%', padding: 2 }} />
+            </div>
+          </div>
 
           {eligibleParents.length > 0 && (
             <>
@@ -242,6 +242,12 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
                 </>
               )}
             </>
+          )}
+
+          {category && (
+            <button onClick={handleDelete} style={{ color: 'var(--red)', fontSize: 15, textAlign: 'center', width: '100%', padding: '14px 0', marginTop: 20, borderTop: '1px solid var(--border)' }}>
+              Delete Category
+            </button>
           )}
 
         </div>

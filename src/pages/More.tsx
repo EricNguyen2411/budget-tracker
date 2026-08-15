@@ -2,8 +2,12 @@ import { useRef, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { exportBackup, importBackup, exportCSV, recordManualBackup, daysSinceLastManualBackup } from '../db'
 import { getSettings, updateSettings } from '../budgetPeriod'
-import { requestNotificationPermission, notificationPermissionStatus } from '../notifications'
 import DashboardSettings from './DashboardSettings'
+
+function ordinal(n: number): string {
+  const suffix = n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'
+  return `${n}${suffix}`
+}
 
 interface Props {
   categories: Category[]
@@ -47,15 +51,6 @@ export default function More({ categories, transactions, onCategoriesChanged, on
     setSettings(getSettings())
   }
 
-  async function handleNudgeToggle(enabled: boolean) {
-    if (enabled) {
-      const granted = await requestNotificationPermission()
-      if (!granted) { setStatus('Notification permission denied by browser.'); return }
-    }
-    updateSettings({ nudgeEnabled: enabled })
-    setSettings(getSettings())
-  }
-
   async function handleImportFile(file: File) {
     try {
       const text = await file.text()
@@ -87,33 +82,28 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           <div className="tx-info"><span className="tx-note">Categories</span></div>
           <span className="chevron">›</span>
         </button>
-        <button className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => setShowDashboardSettings(true)}>
+        <button className="transaction-row" style={{ borderBottom: settings.budgetCycleStartDay > 1 ? 'none' : '1px solid var(--border)' }} onClick={() => setShowDashboardSettings(true)}>
           <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>📊</div>
           <div className="tx-info"><span className="tx-note">Customize Dashboard</span></div>
           <span className="chevron">›</span>
         </button>
-        <div style={{ padding: '12px 16px' }}>
-          <div className="form-row" style={{ padding: '4px 0' }}>
-            <span className="form-row-label">Custom budget cycle</span>
+        <div style={{ padding: '0 16px' }}>
+          <div className="transaction-row" style={{ padding: '12px 0', borderBottom: settings.budgetCycleStartDay > 1 ? '1px solid var(--border)' : 'none' }}>
+            <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>🔄</div>
+            <div className="tx-info"><span className="tx-note">Custom budget cycle</span></div>
             <input type="checkbox" switch checked={settings.budgetCycleStartDay > 1} onChange={(e) => handleCycleDayChange(e.target.checked ? 28 : 1)} />
           </div>
           {settings.budgetCycleStartDay > 1 && (
-            <div className="form-row" style={{ padding: '4px 0', borderBottom: 'none' }}>
-              <span className="form-row-label" style={{ color: 'var(--text-dim)', fontSize: 13 }}>Starts on day</span>
-              <input type="number" min={2} max={28} value={settings.budgetCycleStartDay} onChange={(e) => handleCycleDayChange(Math.min(28, Math.max(2, parseInt(e.target.value) || 2)))} style={{ width: 60 }} />
+            <div className="form-row" style={{ padding: '11px 0 4px', borderBottom: 'none' }}>
+              <span className="form-row-label" style={{ color: 'var(--text-dim)', fontSize: 13, paddingLeft: 46 }}>Starts on</span>
+              <select value={settings.budgetCycleStartDay} onChange={(e) => handleCycleDayChange(parseInt(e.target.value))} style={{ width: 'auto' }}>
+                {Array.from({ length: 27 }, (_, i) => i + 2).map((day) => (
+                  <option key={day} value={day}>{ordinal(day)} of the month</option>
+                ))}
+              </select>
             </div>
           )}
-          <p className="hint" style={{ marginTop: 4 }}>If "this month" should reset on payday instead of the 1st — Safe to Spend, budgets, and Insights all shift together.</p>
-        </div>
-        <div style={{ padding: '4px 16px 12px', borderTop: '1px solid var(--border)' }}>
-          <div className="form-row" style={{ padding: '10px 0', borderBottom: 'none' }}>
-            <span className="form-row-label">Nudge if I haven't logged anything</span>
-            <input type="checkbox" switch checked={settings.nudgeEnabled} onChange={(e) => handleNudgeToggle(e.target.checked)} />
-          </div>
-          <p className="hint" style={{ marginTop: -4 }}>
-            Honest limitation: iOS can't reliably deliver a scheduled notification while the app is closed without a real backend server, which this app deliberately doesn't have. This checks on each app open instead.
-            {notificationPermissionStatus() === 'denied' && ' Notifications are currently blocked for this site in your browser settings.'}
-          </p>
+          <p className="hint" style={{ marginTop: 4, marginBottom: 12 }}>If "this month" should reset on payday instead of the 1st — Safe to Spend, budgets, and Insights all shift together.</p>
         </div>
       </div>
 

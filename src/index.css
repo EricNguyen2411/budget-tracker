@@ -89,6 +89,18 @@ input, select {
   touch-action: manipulation;
 }
 
+/* Native up/down spinner arrows look out of place against this app's
+   own styling — hidden everywhere in favor of the custom steppers used
+   where incrementing actually matters (e.g. reorder controls). */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
 /* Checkboxes are visually small by design, but a small VISUAL size
    shouldn't mean a small TAPPABLE size — Apple's own research shows
    targets under 44x44pt produce meaningfully higher tap-error rates.
@@ -428,6 +440,27 @@ a {
   font-family: var(--font-mono);
   font-size: 26px;
   font-weight: 700;
+}
+
+.reorder-stepper {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-2);
+  border-radius: 9px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.reorder-stepper button {
+  padding: 7px 12px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--blue);
+}
+.reorder-stepper button:disabled {
+  color: var(--text-faint);
+}
+.reorder-stepper button:first-child {
+  border-bottom: 0.5px solid var(--border);
 }
 
 .picker-row {
