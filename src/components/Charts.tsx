@@ -93,15 +93,17 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
 
   const selected = selectedIndex !== null ? data[selectedIndex] : null
   const axisColumnWidth = 36
-  // With 6 bars (the monthly trend charts) there's real room for a
-  // value label above each one — with 14 (the daily chart) there isn't,
-  // and forcing it would trade "have to check the axis" for "can't read
-  // any of the overlapping labels", which is worse, not better.
-  const showBarLabels = data.length <= 8
+  const showBarLabels = data.length <= 14
+  // 14 daily bars have much less room per bar than 6 monthly ones —
+  // smaller text and whole-dollar rounding (no cents) keeps each label
+  // narrow enough to avoid colliding with its neighbors.
+  const dense = data.length > 8
+  const labelFontSize = dense ? 8.5 : 10
   function compactValue(n: number): string {
     const abs = Math.abs(n)
-    if (abs < 1000) return formatCurrency(n)
-    return `${n < 0 ? '-' : ''}$${(abs / 1000).toFixed(1)}k`
+    if (abs >= 1000) return `${n < 0 ? '-' : ''}$${(abs / 1000).toFixed(1)}k`
+    if (dense) return `${n < 0 ? '-' : ''}$${Math.round(abs)}`
+    return formatCurrency(n)
   }
   // A little more breathing room between bars than the old formula gave
   // at higher bar counts (it went almost to zero gap at 14 bars, which
@@ -139,7 +141,7 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
                     className="amount"
                     style={{
                       position: 'absolute',
-                      fontSize: 10,
+                      fontSize: labelFontSize,
                       fontWeight: isSelected ? 700 : 500,
                       color: 'var(--text-dim)',
                       opacity: selectedIndex !== null && !isSelected ? 0.35 : 1,
