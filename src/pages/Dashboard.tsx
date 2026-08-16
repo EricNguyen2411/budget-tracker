@@ -29,16 +29,17 @@ interface Props {
  * in-progress month against a full one would show a misleading swing
  * purely because the month isn't over yet, not because spending
  * actually changed. */
-function trendSummary(periods: { periodStart: Date; amount: number }[], noun: string, excludeCurrent: boolean): React.ReactNode {
-  const complete = excludeCurrent ? periods.slice(0, -1) : periods
-  if (complete.length < 2) return null
-  const currentPeriod = complete[complete.length - 1]
-  const previousPeriod = complete[complete.length - 2]
+function trendSummary(periods: { periodStart: Date; amount: number }[], noun: string, now: Date): React.ReactNode {
+  if (periods.length < 2) return null
+  const currentPeriod = periods[periods.length - 1]
+  const previousPeriod = periods[periods.length - 2]
   if (previousPeriod.amount === 0) return null
   const pctChange = ((currentPeriod.amount - previousPeriod.amount) / Math.abs(previousPeriod.amount)) * 100
   const up = pctChange > 0
   const color = noun === 'spending' ? (up ? 'var(--red)' : 'var(--green)') : (up ? 'var(--green)' : 'var(--red)')
-  const currentLabel = currentPeriod.periodStart.toLocaleDateString('en-AU', { month: 'short' })
+  const currentEnd = new Date(currentPeriod.periodStart.getFullYear(), currentPeriod.periodStart.getMonth() + 1, currentPeriod.periodStart.getDate())
+  const isInProgress = now < currentEnd
+  const currentLabel = currentPeriod.periodStart.toLocaleDateString('en-AU', { month: 'short' }) + (isInProgress ? ' so far' : '')
   const previousLabel = previousPeriod.periodStart.toLocaleDateString('en-AU', { month: 'short' })
   return (
     <span>
@@ -324,7 +325,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 })}
                 height={100}
                 preferredStep={2000}
-                defaultSummary={trendSummary(monthlyTrend, 'spending', true)}
+                defaultSummary={trendSummary(monthlyTrend, 'spending', now)}
               />
             </div>
           ),
@@ -344,7 +345,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 })}
                 height={100}
                 preferredStep={2000}
-                defaultSummary={trendSummary(netSavingsTrend, 'net savings', true)}
+                defaultSummary={trendSummary(netSavingsTrend, 'net savings', now)}
               />
             </div>
           ),
