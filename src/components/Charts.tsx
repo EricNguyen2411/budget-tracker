@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { formatCurrency } from '../calculations'
+import AnimatedNumber from './AnimatedNumber'
 
 interface DonutSlice {
   label: string
@@ -8,7 +9,26 @@ interface DonutSlice {
 }
 
 export function DonutChart({ slices, size = 160 }: { slices: DonutSlice[]; size?: number }) {
+  const [progress, setProgress] = useState(0)
   const total = slices.reduce((s, x) => s + x.value, 0)
+
+  useEffect(() => {
+    setProgress(0)
+    const start = performance.now()
+    const duration = 700
+    let frame: number
+    function tick(now: number) {
+      const elapsed = now - start
+      const t = Math.min(1, elapsed / duration)
+      // Ease-out cubic, matching the other chart entrance animations
+      setProgress(1 - Math.pow(1 - t, 3))
+      if (t < 1) frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total])
+
   if (total <= 0) return null
 
   const radius = size / 2
@@ -33,7 +53,7 @@ export function DonutChart({ slices, size = 160 }: { slices: DonutSlice[]; size?
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
       {slices.map((slice, i) => {
-        const sweep = (slice.value / total) * 360
+        const sweep = (slice.value / total) * 360 * progress
         const start = cumulativeAngle
         const end = cumulativeAngle + sweep
         cumulativeAngle = end
@@ -154,7 +174,7 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
                         : { bottom: `${barHeight + 4}px` })
                     }}
                   >
-                    {compactValue(d.value)}
+                    <AnimatedNumber value={d.value} format={compactValue} duration={500} />
                   </span>
                 )}
                 <div
