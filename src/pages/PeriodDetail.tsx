@@ -29,9 +29,15 @@ export default function PeriodDetail({ title, start, end, categories, transactio
   const [editing, setEditing] = useState<Transaction | null>(null)
 
   const periodTransactions = useMemo(() => {
-    const startDate = new Date(start)
-    const endDate = new Date(end)
-    endDate.setDate(endDate.getDate() + 1)
+    // new Date("2026-08-03") is parsed as UTC midnight, not local
+    // midnight — in a UTC+10 timezone that's actually 10am local, which
+    // would silently exclude any transaction from earlier that morning
+    // even though the chart itself (using accurate toDateString()
+    // comparison) correctly counts it as part of that day's total.
+    const [startY, startM, startD] = start.split('-').map(Number)
+    const [endY, endM, endD] = end.split('-').map(Number)
+    const startDate = new Date(startY, startM - 1, startD)
+    const endDate = new Date(endY, endM - 1, endD + 1)
     return transactions.filter((t) => {
       const d = new Date(t.date)
       return d >= startDate && d < endDate

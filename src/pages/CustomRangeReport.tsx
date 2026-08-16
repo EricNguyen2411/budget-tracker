@@ -39,9 +39,14 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
   }
 
   const rangeTransactions = useMemo(() => {
-    const startDate = new Date(start)
-    const endDate = new Date(end)
-    endDate.setDate(endDate.getDate() + 1) // inclusive of the end day
+    // new Date("2026-08-03") parses as UTC midnight, not local midnight
+    // — in a positive-UTC-offset timezone that silently shifts the
+    // window forward several hours, excluding early-morning
+    // transactions from the intended day.
+    const [startY, startM, startD] = start.split('-').map(Number)
+    const [endY, endM, endD] = end.split('-').map(Number)
+    const startDate = new Date(startY, startM - 1, startD)
+    const endDate = new Date(endY, endM - 1, endD + 1) // inclusive of the end day
     return transactions.filter((t) => {
       const d = new Date(t.date)
       return d >= startDate && d < endDate
