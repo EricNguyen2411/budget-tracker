@@ -93,6 +93,16 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
 
   const selected = selectedIndex !== null ? data[selectedIndex] : null
   const axisColumnWidth = 36
+  // With 6 bars (the monthly trend charts) there's real room for a
+  // value label above each one — with 14 (the daily chart) there isn't,
+  // and forcing it would trade "have to check the axis" for "can't read
+  // any of the overlapping labels", which is worse, not better.
+  const showBarLabels = data.length <= 8
+  function compactValue(n: number): string {
+    const abs = Math.abs(n)
+    if (abs < 1000) return formatCurrency(n)
+    return `${n < 0 ? '-' : ''}$${(abs / 1000).toFixed(1)}k`
+  }
   // A little more breathing room between bars than the old formula gave
   // at higher bar counts (it went almost to zero gap at 14 bars, which
   // read as cramped) — clamped to a comfortable range instead.
@@ -108,7 +118,7 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
       ) : defaultSummary ? (
         <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-dim)' }}>{defaultSummary}</div>
       ) : null}
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: showBarLabels ? 16 : 0 }}>
         <div style={{ flex: 1, minWidth: 0, position: 'relative', display: 'flex', alignItems: 'flex-end', height, gap: barGap }}>
           {gridLines.map((_, i) => (
             <div key={i} style={{ position: 'absolute', left: 0, right: 0, bottom: `${(i / (gridLines.length - 1)) * 100}%`, borderTop: '1px solid rgba(255,255,255,0.06)' }} />
@@ -124,6 +134,27 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
                 onClick={() => { setSelectedIndex(isSelected ? null : i); d.onSelect?.() }}
                 style={{ flex: 1, height: '100%', position: 'relative', display: 'flex', alignItems: hasNegative ? 'flex-start' : 'flex-end' }}
               >
+                {showBarLabels && d.value !== 0 && (
+                  <span
+                    className="amount"
+                    style={{
+                      position: 'absolute',
+                      fontSize: 10,
+                      fontWeight: isSelected ? 700 : 500,
+                      color: 'var(--text-dim)',
+                      opacity: selectedIndex !== null && !isSelected ? 0.35 : 1,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      ...(hasNegative
+                        ? isPositive
+                          ? { bottom: `calc(50% + ${barHeight}px + 4px)` }
+                          : { top: `calc(50% + ${barHeight}px + 4px)` }
+                        : { bottom: `${barHeight + 4}px` })
+                    }}
+                  >
+                    {compactValue(d.value)}
+                  </span>
+                )}
                 <div
                   style={{
                     width: '100%',
@@ -141,11 +172,13 @@ export function BarChart({ data, height = 140, positiveColor = 'var(--blue)', ne
             )
           })}
         </div>
-        <div style={{ width: axisColumnWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontSize: 10, color: 'var(--text-faint)', textAlign: 'left' }}>
-          {[...gridLines].reverse().map((v, i) => <span key={i}>{v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}</span>)}
-        </div>
+        {!showBarLabels && (
+          <div style={{ width: axisColumnWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontSize: 10, color: 'var(--text-faint)', textAlign: 'left' }}>
+            {[...gridLines].reverse().map((v, i) => <span key={i}>{v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}</span>)}
+          </div>
+        )}
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6, paddingRight: axisColumnWidth + 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-faint)', marginTop: 6, paddingRight: showBarLabels ? 0 : axisColumnWidth + 8 }}>
         {data.map((d, i) => <span key={i} style={{ opacity: selectedIndex === i ? 1 : 0.7, fontWeight: selectedIndex === i ? 600 : 400 }}>{d.axisLabel}</span>)}
       </div>
     </div>
