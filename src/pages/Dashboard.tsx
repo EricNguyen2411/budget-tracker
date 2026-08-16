@@ -82,6 +82,10 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const pieSlices = useMemo(() => categoryBreakdown(categories, transactions, now), [categories, transactions, now.toDateString()])
   const dailySpend = useMemo(() => last14DaysSpend(transactions, categories, now), [categories, transactions, now.toDateString()])
   const monthRecap = useMemo(() => buildMonthRecap(categories, transactions, now), [categories, transactions, now.toDateString()])
+  const lastMonthDate = useMemo(() => new Date(now.getFullYear(), now.getMonth() - 1, 1), [now.toDateString()])
+  const expectedIncome = useMemo(() => computeDashboardTotals(categories, transactions, lastMonthDate).income, [categories, transactions, lastMonthDate])
+  const totalAllocated = useMemo(() => categories.filter((c) => !c.parentId).reduce((sum, c) => sum + effectiveBudget(c, categories), 0), [categories])
+  const unallocated = expectedIncome - totalAllocated
   const monthRecapLabel = now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
   const monthlyTrend = useMemo(() => last6PeriodsSpend(categories, transactions, now), [categories, transactions, now.toDateString()])
   const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(categories, transactions, now), [categories, transactions, now.toDateString()])
@@ -268,6 +272,22 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 <p className="hint" style={{ margin: 0 }}>💡 {monthRecap.suggestions[0]}</p>
               )}
             </button>
+          ),
+
+          unallocatedFunds: expectedIncome > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Unallocated Funds</span>
+              </div>
+              <div className="hero-amount amount" style={{ fontSize: 26, color: unallocated < 0 ? 'var(--red)' : unallocated === 0 ? 'var(--green)' : 'var(--text)' }}>
+                {formatCurrency(Math.abs(unallocated))}
+              </div>
+              <p className="hint" style={{ marginTop: 4, marginBottom: 0 }}>
+                {unallocated > 0 && `Of ~${formatCurrency(expectedIncome)} expected this month, this much isn't assigned to any budget or savings category yet — give it a job, even if that's just adding it to savings.`}
+                {unallocated === 0 && `Every dollar of your ~${formatCurrency(expectedIncome)} expected income is assigned to a category. That's zero-based budgeting.`}
+                {unallocated < 0 && `Categories are budgeted for ${formatCurrency(totalAllocated)} total — more than the ~${formatCurrency(expectedIncome)} expected this month. Worth trimming something back.`}
+              </p>
+            </div>
           ),
 
           last14Days: dailySpend.some((d) => d.amount > 0) && (
