@@ -20,6 +20,7 @@ interface Props {
 const FORMAT_LABELS: Record<DetectedFormat, string> = {
   appScreenshot: 'Banking app screenshot',
   notificationScreenshot: 'Payment notification screenshot',
+  beemScreenshot: 'Beem activity screenshot',
   unknown: 'Unrecognized format'
 }
 
@@ -80,6 +81,13 @@ export default function StatementImport({ categories, existingTransactions, onBa
       .filter((r) => r.isExpense && r.amount <= 2 && transitKeywords.some((k) => r.note.toLowerCase().includes(k)))
       .map((r) => r.id)
   )
+
+  // Beem "split between N of us" cards import as the full bill (what
+  // actually left the account), plus one income row per other person's
+  // share, pre-linked to reimburse it — Beem settles everyone's share
+  // at the same moment the split is created, so there's nothing pending
+  // to wait for.
+  const splitBillResults = results.filter((r) => r.splitInfo)
 
   async function handlePdfFile(files: FileList | null) {
     if (!files || files.length === 0) return
@@ -178,15 +186,17 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
   async function handleImport() {
     const toImport = results.filter((r) => included.has(r.id))
+    const parsedIdToRealId = new Map<string, string>()
     for (const r of toImport) {
-      await createTransaction({
+      const created = await createTransaction({
         amount: r.amount,
         note: r.note,
         date: r.date,
         isExpense: r.isExpense,
         categoryId: categoryFor(r),
-        reimbursesExpenseId: null
+        reimbursesExpenseId: r.linkedToParsedId ? (parsedIdToRealId.get(r.linkedToParsedId) ?? null) : null
       })
+      parsedIdToRealId.set(r.id, created.id)
     }
     onImported()
     onBack()
@@ -215,7 +225,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
       {status === 'idle' && (
         <div className="card">
           <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
-            Scans a banking app screenshot or payment notification screenshot and pulls out transactions automatically.
+            Scans a banking app screenshot, payment notification screenshot, or Beem activity screenshot and pulls out transactions automatically.
             Runs entirely on your device using free OCR — accuracy won't quite match a native app, so double-check the results before importing.
           </p>
           <label className="list-button" style={{ display: 'block', textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 10 }}>
@@ -281,10 +291,17 @@ export default function StatementImport({ categories, existingTransactions, onBa
             </div>
           )}
 
+          {splitBillResults.length > 0 && (
+            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--purple)' }}>
+              <span style={{ fontSize: 13, color: 'var(--purple)', fontWeight: 600 }}>{splitBillResults.length} split bill{splitBillResults.length === 1 ? '' : 's'} found</span>
+              <p className="hint" style={{ marginTop: 6 }}>Each one imports as the full amount you paid, plus a share for each other person — already marked as reimbursing that expense, since Beem settles everyone's share the moment the split is created.</p>
+            </div>
+          )}
+
           {results.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>No transactions found — try a clearer photo, or add these manually.</p>}
 
           {(() => {
-            const visible = (hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)
+            const visible = [...(hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)]
               .sort((a, b) => sort === 'recent' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date))
             return (
               <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -298,8 +315,14 @@ export default function StatementImport({ categories, existingTransactions, onBa
                       {r.note}
                       {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
                       {pendingFareIds.has(r.id) && <span> 🚊</span>}
+                      {r.splitInfo && <span> 🔀</span>}
+                      {r.linkedToParsedId && <span title="Automatically linked as a reimbursement"> 🔗</span>}
                     </span>
-                    <span className="tx-category">{new Date(r.date).toLocaleDateString('en-AU')}</span>
+                    <span className="tx-category">
+                      {new Date(r.date).toLocaleDateString('en-AU')}
+                      {r.splitInfo && ` · split ${r.splitInfo.totalPeople} ways, ${formatCurrency(r.splitInfo.perPersonAmount)} each`}
+                      {r.linkedToParsedId && ` · reimburses the split above`}
+                    </span>
                     <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}
                     </button>

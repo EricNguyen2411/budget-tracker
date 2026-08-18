@@ -8,6 +8,17 @@ export interface ParsedTransaction {
   date: string // ISO
   isExpense: boolean
   suggestedCategoryId: string | null
+  // Only set for a Beem "split between N of us" card's own expense row —
+  // the amount is the FULL bill (this user paid it out of pocket), with
+  // the other shares generated as their own linked income rows below,
+  // since Beem settles everyone's share at the same moment the split is
+  // created rather than leaving them pending.
+  splitInfo?: { totalPeople: number; perPersonAmount: number } | null
+  // Set on a share row generated from a split-bill card — the id (from
+  // this same parsed batch) of the expense it reimburses. Resolved to a
+  // real database id at import time once the expense has actually been
+  // created and has one.
+  linkedToParsedId?: string | null
 }
 
 function uuid() {
@@ -70,7 +81,17 @@ function isRowAnchorMarker(text: string): boolean {
 
 // ---------- Format detection ----------
 
-export type DetectedFormat = 'appScreenshot' | 'notificationScreenshot' | 'unknown'
+export type DetectedFormat = 'appScreenshot' | 'notificationScreenshot' | 'beemScreenshot' | 'unknown'
+
+// Beem's Activity feed cards each read as one of "$X paid to @user for Y",
+// "$X received from @user for Y", or "$X split between N of us for Y" —
+// distinct enough from both the banking-app row format and the
+// payment-notification format to detect on its own.
+const BEEM_ACTION_PATTERN = /(paid to|received from|split between\s+.+\s+of us)/i
+
+function isBeemActionLine(text: string): boolean {
+  return BEEM_ACTION_PATTERN.test(text)
+}
 
 export function detectFormat(items: TextItem[]): DetectedFormat {
   const hasDateHeader = items.some((i) => isAnyDateHeader(i.text))
@@ -79,6 +100,9 @@ export function detectFormat(items: TextItem[]): DetectedFormat {
 
   const hasPaymentSuccessful = items.some((i) => /payment\s+(success|received|sent)/i.test(i.text))
   if (hasPaymentSuccessful) return 'notificationScreenshot'
+
+  const hasBeemAction = items.some((i) => isBeemActionLine(i.text))
+  if (hasBeemAction) return 'beemScreenshot'
 
   return 'unknown'
 }
@@ -337,6 +361,164 @@ export function parseNotificationScreenshots(items: TextItem[]): { transactions:
   return { transactions, skipped }
 }
 
+// ---------- Beem activity screenshot parser ----------
+
+const WORD_NUMBERS: Record<string, number> = {
+  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12
+}
+
+function parsePeopleCount(text: string): number | null {
+  const match = text.match(/(\d+|[a-z]+)\s+of us/i)
+  if (!match) return null
+  const raw = match[1].toLowerCase()
+  if (/^\d+$/.test(raw)) return parseInt(raw, 10)
+  return WORD_NUMBERS[raw] ?? null
+}
+
+function isBeemDateToken(text: string): boolean {
+  const trimmed = text.trim()
+  if (/^(now|today|yesterday)$/i.test(trimmed)) return true
+  return /^\d{1,2}\s+[A-Za-z]{3,}(\s+\d{4})?$/.test(trimmed)
+}
+
+function parseBeemDate(text: string, ref = new Date()): Date | null {
+  const trimmed = text.trim()
+  if (/^now$/i.test(trimmed)) return new Date(ref)
+  if (/^today$/i.test(trimmed)) {
+    const d = new Date(ref); d.setHours(0, 0, 0, 0); return d
+  }
+  if (/^yesterday$/i.test(trimmed)) {
+    const d = new Date(ref); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d
+  }
+  const match = trimmed.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{4})?$/)
+  if (match) {
+    const day = match[1]
+    const month = match[2]
+    const year = match[3] ? parseInt(match[3], 10) : ref.getFullYear()
+    const candidate = new Date(`${month} ${day}, ${year}`)
+    if (isNaN(candidate.getTime())) return null
+    // No year printed on the card means it's from within roughly the
+    // last 12 months — if taking the current year lands in the future
+    // (e.g. it's January and the card says "02 Dec"), it was last year.
+    if (!match[3] && candidate.getTime() > ref.getTime() + 24 * 60 * 60 * 1000) {
+      candidate.setFullYear(candidate.getFullYear() - 1)
+    }
+    return candidate
+  }
+  return null
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTransaction[]; skipped: string[] } {
+  const transactions: ParsedTransaction[] = []
+  const skipped: string[] = []
+
+  // Each card is anchored on its "paid to" / "received from" / "split
+  // between ... of us" line. Everything from just above that anchor
+  // (to catch the dollar amount when it's on its own line right above,
+  // as happens when the wording wraps) up to the next card's anchor
+  // belongs to this card.
+  const anchors = items.filter((i) => isBeemActionLine(i.text))
+
+  anchors.forEach((anchor, i) => {
+    const nextAnchorY = anchors[i + 1]?.box.y0 ?? Infinity
+    const block = items.filter((it) => it.box.y0 >= anchor.box.y0 - 0.03 && it.box.y0 < nextAnchorY)
+
+    // The footer timestamp ("Now", "02 Aug"...) is its own line, usually
+    // the last one before the next card starts.
+    const dateTokens = block.filter((b) => isBeemDateToken(b.text)).sort((a, b) => b.box.y0 - a.box.y0)
+    const date = dateTokens.length > 0 ? parseBeemDate(dateTokens[0].text) : null
+
+    // The block's upper window (reaching above the anchor to catch this
+    // card's own amount line) also ends up sweeping in the START of the
+    // NEXT card — its amount line sits above ITS OWN anchor too, which
+    // still falls inside this card's [start, nextAnchorY) range. Cutting
+    // the note-extraction text off right after this card's own date
+    // token keeps the next card's leaked content out of the "for ..."
+    // capture, regardless of whatever else the block window swept in.
+    const dateTokenIndex = dateTokens.length > 0 ? block.indexOf(dateTokens[0]) : -1
+    const noteSourceBlock = dateTokenIndex >= 0 ? block.slice(0, dateTokenIndex + 1) : block
+    const combined = noteSourceBlock.map((b) => b.text).join(' ')
+
+    const amountMatch = combined.match(/\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
+    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null
+
+    let isExpense: boolean
+    let note = ''
+    let splitInfo: { totalPeople: number; perPersonAmount: number } | null = null
+
+    if (/split between/i.test(combined)) {
+      isExpense = true
+      const forMatch = combined.match(/\bfor\s+(.+)$/i)
+      note = forMatch ? forMatch[1] : ''
+      const people = parsePeopleCount(combined)
+      if (people && people > 1 && amount !== null) {
+        splitInfo = { totalPeople: people, perPersonAmount: amount / people }
+      }
+    } else if (/received from/i.test(combined)) {
+      isExpense = false
+      const forMatch = combined.match(/\bfor\s+(.+)$/i)
+      note = forMatch ? forMatch[1] : ''
+    } else if (/paid to/i.test(combined)) {
+      isExpense = true
+      const forMatch = combined.match(/\bfor\s+(.+)$/i)
+      note = forMatch ? forMatch[1] : ''
+    } else {
+      skipped.push(combined)
+      return
+    }
+
+    // The captured "for ..." text runs to the end of the block, which
+    // includes the trailing footer date/time — strip it back off now
+    // that we know exactly which token it was.
+    if (dateTokens.length > 0) {
+      note = note.replace(new RegExp(`\\s*${escapeRegExp(dateTokens[0].text.trim())}\\s*$`, 'i'), '')
+    }
+    note = note.replace(/[>›]/g, ' ').replace(/\s+/g, ' ').trim()
+    if (!note) note = isExpense ? 'Beem payment' : 'Beem transfer'
+
+    if (amount === null || !date) {
+      skipped.push(combined)
+      return
+    }
+
+    const expenseId = uuid()
+    transactions.push({
+      id: expenseId,
+      amount,
+      note,
+      date: date.toISOString(),
+      isExpense,
+      suggestedCategoryId: suggestCategoryId(note),
+      splitInfo
+    })
+
+    // Beem settles every share at the moment the split is created — the
+    // other people's portions have already been paid to this user, not
+    // left pending — so each share becomes its own income row here,
+    // pre-linked to reimburse the expense above once both are imported.
+    if (splitInfo) {
+      for (let i = 0; i < splitInfo.totalPeople - 1; i++) {
+        transactions.push({
+          id: uuid(),
+          amount: splitInfo.perPersonAmount,
+          note: `Share of ${note}`,
+          date: date.toISOString(),
+          isExpense: false,
+          suggestedCategoryId: null,
+          splitInfo: null,
+          linkedToParsedId: expenseId
+        })
+      }
+    }
+  })
+
+  return { transactions, skipped }
+}
+
 export async function parseScreenshot(items: TextItem[]): Promise<{ transactions: ParsedTransaction[]; skipped: string[]; format: DetectedFormat }> {
   const format = detectFormat(items)
   if (format === 'appScreenshot') {
@@ -344,6 +526,9 @@ export async function parseScreenshot(items: TextItem[]): Promise<{ transactions
   }
   if (format === 'notificationScreenshot') {
     return { ...parseNotificationScreenshots(items), format }
+  }
+  if (format === 'beemScreenshot') {
+    return { ...parseBeemScreenshot(items), format }
   }
   return { transactions: [], skipped: items.map((i) => i.text), format }
 }
