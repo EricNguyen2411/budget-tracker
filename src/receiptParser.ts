@@ -8,17 +8,13 @@ export interface ParsedTransaction {
   date: string // ISO
   isExpense: boolean
   suggestedCategoryId: string | null
-  // Only set for a Beem "split between N of us" card's own expense row —
-  // the amount is the FULL bill (this user paid it out of pocket), with
-  // the other shares generated as their own linked income rows below,
-  // since Beem settles everyone's share at the same moment the split is
-  // created rather than leaving them pending.
+  // Only set for a Beem "split between N of us" card — the amount above
+  // is still the FULL bill (this user paid it), since that's what
+  // actually left their account. This is just a hint for the review
+  // screen so it's obvious the other shares aren't in here yet; they
+  // show up later as their own "received from" screenshots to be linked
+  // as reimbursements against this same expense once they arrive.
   splitInfo?: { totalPeople: number; perPersonAmount: number } | null
-  // Set on a share row generated from a split-bill card — the id (from
-  // this same parsed batch) of the expense it reimburses. Resolved to a
-  // real database id at import time once the expense has actually been
-  // created and has one.
-  linkedToParsedId?: string | null
 }
 
 function uuid() {
@@ -426,25 +422,15 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
   anchors.forEach((anchor, i) => {
     const nextAnchorY = anchors[i + 1]?.box.y0 ?? Infinity
     const block = items.filter((it) => it.box.y0 >= anchor.box.y0 - 0.03 && it.box.y0 < nextAnchorY)
+    const combined = block.map((b) => b.text).join(' ')
+
+    const amountMatch = combined.match(/\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
+    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null
 
     // The footer timestamp ("Now", "02 Aug"...) is its own line, usually
     // the last one before the next card starts.
     const dateTokens = block.filter((b) => isBeemDateToken(b.text)).sort((a, b) => b.box.y0 - a.box.y0)
     const date = dateTokens.length > 0 ? parseBeemDate(dateTokens[0].text) : null
-
-    // The block's upper window (reaching above the anchor to catch this
-    // card's own amount line) also ends up sweeping in the START of the
-    // NEXT card — its amount line sits above ITS OWN anchor too, which
-    // still falls inside this card's [start, nextAnchorY) range. Cutting
-    // the note-extraction text off right after this card's own date
-    // token keeps the next card's leaked content out of the "for ..."
-    // capture, regardless of whatever else the block window swept in.
-    const dateTokenIndex = dateTokens.length > 0 ? block.indexOf(dateTokens[0]) : -1
-    const noteSourceBlock = dateTokenIndex >= 0 ? block.slice(0, dateTokenIndex + 1) : block
-    const combined = noteSourceBlock.map((b) => b.text).join(' ')
-
-    const amountMatch = combined.match(/\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
-    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null
 
     let isExpense: boolean
     let note = ''
@@ -485,9 +471,8 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
       return
     }
 
-    const expenseId = uuid()
     transactions.push({
-      id: expenseId,
+      id: uuid(),
       amount,
       note,
       date: date.toISOString(),
@@ -495,25 +480,6 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
       suggestedCategoryId: suggestCategoryId(note),
       splitInfo
     })
-
-    // Beem settles every share at the moment the split is created — the
-    // other people's portions have already been paid to this user, not
-    // left pending — so each share becomes its own income row here,
-    // pre-linked to reimburse the expense above once both are imported.
-    if (splitInfo) {
-      for (let i = 0; i < splitInfo.totalPeople - 1; i++) {
-        transactions.push({
-          id: uuid(),
-          amount: splitInfo.perPersonAmount,
-          note: `Share of ${note}`,
-          date: date.toISOString(),
-          isExpense: false,
-          suggestedCategoryId: null,
-          splitInfo: null,
-          linkedToParsedId: expenseId
-        })
-      }
-    }
   })
 
   return { transactions, skipped }

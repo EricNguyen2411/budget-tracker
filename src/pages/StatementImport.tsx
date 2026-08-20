@@ -82,11 +82,10 @@ export default function StatementImport({ categories, existingTransactions, onBa
       .map((r) => r.id)
   )
 
-  // Beem "split between N of us" cards import as the full bill (what
-  // actually left the account), plus one income row per other person's
-  // share, pre-linked to reimburse it — Beem settles everyone's share
-  // at the same moment the split is created, so there's nothing pending
-  // to wait for.
+  // Beem "split between N of us" cards import as the FULL bill (that's
+  // what actually left the account) — flagged here so it's obvious the
+  // other shares still need to come in as their own reimbursements
+  // rather than looking like this one row already accounts for everyone.
   const splitBillResults = results.filter((r) => r.splitInfo)
 
   async function handlePdfFile(files: FileList | null) {
@@ -186,17 +185,15 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
   async function handleImport() {
     const toImport = results.filter((r) => included.has(r.id))
-    const parsedIdToRealId = new Map<string, string>()
     for (const r of toImport) {
-      const created = await createTransaction({
+      await createTransaction({
         amount: r.amount,
         note: r.note,
         date: r.date,
         isExpense: r.isExpense,
         categoryId: categoryFor(r),
-        reimbursesExpenseId: r.linkedToParsedId ? (parsedIdToRealId.get(r.linkedToParsedId) ?? null) : null
+        reimbursesExpenseId: null
       })
-      parsedIdToRealId.set(r.id, created.id)
     }
     onImported()
     onBack()
@@ -292,16 +289,16 @@ export default function StatementImport({ categories, existingTransactions, onBa
           )}
 
           {splitBillResults.length > 0 && (
-            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--purple)' }}>
-              <span style={{ fontSize: 13, color: 'var(--purple)', fontWeight: 600 }}>{splitBillResults.length} split bill{splitBillResults.length === 1 ? '' : 's'} found</span>
-              <p className="hint" style={{ marginTop: 6 }}>Each one imports as the full amount you paid, plus a share for each other person — already marked as reimbursing that expense, since Beem settles everyone's share the moment the split is created.</p>
+            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--purple, #9B7EDE)' }}>
+              <span style={{ fontSize: 13, color: 'var(--purple, #9B7EDE)', fontWeight: 600 }}>{splitBillResults.length} split bill{splitBillResults.length === 1 ? '' : 's'} found</span>
+              <p className="hint" style={{ marginTop: 6 }}>Imported as the full amount you paid. When each person's share comes in — as its own "received from" screenshot — import it as income and mark it as reimbursing this expense to track your real net cost.</p>
             </div>
           )}
 
           {results.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>No transactions found — try a clearer photo, or add these manually.</p>}
 
           {(() => {
-            const visible = [...(hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)]
+            const visible = (hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)
               .sort((a, b) => sort === 'recent' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date))
             return (
               <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -316,12 +313,10 @@ export default function StatementImport({ categories, existingTransactions, onBa
                       {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
                       {pendingFareIds.has(r.id) && <span> 🚊</span>}
                       {r.splitInfo && <span> 🔀</span>}
-                      {r.linkedToParsedId && <span title="Automatically linked as a reimbursement"> 🔗</span>}
                     </span>
                     <span className="tx-category">
                       {new Date(r.date).toLocaleDateString('en-AU')}
                       {r.splitInfo && ` · split ${r.splitInfo.totalPeople} ways, ${formatCurrency(r.splitInfo.perPersonAmount)} each`}
-                      {r.linkedToParsedId && ` · reimburses the split above`}
                     </span>
                     <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}
