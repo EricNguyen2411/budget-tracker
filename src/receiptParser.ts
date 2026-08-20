@@ -372,11 +372,24 @@ function parsePeopleCount(text: string): number | null {
   return WORD_NUMBERS[raw] ?? null
 }
 
-function isBeemDateToken(text: string): boolean {
+// Extracts a Beem-style date/time token from anywhere within a line,
+// rather than requiring the whole line to be nothing but the date —
+// real OCR output on these gradient-background cards often attaches
+// garbled noise from a misread icon right next to the date ("© 1d"),
+// so an exact full-line match misses it entirely.
+function extractBeemDateToken(text: string): string | null {
   const trimmed = text.trim()
-  if (/^(now|today|yesterday)$/i.test(trimmed)) return true
-  if (/^\d{1,2}\s*[smhdw]$/i.test(trimmed)) return true // "1d", "2h", "5m", "1w" — relative time
-  return /^\d{1,2}\s+[A-Za-z]{3,}(\s+\d{4})?$/.test(trimmed)
+  const relative = trimmed.match(/\b(\d{1,2})\s*([smhdw])\b/i)
+  if (relative) return relative[0]
+  const named = trimmed.match(/\b(now|today|yesterday)\b/i)
+  if (named) return named[0]
+  const dated = trimmed.match(/\b(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{4})?\b/)
+  if (dated) return dated[0]
+  return null
+}
+
+function isBeemDateToken(text: string): boolean {
+  return extractBeemDateToken(text) !== null
 }
 
 function parseBeemDate(text: string, ref = new Date()): Date | null {
@@ -435,7 +448,7 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
     // The footer timestamp ("Now", "02 Aug"...) is its own line, usually
     // the last one before the next card starts.
     const dateTokens = block.filter((b) => isBeemDateToken(b.text)).sort((a, b) => b.box.y0 - a.box.y0)
-    const date = dateTokens.length > 0 ? parseBeemDate(dateTokens[0].text) : null
+    const date = dateTokens.length > 0 ? parseBeemDate(extractBeemDateToken(dateTokens[0].text) ?? dateTokens[0].text) : null
 
     // The block's upper window (reaching above the anchor to catch this
     // card's own amount line) also ends up sweeping in the START of the
@@ -482,13 +495,26 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
     if (dateTokens.length > 0) {
       note = note.replace(new RegExp(`\\s*${escapeRegExp(dateTokens[0].text.trim())}\\s*$`, 'i'), '')
     }
+    // When there's no date token to truncate at (this card's own footer
+    // text was dropped by OCR entirely), fall back to cutting the note
+    // off at the first sign of a leaked amount from the next card that
+    // the block window swept in — better an incomplete note than one
+    // contaminated with someone else's transaction.
+    const leakedAmount = note.match(/\$\s?\d/)
+    if (leakedAmount && leakedAmount.index !== undefined) {
+      note = note.slice(0, leakedAmount.index)
+    }
     note = note.replace(/[>›]/g, ' ').replace(/\s+/g, ' ').trim()
     if (!note) note = isExpense ? 'Beem payment' : 'Beem transfer'
 
-    if (amount === null || !date) {
+    if (amount === null) {
       skipped.push(combined)
       return
     }
+    // A missing date is recoverable (default to today, correctable in
+    // review) — losing the whole transaction over it is worse than an
+    // approximate date, unlike a missing amount which can't be guessed.
+    const resolvedDate = date ?? new Date()
 
     // The expense itself isn't created here — it'll come in separately
     // from a bank statement/screenshot import (that's the actual
@@ -502,7 +528,7 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
           id: uuid(),
           amount: splitInfo.perPersonAmount,
           note: `Share of ${note}`,
-          date: date.toISOString(),
+          date: resolvedDate.toISOString(),
           isExpense: false,
           suggestedCategoryId: null,
           splitInfo
@@ -515,7 +541,7 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
       id: uuid(),
       amount,
       note,
-      date: date.toISOString(),
+      date: resolvedDate.toISOString(),
       isExpense,
       suggestedCategoryId: suggestCategoryId(note),
       splitInfo: null
