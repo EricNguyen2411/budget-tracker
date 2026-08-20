@@ -82,10 +82,10 @@ export default function StatementImport({ categories, existingTransactions, onBa
       .map((r) => r.id)
   )
 
-  // Beem "split between N of us" cards import as the FULL bill (that's
-  // what actually left the account) — flagged here so it's obvious the
-  // other shares still need to come in as their own reimbursements
-  // rather than looking like this one row already accounts for everyone.
+  // Beem "split between N of us" cards import as one income row per
+  // other person's share — not the full bill itself, since that'll
+  // come in separately from a bank statement/screenshot import, and
+  // creating it here too would duplicate it.
   const splitBillResults = results.filter((r) => r.splitInfo)
 
   async function handlePdfFile(files: FileList | null) {
@@ -289,16 +289,16 @@ export default function StatementImport({ categories, existingTransactions, onBa
           )}
 
           {splitBillResults.length > 0 && (
-            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--purple, #9B7EDE)' }}>
-              <span style={{ fontSize: 13, color: 'var(--purple, #9B7EDE)', fontWeight: 600 }}>{splitBillResults.length} split bill{splitBillResults.length === 1 ? '' : 's'} found</span>
-              <p className="hint" style={{ marginTop: 6 }}>Imported as the full amount you paid. When each person's share comes in — as its own "received from" screenshot — import it as income and mark it as reimbursing this expense to track your real net cost.</p>
+            <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--purple)' }}>
+              <span style={{ fontSize: 13, color: 'var(--purple)', fontWeight: 600 }}>{splitBillResults.length} split bill share{splitBillResults.length === 1 ? '' : 's'} found</span>
+              <p className="hint" style={{ marginTop: 6 }}>Each imports as income only — the full expense isn't created here, since it'll come in separately from your bank import. Once that's in, link each share to it as a reimbursement using the transaction editor.</p>
             </div>
           )}
 
           {results.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>No transactions found — try a clearer photo, or add these manually.</p>}
 
           {(() => {
-            const visible = (hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)
+            const visible = [...(hideDuplicates ? results.filter((r) => !duplicateIds.has(r.id)) : results)]
               .sort((a, b) => sort === 'recent' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date))
             return (
               <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -312,11 +312,11 @@ export default function StatementImport({ categories, existingTransactions, onBa
                       {r.note}
                       {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
                       {pendingFareIds.has(r.id) && <span> 🚊</span>}
-                      {r.splitInfo && <span> 🔀</span>}
+                      {!r.isExpense && r.splitInfo && <span title="Link this to the actual expense once you've imported it"> 🔀</span>}
                     </span>
                     <span className="tx-category">
                       {new Date(r.date).toLocaleDateString('en-AU')}
-                      {r.splitInfo && ` · split ${r.splitInfo.totalPeople} ways, ${formatCurrency(r.splitInfo.perPersonAmount)} each`}
+                      {!r.isExpense && r.splitInfo && ` · share of a bill split ${r.splitInfo.totalPeople} ways`}
                     </span>
                     <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}

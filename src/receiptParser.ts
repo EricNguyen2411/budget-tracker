@@ -8,12 +8,13 @@ export interface ParsedTransaction {
   date: string // ISO
   isExpense: boolean
   suggestedCategoryId: string | null
-  // Only set for a Beem "split between N of us" card — the amount above
-  // is still the FULL bill (this user paid it), since that's what
-  // actually left their account. This is just a hint for the review
-  // screen so it's obvious the other shares aren't in here yet; they
-  // show up later as their own "received from" screenshots to be linked
-  // as reimbursements against this same expense once they arrive.
+  // Only set on a Beem "split between N of us" share row — the note
+  // says what bill it's a share of, and this carries the split's
+  // context (how many people, per-person amount) since the expense
+  // itself isn't created here — link this manually to the actual
+  // expense once that's been imported separately (e.g. from a bank
+  // statement), since Beem settled every share the moment the split was
+  // created rather than leaving them pending.
   splitInfo?: { totalPeople: number; perPersonAmount: number } | null
 }
 
@@ -374,6 +375,7 @@ function parsePeopleCount(text: string): number | null {
 function isBeemDateToken(text: string): boolean {
   const trimmed = text.trim()
   if (/^(now|today|yesterday)$/i.test(trimmed)) return true
+  if (/^\d{1,2}\s*[smhdw]$/i.test(trimmed)) return true // "1d", "2h", "5m", "1w" — relative time
   return /^\d{1,2}\s+[A-Za-z]{3,}(\s+\d{4})?$/.test(trimmed)
 }
 
@@ -385,6 +387,13 @@ function parseBeemDate(text: string, ref = new Date()): Date | null {
   }
   if (/^yesterday$/i.test(trimmed)) {
     const d = new Date(ref); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d
+  }
+  const relative = trimmed.match(/^(\d{1,2})\s*([smhdw])$/i)
+  if (relative) {
+    const amount = parseInt(relative[1], 10)
+    const unit = relative[2].toLowerCase()
+    const msPerUnit: Record<string, number> = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000, w: 7 * 24 * 60 * 60 * 1000 }
+    return new Date(ref.getTime() - amount * msPerUnit[unit])
   }
   const match = trimmed.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{4})?$/)
   if (match) {
@@ -422,15 +431,25 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
   anchors.forEach((anchor, i) => {
     const nextAnchorY = anchors[i + 1]?.box.y0 ?? Infinity
     const block = items.filter((it) => it.box.y0 >= anchor.box.y0 - 0.03 && it.box.y0 < nextAnchorY)
-    const combined = block.map((b) => b.text).join(' ')
-
-    const amountMatch = combined.match(/\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
-    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null
 
     // The footer timestamp ("Now", "02 Aug"...) is its own line, usually
     // the last one before the next card starts.
     const dateTokens = block.filter((b) => isBeemDateToken(b.text)).sort((a, b) => b.box.y0 - a.box.y0)
     const date = dateTokens.length > 0 ? parseBeemDate(dateTokens[0].text) : null
+
+    // The block's upper window (reaching above the anchor to catch this
+    // card's own amount line) also ends up sweeping in the START of the
+    // NEXT card — its amount line sits above ITS OWN anchor too, which
+    // still falls inside this card's [start, nextAnchorY) range. Cutting
+    // the note-extraction text off right after this card's own date
+    // token keeps the next card's leaked content out of the "for ..."
+    // capture, regardless of whatever else the block window swept in.
+    const dateTokenIndex = dateTokens.length > 0 ? block.indexOf(dateTokens[0]) : -1
+    const noteSourceBlock = dateTokenIndex >= 0 ? block.slice(0, dateTokenIndex + 1) : block
+    const combined = noteSourceBlock.map((b) => b.text).join(' ')
+
+    const amountMatch = combined.match(/\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
+    const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null
 
     let isExpense: boolean
     let note = ''
@@ -471,6 +490,27 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
       return
     }
 
+    // The expense itself isn't created here — it'll come in separately
+    // from a bank statement/screenshot import (that's the actual
+    // payment leaving the account), and creating it from this Beem
+    // screenshot too would duplicate it. Only the reimbursement shares
+    // get created; link each one to the real expense manually once
+    // it's been imported.
+    if (splitInfo) {
+      for (let i = 0; i < splitInfo.totalPeople - 1; i++) {
+        transactions.push({
+          id: uuid(),
+          amount: splitInfo.perPersonAmount,
+          note: `Share of ${note}`,
+          date: date.toISOString(),
+          isExpense: false,
+          suggestedCategoryId: null,
+          splitInfo
+        })
+      }
+      return
+    }
+
     transactions.push({
       id: uuid(),
       amount,
@@ -478,7 +518,7 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
       date: date.toISOString(),
       isExpense,
       suggestedCategoryId: suggestCategoryId(note),
-      splitInfo
+      splitInfo: null
     })
   })
 
