@@ -1,4 +1,4 @@
-import { createWorker } from 'tesseract.js'
+import { createWorker, PSM } from 'tesseract.js'
 
 export interface TextItem {
   text: string
@@ -9,7 +9,25 @@ let workerPromise: ReturnType<typeof createWorker> | null = null
 
 function getWorker() {
   if (!workerPromise) {
-    workerPromise = createWorker('eng')
+    workerPromise = createWorker('eng').then(async (worker) => {
+      // Tesseract's default page-segmentation mode (AUTO) runs full
+      // layout analysis to find text blocks/columns — good for a
+      // scanned document, but confirmed directly (via repeated testing
+      // against real screenshots) to be actively bad at this app's
+      // actual input: screenshots made of several small, visually
+      // isolated stacked cards, each with its own tiny corner-positioned
+      // timestamp ("3d", "04 Aug"...). Under AUTO, those isolated corner
+      // timestamps are dropped from OCR output entirely — not misread,
+      // just never detected as a text region at all — which then makes
+      // date parsing silently fall back to "today" for that transaction.
+      // SINGLE_BLOCK (psm 6, "assume a single uniform block of text")
+      // was confirmed directly, on the same real screenshot, to pick up
+      // every one of those previously-missing timestamps with no loss
+      // of any other text — it's a better fit for this stacked-card
+      // layout than full page-layout analysis.
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK })
+      return worker
+    })
   }
   return workerPromise
 }
