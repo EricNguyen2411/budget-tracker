@@ -80,14 +80,39 @@ function isRowAnchorMarker(text: string): boolean {
 
 export type DetectedFormat = 'appScreenshot' | 'notificationScreenshot' | 'beemScreenshot' | 'unknown'
 
+const WORD_NUMBERS: Record<string, number> = {
+  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12
+}
+
+function parsePeopleCount(text: string): number | null {
+  const match = text.match(/(\d+|[a-z]+)\s+of us/i)
+  if (!match) return null
+  const raw = match[1].toLowerCase()
+  if (/^\d+$/.test(raw)) return parseInt(raw, 10)
+  return WORD_NUMBERS[raw] ?? null
+}
+
 // Beem's Activity feed cards each read as one of "$X paid to @user for Y",
 // "$X received from @user for Y", or "$X split between N of us for Y" —
 // distinct enough from both the banking-app row format and the
 // payment-notification format to detect on its own.
 const BEEM_ACTION_PATTERN = /(paid to|received from|split between\s+.+\s+of us)/i
 
+// A split card is recognized either by the full "split between ... of us"
+// phrase, OR by the "N of us" people-count phrase alone. The second path
+// matters: confirmed via direct testing against this exact screenshot that
+// OCR can drop the leading "s" of "split" (garbling it to "plit between"),
+// which silently defeats the full-phrase match — the card then never
+// becomes its own anchor and its content gets swept into whichever
+// neighboring card's block happens to include it by position, corrupting
+// that card's note and losing this one's transaction entirely with no
+// warning. "N of us" is a much more distinctive, harder-to-lose phrase
+// (it survived in every OCR pass tested, even when "split" and the dollar
+// amount didn't), so anchoring on it directly is far more robust.
 function isBeemActionLine(text: string): boolean {
-  return BEEM_ACTION_PATTERN.test(text)
+  if (BEEM_ACTION_PATTERN.test(text)) return true
+  const people = parsePeopleCount(text)
+  return people !== null && people > 1
 }
 
 export function detectFormat(items: TextItem[]): DetectedFormat {
@@ -360,17 +385,20 @@ export function parseNotificationScreenshots(items: TextItem[]): { transactions:
 
 // ---------- Beem activity screenshot parser ----------
 
-const WORD_NUMBERS: Record<string, number> = {
-  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12
-}
-
-function parsePeopleCount(text: string): number | null {
-  const match = text.match(/(\d+|[a-z]+)\s+of us/i)
-  if (!match) return null
-  const raw = match[1].toLowerCase()
-  if (/^\d+$/.test(raw)) return parseInt(raw, 10)
-  return WORD_NUMBERS[raw] ?? null
-}
+// Real month names/abbreviations only — NOT "any 3+ letter word". Confirmed
+// via direct testing against real OCR output that the old, looser
+// `\d{1,2}\s+[A-Za-z]{3,}` pattern silently misfires on completely ordinary
+// anchor lines: "$65.00 paid to" contains "00 paid" (the ".00" cents plus
+// the next word), and "$6.85 paid to" contains "85 paid" (the cents digits
+// plus the next word) — both look exactly like a "DD Mon" date to that
+// pattern. Normally this is harmless because the real footer date (further
+// down the card, larger y0) sorts after it and wins — but whenever the
+// real footer fails to OCR at all (confirmed to happen in practice), this
+// false match becomes the ONLY candidate and gets used as the "date
+// token", which then wrongly truncates note extraction right after the
+// anchor's own first line, discarding the actual "for X" text entirely.
+const MONTH_PATTERN = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+const DATED_TOKEN_PATTERN = new RegExp(`\\b(\\d{1,2})\\s+${MONTH_PATTERN}\\s*(\\d{4})?\\b`, 'i')
 
 // Extracts a Beem-style date/time token from anywhere within a line,
 // rather than requiring the whole line to be nothing but the date —
@@ -383,7 +411,7 @@ function extractBeemDateToken(text: string): string | null {
   if (relative) return relative[0]
   const named = trimmed.match(/\b(now|today|yesterday)\b/i)
   if (named) return named[0]
-  const dated = trimmed.match(/\b(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{4})?\b/)
+  const dated = trimmed.match(DATED_TOKEN_PATTERN)
   if (dated) return dated[0]
   return null
 }
@@ -408,17 +436,17 @@ function parseBeemDate(text: string, ref = new Date()): Date | null {
     const msPerUnit: Record<string, number> = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000, w: 7 * 24 * 60 * 60 * 1000 }
     return new Date(ref.getTime() - amount * msPerUnit[unit])
   }
-  const match = trimmed.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{4})?$/)
+  const match = trimmed.match(new RegExp(`^(\\d{1,2})\\s+${MONTH_PATTERN}\\s*(\\d{4})?$`, 'i'))
   if (match) {
     const day = match[1]
-    const month = match[2]
-    const year = match[3] ? parseInt(match[3], 10) : ref.getFullYear()
+    const month = trimmed.match(new RegExp(MONTH_PATTERN, 'i'))![0]
+    const year = match[2] ? parseInt(match[2], 10) : ref.getFullYear()
     const candidate = new Date(`${month} ${day}, ${year}`)
     if (isNaN(candidate.getTime())) return null
     // No year printed on the card means it's from within roughly the
     // last 12 months — if taking the current year lands in the future
     // (e.g. it's January and the card says "02 Dec"), it was last year.
-    if (!match[3] && candidate.getTime() > ref.getTime() + 24 * 60 * 60 * 1000) {
+    if (!match[2] && candidate.getTime() > ref.getTime() + 24 * 60 * 60 * 1000) {
       candidate.setFullYear(candidate.getFullYear() - 1)
     }
     return candidate
@@ -443,7 +471,18 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
 
   anchors.forEach((anchor, i) => {
     const nextAnchorY = anchors[i + 1]?.box.y0 ?? Infinity
-    const block = items.filter((it) => it.box.y0 >= anchor.box.y0 - 0.03 && it.box.y0 < nextAnchorY)
+    // The -0.03 lookback exists to catch this card's own amount when it
+    // wraps onto its own line just above the anchor. But without a lower
+    // clamp, that same lookback can reach back UP INTO the previous
+    // card's own anchor line whenever two cards sit close together
+    // (confirmed directly: with real OCR'd cards ~4% of image height
+    // apart, this swept the previous card's "$65.00 paid to" line into
+    // the current card's block too, handing it a second, wrong dollar
+    // amount). Never look back further than the previous anchor's own
+    // bottom edge — that line already belongs to that card.
+    const prevAnchorY1 = anchors[i - 1]?.box.y1 ?? -Infinity
+    const lowerBound = Math.max(anchor.box.y0 - 0.03, prevAnchorY1)
+    const block = items.filter((it) => it.box.y0 >= lowerBound && it.box.y0 < nextAnchorY)
 
     // The footer timestamp ("Now", "02 Aug"...) is its own line, usually
     // the last one before the next card starts.
@@ -464,30 +503,44 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
     const amountMatch = combined.match(/\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
     const amount = amountMatch ? parseFloat(amountMatch[1].replace(/,/g, '')) : null
 
+    // Identify which kind of card this is, AND the exact position of the
+    // matched keyword within `combined`. A split card is recognized via
+    // "N of us" (not the full "split between" phrase — see
+    // isBeemActionLine for why that's more OCR-robust), the same way it
+    // was detected as an anchor in the first place.
+    const peopleCount = parsePeopleCount(combined)
     let isExpense: boolean
-    let note = ''
+    let keywordMatch: RegExpMatchArray | null = null
     let splitInfo: { totalPeople: number; perPersonAmount: number } | null = null
 
-    if (/split between/i.test(combined)) {
+    if (peopleCount !== null && peopleCount > 1) {
       isExpense = true
-      const forMatch = combined.match(/\bfor\s+(.+)$/i)
-      note = forMatch ? forMatch[1] : ''
-      const people = parsePeopleCount(combined)
-      if (people && people > 1 && amount !== null) {
-        splitInfo = { totalPeople: people, perPersonAmount: amount / people }
+      keywordMatch = combined.match(/(\d+|[a-z]+)\s+of us/i)
+      if (amount !== null) {
+        splitInfo = { totalPeople: peopleCount, perPersonAmount: amount / peopleCount }
       }
     } else if (/received from/i.test(combined)) {
       isExpense = false
-      const forMatch = combined.match(/\bfor\s+(.+)$/i)
-      note = forMatch ? forMatch[1] : ''
+      keywordMatch = combined.match(/received from/i)
     } else if (/paid to/i.test(combined)) {
       isExpense = true
-      const forMatch = combined.match(/\bfor\s+(.+)$/i)
-      note = forMatch ? forMatch[1] : ''
+      keywordMatch = combined.match(/paid to/i)
     } else {
       skipped.push(combined)
       return
     }
+
+    // Only search for the "for X" note text AFTER the identified keyword,
+    // not from the start of `combined`. This is what actually stops a
+    // PRECEDING card's leftover text from being captured as part of THIS
+    // card's note — confirmed directly: when OCR merges the tail of one
+    // card onto the same line as the next card's own keyword (e.g.
+    // "...for food [next card's text] of us for gami"), searching from
+    // the very start grabs the wrong "for food" instead of this card's
+    // own "for gami".
+    const searchFrom = keywordMatch && keywordMatch.index !== undefined ? keywordMatch.index + keywordMatch[0].length : 0
+    const forMatch = combined.slice(searchFrom).match(/\bfor\s+(.+)$/i)
+    let note = forMatch ? forMatch[1] : ''
 
     // The captured "for ..." text runs to the end of the block, which
     // includes the trailing footer date/time — strip it back off now
@@ -508,7 +561,17 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
     if (!note) note = isExpense ? 'Beem payment' : 'Beem transfer'
 
     if (amount === null) {
-      skipped.push(combined)
+      // A split card whose dollar amount genuinely can't be read (OCR
+      // dropped it entirely — confirmed directly, not a parsing bug) is
+      // still worth flagging distinctly: the person needs to know a
+      // split for N people was found and its shares need adding
+      // manually, rather than seeing an indistinguishable raw-text row
+      // in the general "couldn't be read" list.
+      if (peopleCount !== null && peopleCount > 1) {
+        skipped.push(`Beem split "${note}" between ${peopleCount} people — couldn't read the $ amount, add the ${peopleCount - 1} reimbursement share(s) manually`)
+      } else {
+        skipped.push(combined)
+      }
       return
     }
     // A missing date is recoverable (default to today, correctable in

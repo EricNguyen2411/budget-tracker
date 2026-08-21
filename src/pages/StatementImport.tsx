@@ -4,7 +4,7 @@ import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
 import { isLikelyDuplicate, significantTokens, genericTokens } from '../duplicates'
 import { formatCurrency } from '../calculations'
-import { createTransaction } from '../db'
+import { createTransaction, saveTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
 import { useModalClose } from '../useModalClose'
@@ -53,6 +53,16 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
   const [viewingDuplicateFor, setViewingDuplicateFor] = useState<ParsedTransaction | null>(null)
   const viewingDuplicateClose = useModalClose(() => setViewingDuplicateFor(null))
+
+  // Maps a parsed row's id -> the expense it reimburses, so a Beem share
+  // (or any income row) can be linked to its expense right here rather
+  // than needing a second trip through the transaction editor after
+  // import. The target is either an existing DB transaction
+  // ("existing:<id>") or another row in this same batch that hasn't been
+  // saved yet ("parsed:<id>") — resolved to a real id at import time.
+  const [linkOverrides, setLinkOverrides] = useState<Map<string, string>>(new Map())
+  const [linkingFor, setLinkingFor] = useState<ParsedTransaction | null>(null)
+  const linkingClose = useModalClose(() => setLinkingFor(null))
 
   const importGeneric = useMemo(
     () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null } as Transaction))]),
@@ -150,6 +160,45 @@ export default function StatementImport({ categories, existingTransactions, onBa
     return categoryOverrides.has(r.id) ? categoryOverrides.get(r.id)! : r.suggestedCategoryId
   }
 
+  // Candidate expenses an income row could reimburse: existing unlinked
+  // expenses already in the app, plus other expense rows in this same
+  // import batch (most relevant for a Beem split — its actual bill often
+  // comes in in the very same batch from a separate bank screenshot).
+  // Excludes expenses already fully covered by other reimbursements so
+  // the list stays focused on things that plausibly still need a link.
+  function candidateExpenses(): { key: string; note: string; amount: number; date: string }[] {
+    const fromExisting = existingTransactions
+      .filter((t) => t.isExpense)
+      .map((t) => ({ key: `existing:${t.id}`, note: t.note || 'Uncategorized', amount: t.amount, date: t.date }))
+    const fromBatch = results
+      .filter((r) => r.isExpense)
+      .map((r) => ({ key: `parsed:${r.id}`, note: r.note, amount: r.amount, date: r.date }))
+    return [...fromBatch, ...fromExisting].sort((a, b) => b.date.localeCompare(a.date))
+  }
+
+  function linkedTarget(r: ParsedTransaction): { key: string; note: string; amount: number } | null {
+    const key = linkOverrides.get(r.id)
+    if (!key) return null
+    if (key.startsWith('existing:')) {
+      const id = key.slice('existing:'.length)
+      const t = existingTransactions.find((t) => t.id === id)
+      return t ? { key, note: t.note || 'Uncategorized', amount: t.amount } : null
+    }
+    const id = key.slice('parsed:'.length)
+    const source = results.find((r) => r.id === id)
+    return source ? { key, note: source.note, amount: source.amount } : null
+  }
+
+  function setLink(rowId: string, targetKey: string | null) {
+    setLinkOverrides((m) => {
+      const next = new Map(m)
+      if (targetKey === null) next.delete(rowId)
+      else next.set(rowId, targetKey)
+      return next
+    })
+    setLinkingFor(null)
+  }
+
   function applyCategory(id: string, categoryId: string | null) {
     setCategoryOverrides((m) => new Map(m).set(id, categoryId))
     setPickingCategoryFor(null)
@@ -185,8 +234,14 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
   async function handleImport() {
     const toImport = results.filter((r) => included.has(r.id))
+
+    // Pass 1: create every row first, so a link to ANOTHER row being
+    // imported in this same batch (e.g. a split's income share linked to
+    // its expense from a separate bank screenshot in the same scan) has
+    // a real database id to point at.
+    const createdByParsedId = new Map<string, Transaction>()
     for (const r of toImport) {
-      await createTransaction({
+      const created = await createTransaction({
         amount: r.amount,
         note: r.note,
         date: r.date,
@@ -194,7 +249,31 @@ export default function StatementImport({ categories, existingTransactions, onBa
         categoryId: categoryFor(r),
         reimbursesExpenseId: null
       })
+      createdByParsedId.set(r.id, created)
     }
+
+    // Pass 2: apply links. A link to an existing (already-saved)
+    // transaction resolves directly; a link to another row in this batch
+    // resolves via the id map from pass 1 — and is silently skipped if
+    // that target row was unchecked and never actually imported, rather
+    // than pointing at a transaction that doesn't exist.
+    for (const r of toImport) {
+      const targetKey = linkOverrides.get(r.id)
+      if (!targetKey) continue
+      const created = createdByParsedId.get(r.id)
+      if (!created) continue
+      let targetId: string | null = null
+      if (targetKey.startsWith('existing:')) {
+        targetId = targetKey.slice('existing:'.length)
+      } else {
+        const targetParsedId = targetKey.slice('parsed:'.length)
+        targetId = createdByParsedId.get(targetParsedId)?.id ?? null
+      }
+      if (targetId) {
+        await saveTransaction({ ...created, reimbursesExpenseId: targetId })
+      }
+    }
+
     onImported()
     onBack()
   }
@@ -291,7 +370,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
           {splitBillResults.length > 0 && (
             <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--purple)' }}>
               <span style={{ fontSize: 13, color: 'var(--purple)', fontWeight: 600 }}>{splitBillResults.length} split bill share{splitBillResults.length === 1 ? '' : 's'} found</span>
-              <p className="hint" style={{ marginTop: 6 }}>Each imports as income only — the full expense isn't created here, since it'll come in separately from your bank import. Once that's in, link each share to it as a reimbursement using the transaction editor.</p>
+              <p className="hint" style={{ marginTop: 6 }}>Each imports as income only — the full expense isn't created here, since it'll come in separately from your bank import. Tap "Link to expense" on a share once that expense is visible (in this same batch, or already in your transactions) to mark it as a reimbursement.</p>
             </div>
           )}
 
@@ -312,7 +391,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
                       {r.note}
                       {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
                       {pendingFareIds.has(r.id) && <span> 🚊</span>}
-                      {!r.isExpense && r.splitInfo && <span title="Link this to the actual expense once you've imported it"> 🔀</span>}
                     </span>
                     <span className="tx-category">
                       {new Date(r.date).toLocaleDateString('en-AU')}
@@ -321,6 +399,14 @@ export default function StatementImport({ categories, existingTransactions, onBa
                     <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}
                     </button>
+                    {!r.isExpense && (() => {
+                      const linked = linkedTarget(r)
+                      return (
+                        <button onClick={() => setLinkingFor(r)} style={{ fontSize: 12, color: linked ? 'var(--purple)' : 'var(--blue)', textAlign: 'left' }}>
+                          {linked ? `🔀 Reimburses "${linked.note}" (${formatCurrency(linked.amount)})` : '🔀 Link to expense'}
+                        </button>
+                      )
+                    })()}
                     {duplicateIds.has(r.id) && (
                       <button onClick={() => setViewingDuplicateFor(r)} style={{ fontSize: 12, color: 'var(--amber)', textAlign: 'left' }}>
                         ⚠️ Possible duplicate — tap to compare
@@ -394,6 +480,39 @@ export default function StatementImport({ categories, existingTransactions, onBa
           </div>
         </div>
       )}
+      {linkingFor && (() => {
+        const candidates = candidateExpenses()
+        const currentKey = linkOverrides.get(linkingFor.id)
+        return (
+          <div className={`modal-backdrop${linkingClose.closing ? ' modal-closing' : ''}`} onClick={() => linkingClose.requestClose()}>
+            <div className={`modal-sheet${linkingClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Link to Expense</span>
+                <button className="text-button" onClick={() => linkingClose.requestClose()}>Close</button>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
+                  Mark "{linkingFor.note}" ({formatCurrency(linkingFor.amount)}) as a reimbursement for:
+                </p>
+                {currentKey && (
+                  <button className="picker-row" onClick={() => linkingClose.requestClose(() => setLink(linkingFor.id, null))}>
+                    <span style={{ color: 'var(--red)' }}>Remove current link</span>
+                  </button>
+                )}
+                {candidates.length === 0 && (
+                  <p className="hint" style={{ marginTop: 8 }}>No expense rows found yet — scan the bank statement/screenshot with the actual bill first, or add it manually, then come back here.</p>
+                )}
+                {candidates.map((c) => (
+                  <button key={c.key} className="picker-row" onClick={() => linkingClose.requestClose(() => setLink(linkingFor.id, c.key))}>
+                    <span>{c.note}</span>
+                    <span className="amount" style={{ fontSize: 13 }}>{formatCurrency(c.amount)} · {new Date(c.date).toLocaleDateString('en-AU')}{c.key === currentKey ? ' ✓' : ''}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
       {similarPrompt && (() => {
         const cat = similarPrompt.categoryId ? catById.get(similarPrompt.categoryId) : undefined
         const matches = results.filter((r) => similarPrompt.matchIds.includes(r.id))
