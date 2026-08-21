@@ -64,6 +64,16 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [linkingFor, setLinkingFor] = useState<ParsedTransaction | null>(null)
   const linkingClose = useModalClose(() => setLinkingFor(null))
 
+  // Shown after a successful import instead of navigating straight back —
+  // the whole point of this screen is scanning photos so their contents
+  // can be deleted afterward without retyping everything, but a web app
+  // has no way to actually delete anything from the device's photo
+  // library itself (no browser API grants that access, on any platform,
+  // installed or not) — the best real help is a clear, explicit "safe to
+  // delete now" moment instead of silently returning to the transaction
+  // list and leaving that as a vague afterthought.
+  const [importSummary, setImportSummary] = useState<{ count: number } | null>(null)
+
   const importGeneric = useMemo(
     () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null } as Transaction))]),
     [existingTransactions, results]
@@ -275,10 +285,38 @@ export default function StatementImport({ categories, existingTransactions, onBa
     }
 
     onImported()
-    onBack()
+    setImportSummary({ count: toImport.length })
   }
 
   const catById = new Map(categories.map((c) => [c.id, c]))
+
+  if (importSummary) {
+    return (
+      <div className="screen">
+        <div className="screen-header-row">
+          <h1 className="screen-title" style={{ fontSize: 20 }}>Import Statement</h1>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '48px 20px', gap: 12 }}>
+          <div style={{ fontSize: 40 }}>✅</div>
+          <p style={{ fontSize: 17, fontWeight: 600 }}>
+            Imported {importSummary.count} transaction{importSummary.count === 1 ? '' : 's'}
+          </p>
+          <p className="hint" style={{ maxWidth: 320 }}>
+            The photo{results.length === 1 ? "'s" : "s'"} contents are safely saved — this app can't delete photos
+            from your gallery itself (no website can), but it's safe to delete{' '}
+            {results.length === 1 ? 'it' : 'them'} yourself now if you scanned it just for this.
+          </p>
+          <button
+            className="text-button text-button-primary"
+            style={{ marginTop: 8, padding: '10px 24px', background: 'var(--blue)', color: '#fff', borderRadius: 10 }}
+            onClick={onBack}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="screen">
