@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, RecurringTransaction } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses } from '../calculations'
+import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
@@ -59,6 +60,29 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const [showBreakdown, setShowBreakdown] = useState(false)
   const breakdownClose = useModalClose(() => setShowBreakdown(false))
 
+  // "Why did this change?" — compares Safe to Spend's inputs against a
+  // snapshot saved the last time this screen was open, so a number that
+  // moved between visits comes with an explanation instead of just
+  // silently being different. Runs once per mount (returning to this
+  // tab counts as "a visit") rather than on every re-render — comparing
+  // against a snapshot from a second ago would have nothing to show.
+  const [changeSummary, setChangeSummary] = useState<{ lines: ChangeLine[]; totalDelta: number } | null>(null)
+  const [showChanges, setShowChanges] = useState(false)
+  const changesClose = useModalClose(() => setShowChanges(false))
+  useEffect(() => {
+    const current = computeSnapshot(categories, transactions, now, recurring)
+    const prev = loadSnapshot()
+    if (prev) {
+      const lines = diffSnapshots(prev, current, categories)
+      const totalDelta = current.safeToSpend - prev.safeToSpend
+      if (lines.length > 0) {
+        setChangeSummary({ lines, totalDelta })
+      }
+    }
+    saveSnapshot(current)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const topLevelForBudget = categories.filter((c) => !c.parentId)
   const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
   // Spending categories only, for display — savings already gets its
@@ -109,6 +133,25 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
 
       <QuickAddBar categories={categories} onChanged={onChanged} />
 
+      {changeSummary && (
+        <button
+          onClick={() => setShowChanges(true)}
+          style={{
+            width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '10px 14px', borderRadius: 10, background: 'var(--surface-2)', marginBottom: 12, fontSize: 13
+          }}
+        >
+          <span>
+            Safe to Spend {changeSummary.totalDelta >= 0 ? 'went up' : 'went down'} by{' '}
+            <strong style={{ color: changeSummary.totalDelta >= 0 ? 'var(--green)' : 'var(--red)' }}>
+              {formatCurrency(Math.abs(changeSummary.totalDelta))}
+            </strong>{' '}
+            since you were last here
+          </span>
+          <span style={{ color: 'var(--blue)', fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>Why?</span>
+        </button>
+      )}
+
       <div className="card hero-card">
         <span className="hero-label">Safe to Spend</span>
         <span className="hero-amount amount"><AnimatedNumber value={totals.safeToSpend} format={formatCurrency} /></span>
@@ -143,6 +186,36 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
               <p className="hint" style={{ marginTop: 4 }}>Yearly and weekly recurring items are prorated to a monthly share here (an annual premium becomes 1/12th), reserved year-round rather than only in the month it's actually due — so Safe to Spend already has it set aside.</p>
               <p className="hint" style={{ marginTop: 12 }}>
                 Safe to Spend is Monthly Budget minus Net Spend So Far minus Savings & Investments minus the Recurring & Subscriptions reserve — four separate deductions, each shown as its own line below rather than folded into another, so nothing is counted twice. Savings contributions reduce it because money set aside isn't available to spend on anything else; yearly recurring items (an annual insurance premium) are prorated into a monthly share so they're reserved for year-round, not just the month they're actually due.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showChanges && changeSummary && (
+        <div className={`modal-backdrop${changesClose.closing ? ' modal-closing' : ''}`} onClick={() => changesClose.requestClose()}>
+          <div className={`modal-sheet${changesClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">What Changed</span>
+              <button className="text-button text-button-primary" onClick={() => changesClose.requestClose()}>Done</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 14 }}>
+                Since you were last here, Safe to Spend {changeSummary.totalDelta >= 0 ? 'increased' : 'decreased'} by{' '}
+                <strong style={{ color: changeSummary.totalDelta >= 0 ? 'var(--green)' : 'var(--red)' }}>{formatCurrency(Math.abs(changeSummary.totalDelta))}</strong>.
+                Here's what changed — the biggest contributors first:
+              </p>
+              {changeSummary.lines.slice(0, 8).map((line, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0', borderBottom: i < Math.min(changeSummary.lines.length, 8) - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <span style={{ fontSize: 16, flexShrink: 0 }}>{line.icon}</span>
+                  <span style={{ fontSize: 13.5, flex: 1 }}>{line.text}</span>
+                </div>
+              ))}
+              {changeSummary.lines.length > 8 && (
+                <p className="hint" style={{ marginTop: 8 }}>+ {changeSummary.lines.length - 8} more change{changeSummary.lines.length - 8 === 1 ? '' : 's'}.</p>
+              )}
+              <p className="hint" style={{ marginTop: 12 }}>
+                Individual amounts here are each change's own effect — with reimbursements and category budgets interacting, they're a best-effort explanation rather than a figure guaranteed to add up exactly to the total above.
               </p>
             </div>
           </div>
