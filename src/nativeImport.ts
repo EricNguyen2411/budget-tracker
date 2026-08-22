@@ -198,7 +198,8 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       date: def.date,
       isExpense: def.isExpense,
       categoryId: resolveCategory(def.categoryName),
-      reimbursesExpenseId: null // resolved below
+      reimbursesExpenseId: null, // resolved below
+      tags: []
     }
   })
   data.transactions.forEach((def, i) => {

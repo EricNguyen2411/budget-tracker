@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, localDateInputValue } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
+import { allTagsFrom, dedupeTags, normalizeTag } from '../tags'
 import { useModalClose } from '../useModalClose'
 
 interface Props {
@@ -25,6 +26,10 @@ export default function TransactionEditor({ transaction, categories, allTransact
   const [isExpense, setIsExpense] = useState(transaction?.isExpense ?? true)
   const [categoryId, setCategoryId] = useState<string | null>(transaction?.categoryId ?? null)
   const [reimbursesId, setReimbursesId] = useState<string | null>(transaction?.reimbursesExpenseId ?? null)
+  const [tags, setTags] = useState<string[]>(transaction?.tags ?? [])
+  const [tagInput, setTagInput] = useState('')
+
+  const existingTags = allTagsFrom(allTransactions)
 
   const selectedCategory = categories.find((c) => c.id === categoryId)
   const reimbursedExpense = allTransactions.find((t) => t.id === reimbursesId)
@@ -34,7 +39,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
   // never overrides a deliberate manual choice.
   useEffect(() => {
     if (transaction || categoryId) return
-    const suggested = suggestCategoryId(note)
+    const suggested = suggestCategoryId(note, categories)
     if (suggested) setCategoryId(suggested)
   }, [note])
 
@@ -47,6 +52,17 @@ export default function TransactionEditor({ transaction, categories, allTransact
     if (isExpense || !reimbursedExpense) return
     if (reimbursedExpense.categoryId) setCategoryId(reimbursedExpense.categoryId)
   }, [reimbursesId])
+
+  function addTag(raw: string) {
+    const norm = normalizeTag(raw)
+    if (!norm) return
+    setTags((prev) => dedupeTags([...prev, norm]))
+    setTagInput('')
+  }
+
+  function removeTag(tag: string) {
+    setTags((prev) => prev.filter((t) => t !== tag))
+  }
 
   function handleSave() {
     const parsed = parseFloat(amount)
@@ -61,7 +77,8 @@ export default function TransactionEditor({ transaction, categories, allTransact
       })(),
       isExpense,
       categoryId,
-      reimbursesExpenseId: isExpense ? null : reimbursesId
+      reimbursesExpenseId: isExpense ? null : reimbursesId,
+      tags: dedupeTags(tags)
     })
   }
 
@@ -121,6 +138,44 @@ export default function TransactionEditor({ transaction, categories, allTransact
             <span>{selectedCategory ? `${selectedCategory.icon} ${selectedCategory.name}` : 'None'}</span>
             <span className="chevron">›</span>
           </button>
+
+          <label className="field-label">Tags</label>
+          {tags.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {tags.map((t) => (
+                <span
+                  key={t}
+                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--purple)' }}
+                >
+                  #{t}
+                  <button onClick={() => removeTag(t)} aria-label={`Remove tag ${t}`} style={{ fontSize: 14, lineHeight: 1, color: 'var(--text-dim)' }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <input
+            type="text"
+            placeholder="Add a tag, e.g. work trip"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ',') {
+                e.preventDefault()
+                addTag(tagInput)
+              } else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
+                removeTag(tags[tags.length - 1])
+              }
+            }}
+            list="tag-suggestions"
+          />
+          <datalist id="tag-suggestions">
+            {existingTags.filter((t) => !tags.includes(t)).map((t) => <option key={t} value={t} />)}
+          </datalist>
+          {tagInput.trim() && (
+            <button className="text-button" style={{ fontSize: 12, color: 'var(--blue)', marginTop: 4 }} onClick={() => addTag(tagInput)}>
+              Add "{normalizeTag(tagInput)}"
+            </button>
+          )}
 
           {!isExpense && (
             <>

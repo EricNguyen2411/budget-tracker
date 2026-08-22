@@ -135,7 +135,8 @@ export function processDueRecurring(
         date: nextDue.toISOString(),
         isExpense: item.isExpense,
         categoryId: item.categoryId,
-        reimbursesExpenseId: null
+        reimbursesExpenseId: null,
+        tags: []
       })
       nextDue = addInterval(nextDue, item.frequency)
       guardCount++

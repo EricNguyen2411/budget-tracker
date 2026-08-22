@@ -1,4 +1,4 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
+import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
 import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
@@ -22,8 +22,8 @@ let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 3, {
-      upgrade(db, oldVersion) {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 4, {
+      async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
           const txStore = db.createObjectStore('transactions', { keyPath: 'id' })
@@ -36,10 +36,29 @@ function getDB() {
         if (oldVersion < 3) {
           db.createObjectStore('autoBackups', { keyPath: 'id' })
         }
+        if (oldVersion < 4) {
+          // Every transaction saved before tags existed is missing the
+          // field entirely at runtime (IndexedDB doesn't enforce the TS
+          // type) — backfill it explicitly here rather than relying on
+          // `t.tags ?? []` guards scattered everywhere, so a stray spot
+          // that forgets the guard doesn't silently crash on old data.
+          await migrateMissingTags(transaction)
+        }
       }
     })
   }
   return dbPromise
+}
+
+async function migrateMissingTags(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
+  const store = transaction.objectStore('transactions')
+  let cursor = await store.openCursor()
+  while (cursor) {
+    if (!Array.isArray((cursor.value as Transaction).tags)) {
+      await cursor.update({ ...cursor.value, tags: [] })
+    }
+    cursor = await cursor.continue()
+  }
 }
 
 function uuid() {
@@ -326,7 +345,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
     return idRemap.get(id) ?? id
   }
 
-  const transactionsToWrite = transactions.map((t) => ({ ...t, categoryId: remapCategoryId(t.categoryId) }))
+  const transactionsToWrite = transactions.map((t) => ({ ...t, tags: Array.isArray(t.tags) ? t.tags : [], categoryId: remapCategoryId(t.categoryId) }))
   const recurringToWrite = recurring.map((r) => ({ ...r, categoryId: remapCategoryId(r.categoryId) }))
   const shoppingListsToWrite = shoppingLists.map((s) => ({ ...s, categoryId: remapCategoryId(s.categoryId) }))
 
@@ -442,13 +461,14 @@ export async function syncReimbursementCategoriesOnce(): Promise<number> {
 
 export function exportCSV(transactions: Transaction[], categories: Category[]): string {
   const catById = new Map(categories.map((c) => [c.id, c.name]))
-  const header = 'Date,Note,Category,Type,Amount\n'
+  const header = 'Date,Note,Category,Type,Amount,Tags\n'
   const rows = transactions.map((t) => {
     const date = new Date(t.date).toISOString().slice(0, 10)
     const note = `"${t.note.replace(/"/g, '""')}"`
     const category = catById.get(t.categoryId ?? '') ?? 'Uncategorized'
     const type = t.isExpense ? 'Expense' : 'Income'
-    return `${date},${note},${category},${type},${t.amount.toFixed(2)}`
+    const tags = `"${(t.tags ?? []).join(', ').replace(/"/g, '""')}"`
+    return `${date},${note},${category},${type},${t.amount.toFixed(2)},${tags}`
   })
   return header + rows.join('\n')
 }

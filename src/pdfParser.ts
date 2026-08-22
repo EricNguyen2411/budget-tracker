@@ -2,6 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 import { suggestCategoryId } from './merchantRules'
 import type { ParsedTransaction } from './receiptParser'
+import type { Category } from './types'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
@@ -60,7 +61,7 @@ function parseRowDate(text: string): Date | null {
   return null
 }
 
-export async function parsePdfStatement(file: File): Promise<{ transactions: ParsedTransaction[]; skipped: string[] }> {
+export async function parsePdfStatement(file: File, categories: Category[] = []): Promise<{ transactions: ParsedTransaction[]; skipped: string[] }> {
   const buffer = await file.arrayBuffer()
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
 
@@ -183,7 +184,7 @@ export async function parsePdfStatement(file: File): Promise<{ transactions: Par
         note: draft.note,
         date: draft.date.toISOString(),
         isExpense,
-        suggestedCategoryId: suggestCategoryId(draft.note)
+        suggestedCategoryId: suggestCategoryId(draft.note, categories)
       })
     }
   }

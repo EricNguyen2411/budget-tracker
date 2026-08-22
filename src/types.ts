@@ -22,6 +22,7 @@ export interface Transaction {
   isExpense: boolean
   categoryId: string | null
   reimbursesExpenseId: string | null
+  tags: string[] // free-form, lowercase-normalized on entry; cuts across categories (e.g. "japan 2026", "work trip")
 }
 
 export type RecurrenceFrequency = 'weekly' | 'monthly' | 'yearly'

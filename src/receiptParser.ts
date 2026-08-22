@@ -1,5 +1,6 @@
 import type { TextItem } from './ocr'
 import { suggestCategoryId } from './merchantRules'
+import type { Category } from './types'
 
 export interface ParsedTransaction {
   id: string
@@ -144,7 +145,7 @@ function parseBalance(anchorText: string): number | null {
   return match ? parseFloat(match[1].replace(/,/g, '')) : null
 }
 
-export function parseAppTransactionList(items: TextItem[]): { transactions: ParsedTransaction[]; skipped: string[] } {
+export function parseAppTransactionList(items: TextItem[], categories: Category[] = []): { transactions: ParsedTransaction[]; skipped: string[] } {
   // Some screenshots split the "bal $X,XXX.XX" row-anchor marker into two
   // separate OCR observations — "bal" and the dollar figure on their
   // own — most often when a similar-looking balance figure sits nearby
@@ -294,7 +295,7 @@ export function parseAppTransactionList(items: TextItem[]): { transactions: Pars
       note: draft.note,
       date: draft.date.toISOString(),
       isExpense,
-      suggestedCategoryId: suggestCategoryId(draft.note)
+      suggestedCategoryId: suggestCategoryId(draft.note, categories)
     })
   }
   skipped.push(...skippedTexts)
@@ -341,7 +342,7 @@ function applyTime(date: Date, match: RegExpMatchArray): Date {
   return date
 }
 
-export function parseNotificationScreenshots(items: TextItem[]): { transactions: ParsedTransaction[]; skipped: string[] } {
+export function parseNotificationScreenshots(items: TextItem[], categories: Category[] = []): { transactions: ParsedTransaction[]; skipped: string[] } {
   const transactions: ParsedTransaction[] = []
   const skipped: string[] = []
 
@@ -376,7 +377,7 @@ export function parseNotificationScreenshots(items: TextItem[]): { transactions:
       note,
       date: date.toISOString(),
       isExpense,
-      suggestedCategoryId: suggestCategoryId(note)
+      suggestedCategoryId: suggestCategoryId(note, categories)
     })
   })
 
@@ -458,7 +459,7 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTransaction[]; skipped: string[] } {
+export function parseBeemScreenshot(items: TextItem[], categories: Category[] = []): { transactions: ParsedTransaction[]; skipped: string[] } {
   const transactions: ParsedTransaction[] = []
   const skipped: string[] = []
 
@@ -606,7 +607,7 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
       note,
       date: resolvedDate.toISOString(),
       isExpense,
-      suggestedCategoryId: suggestCategoryId(note),
+      suggestedCategoryId: suggestCategoryId(note, categories),
       splitInfo: null
     })
   })
@@ -614,16 +615,16 @@ export function parseBeemScreenshot(items: TextItem[]): { transactions: ParsedTr
   return { transactions, skipped }
 }
 
-export async function parseScreenshot(items: TextItem[]): Promise<{ transactions: ParsedTransaction[]; skipped: string[]; format: DetectedFormat }> {
+export async function parseScreenshot(items: TextItem[], categories: Category[] = []): Promise<{ transactions: ParsedTransaction[]; skipped: string[]; format: DetectedFormat }> {
   const format = detectFormat(items)
   if (format === 'appScreenshot') {
-    return { ...parseAppTransactionList(items), format }
+    return { ...parseAppTransactionList(items, categories), format }
   }
   if (format === 'notificationScreenshot') {
-    return { ...parseNotificationScreenshots(items), format }
+    return { ...parseNotificationScreenshots(items, categories), format }
   }
   if (format === 'beemScreenshot') {
-    return { ...parseBeemScreenshot(items), format }
+    return { ...parseBeemScreenshot(items, categories), format }
   }
   return { transactions: [], skipped: items.map((i) => i.text), format }
 }

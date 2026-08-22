@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote, reimbursementsFor } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
+import { normalizeTag } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
 import SwipeableRow from '../components/SwipeableRow'
+import QuickAddBar from '../components/QuickAddBar'
 import { PlusIcon } from '../icons'
 import { useModalClose } from '../useModalClose'
 
@@ -12,6 +14,8 @@ interface Props {
   transactions: Transaction[]
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
+  onChanged: () => void
+  initialSearch?: string
 }
 
 function dayLabel(date: Date): string {
@@ -26,8 +30,8 @@ function dayLabel(date: Date): string {
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: sameYear ? undefined : 'numeric' })
 }
 
-export default function TransactionsPage({ categories, transactions, onSave, onDelete }: Props) {
-  const [search, setSearch] = useState('')
+export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch }: Props) {
+  const [search, setSearch] = useState(initialSearch ?? '')
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
   const [editing, setEditing] = useState<Transaction | null>(null)
@@ -46,9 +50,19 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
     if (filter === 'expense' && !t.isExpense) return false
     if (filter === 'income' && unlinkedOnly && t.reimbursesExpenseId) return false
     if (search) {
-      const cat = t.categoryId ? categoryById.get(t.categoryId)?.name ?? '' : ''
-      const haystack = (t.note + ' ' + cat).toLowerCase()
-      if (!haystack.includes(search.toLowerCase())) return false
+      const trimmed = search.trim()
+      // A leading "#" is an exact tag filter (what tapping a tag chip,
+      // or the Tags screen, sets the search box to) rather than a
+      // substring search — "#trip" shouldn't also match a transaction
+      // whose note happens to contain the letters "trip".
+      if (trimmed.startsWith('#')) {
+        const wanted = normalizeTag(trimmed)
+        if (!t.tags.some((tag) => normalizeTag(tag) === wanted)) return false
+      } else {
+        const cat = t.categoryId ? categoryById.get(t.categoryId)?.name ?? '' : ''
+        const haystack = (t.note + ' ' + cat + ' ' + t.tags.join(' ')).toLowerCase()
+        if (!haystack.includes(search.toLowerCase())) return false
+      }
     }
     return true
   }), [transactions, filter, unlinkedOnly, search, categoryById])
@@ -105,9 +119,11 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
         </div>
       </div>
 
+      <QuickAddBar categories={categories} onChanged={onChanged} />
+
       <input
         type="text"
-        placeholder="Search notes or categories"
+        placeholder="Search notes, categories, or #tag"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         style={{ width: '100%', marginBottom: 12 }}
@@ -165,6 +181,19 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                         <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 500 }}>
                           Reimbursed by {reimbursementCount} transaction{reimbursementCount === 1 ? '' : 's'}
                         </span>
+                      )}
+                      {t.tags.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 }}>
+                          {t.tags.map((tag) => (
+                            <span
+                              key={tag}
+                              onClick={(e) => { e.stopPropagation(); setSearch(`#${tag}`) }}
+                              style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--purple)' }}
+                            >
+                              #{tag}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>

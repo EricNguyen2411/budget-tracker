@@ -75,7 +75,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [importSummary, setImportSummary] = useState<{ count: number } | null>(null)
 
   const importGeneric = useMemo(
-    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null } as Transaction))]),
+    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null, tags: [] } as Transaction))]),
     [existingTransactions, results]
   )
 
@@ -116,7 +116,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
     setScanProgress('Reading PDF\u2026')
     try {
       const { parsePdfStatement } = await import('../pdfParser')
-      const { transactions, skipped } = await parsePdfStatement(files[0])
+      const { transactions, skipped } = await parsePdfStatement(files[0], categories)
       setResults(transactions)
       setSkippedRows(skipped)
       setFormatsSeen(new Set())
@@ -141,7 +141,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
       setScanProgress(`Reading photo ${i + 1} of ${files.length}\u2026`)
       try {
         const items = await recognizeTextItems(files[i])
-        const { transactions, skipped, format } = await parseScreenshot(items)
+        const { transactions, skipped, format } = await parseScreenshot(items, categories)
         allResults.push(...transactions)
         allSkipped.push(...skipped)
         formats.add(format)
@@ -257,7 +257,8 @@ export default function StatementImport({ categories, existingTransactions, onBa
         date: r.date,
         isExpense: r.isExpense,
         categoryId: categoryFor(r),
-        reimbursesExpenseId: null
+        reimbursesExpenseId: null,
+        tags: []
       })
       createdByParsedId.set(r.id, created)
     }

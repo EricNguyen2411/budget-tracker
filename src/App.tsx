@@ -27,9 +27,10 @@ import TotalBudgetPlanner from './pages/TotalBudgetPlanner'
 import AutoBackups from './pages/AutoBackups'
 import CategoryBreakdownByMonth from './pages/CategoryBreakdownByMonth'
 import MonthlyRecapPage from './pages/MonthlyRecapPage'
+import TagsScreen from './pages/TagsScreen'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -39,6 +40,7 @@ export default function App() {
   // assume the More menu.
   const [returnTab, setReturnTab] = useState<Tab>('more')
   const [pendingImportFiles, setPendingImportFiles] = useState<FileList | null>(null)
+  const [pendingTransactionsSearch, setPendingTransactionsSearch] = useState<string | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
@@ -146,6 +148,7 @@ export default function App() {
           onOpenMonthRecap={() => { setReturnTab('dashboard'); setTab('monthlyrecap') }}
           onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
           onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
+          onChanged={reload}
         />
       )}
       {tab === 'transactions' && (
@@ -154,6 +157,8 @@ export default function App() {
           transactions={transactions}
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
+          onChanged={reload}
+          initialSearch={pendingTransactionsSearch ?? undefined}
         />
       )}
       {tab === 'budgets' && <Budgets categories={categories} transactions={transactions} onOpenCategory={(id) => setCategoryDetailId(id)} />}
@@ -182,6 +187,14 @@ export default function App() {
       )}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
+      {tab === 'tags' && (
+        <TagsScreen
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setTab(returnTab)}
+          onOpenTag={(tag) => { setPendingTransactionsSearch(`#${tag}`); setTab('transactions') }}
+        />
+      )}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'import' && (
         <StatementImport
@@ -227,7 +240,7 @@ export default function App() {
           <DashboardIcon active={tab === 'dashboard' && !anyOverlay} />
           Dashboard
         </button>
-        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('transactions') }}>
+        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setPendingTransactionsSearch(null); setTab('transactions') }}>
           <ListIcon active={tab === 'transactions' && !anyOverlay} />
           Transactions
         </button>
@@ -235,8 +248,8 @@ export default function App() {
           <TargetIcon active={tab === 'budgets' && !anyOverlay} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap'].includes(tab) && !anyOverlay} />
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

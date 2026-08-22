@@ -9,6 +9,7 @@ import { useModalClose } from '../useModalClose'
 import { buildMonthRecap } from '../monthlyRecap'
 import AnimatedProgressBar from '../components/AnimatedProgressBar'
 import AnimatedNumber from '../components/AnimatedNumber'
+import QuickAddBar from '../components/QuickAddBar'
 
 interface Props {
   categories: Category[]
@@ -20,6 +21,7 @@ interface Props {
   onOpenMonthRecap: () => void
   onOpenCategoryBreakdown: () => void
   onOpenImport: (files: FileList) => void
+  onChanged: () => void
 }
 
 /** Compares the last two COMPLETE periods, deliberately excluding the
@@ -49,7 +51,7 @@ function trendSummary(periods: { periodStart: Date; amount: number }[], noun: st
   )
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onChanged }: Props) {
   const now = new Date()
   const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
   const days = daysRemainingInMonth(now)
@@ -104,6 +106,8 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
           <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { if (e.target.files && e.target.files.length > 0) onOpenImport(e.target.files) }} />
         </label>
       </div>
+
+      <QuickAddBar categories={categories} onChanged={onChanged} />
 
       <div className="card hero-card">
         <span className="hero-label">Safe to Spend</span>
