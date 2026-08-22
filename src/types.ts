@@ -56,7 +56,8 @@ export interface ShoppingList {
 }
 
 export interface AppSettings {
-  budgetCycleStartDay: number // 1-28, 1 = calendar month
+  budgetCycleMode: 'fixedDay' | 'lastBusinessDay'
+  budgetCycleStartDay: number // 1-28, meaningful only when budgetCycleMode is 'fixedDay'; 1 = calendar month
   dismissedRecurringSuggestions: string[]
   lastOpenedAt: string | null
 }

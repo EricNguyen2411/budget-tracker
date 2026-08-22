@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, reimbursementNote, repaysNote, excessForReimbursement, localDateInputValue } from '../calculations'
+import { periodOffsetBy, getCycleConfig, getSettings, isCustomCycle } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
 
@@ -35,6 +36,16 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
         break
       }
       case 'ytd': setStart(localDateInputValue(new Date(today.getFullYear(), 0, 1))); setEnd(localDateInputValue(today)); break
+      case 'thisCycle': {
+        const { start: s, end: e } = periodOffsetBy(0, today, getCycleConfig())
+        setStart(localDateInputValue(s)); setEnd(localDateInputValue(new Date(e.getTime() - 86400000)))
+        break
+      }
+      case 'lastCycle': {
+        const { start: s, end: e } = periodOffsetBy(-1, today, getCycleConfig())
+        setStart(localDateInputValue(s)); setEnd(localDateInputValue(new Date(e.getTime() - 86400000)))
+        break
+      }
     }
   }
 
@@ -89,8 +100,12 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
           { key: '7d', label: 'Last 7 Days' },
           { key: '30d', label: 'Last 30 Days' },
           { key: '90d', label: 'Last 90 Days' },
-          { key: 'thisMonth', label: 'This Month' },
-          { key: 'lastMonth', label: 'Last Month' },
+          { key: 'thisMonth', label: 'This Calendar Month' },
+          { key: 'lastMonth', label: 'Last Calendar Month' },
+          ...(isCustomCycle(getSettings()) ? [
+            { key: 'thisCycle', label: 'This Pay Cycle' },
+            { key: 'lastCycle', label: 'Last Pay Cycle' }
+          ] : []),
           { key: 'ytd', label: 'Year to Date' }
         ].map((p) => (
           <button key={p.key} onClick={() => applyPreset(p.key)} style={{ whiteSpace: 'nowrap', fontSize: 12, padding: '6px 12px', background: 'var(--surface-2)', borderRadius: 8 }}>

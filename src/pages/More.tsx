@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { exportBackup, importBackup, exportCSV, recordManualBackup, daysSinceLastManualBackup } from '../db'
-import { getSettings, updateSettings } from '../budgetPeriod'
+import { getSettings, updateSettings, isCustomCycle, type CycleMode } from '../budgetPeriod'
 import DashboardSettings from './DashboardSettings'
 
 function ordinal(n: number): string {
@@ -47,7 +47,22 @@ export default function More({ categories, transactions, onCategoriesChanged, on
   }
 
   function handleCycleDayChange(value: number) {
-    updateSettings({ budgetCycleStartDay: value })
+    updateSettings({ budgetCycleMode: 'fixedDay', budgetCycleStartDay: value })
+    setSettings(getSettings())
+  }
+
+  function handleCycleModeChange(mode: 'off' | CycleMode) {
+    if (mode === 'off') {
+      updateSettings({ budgetCycleMode: 'fixedDay', budgetCycleStartDay: 1 })
+    } else if (mode === 'lastBusinessDay') {
+      updateSettings({ budgetCycleMode: 'lastBusinessDay' })
+    } else {
+      // Switching into "custom day" mode — 28th is a safe, always-valid
+      // default starting point (works for every month, including Feb)
+      // rather than leaving it on whatever was last set, which could
+      // still be 1 (indistinguishable from "off").
+      updateSettings({ budgetCycleMode: 'fixedDay', budgetCycleStartDay: settings.budgetCycleStartDay > 1 ? settings.budgetCycleStartDay : 28 })
+    }
     setSettings(getSettings())
   }
 
@@ -82,25 +97,41 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           <div className="tx-info"><span className="tx-note">Categories</span></div>
           <span className="chevron">›</span>
         </button>
-        <button className="transaction-row" style={{ borderBottom: settings.budgetCycleStartDay > 1 ? 'none' : '1px solid var(--border)' }} onClick={() => setShowDashboardSettings(true)}>
+        <button className="transaction-row" style={{ borderBottom: isCustomCycle(settings) ? 'none' : '1px solid var(--border)' }} onClick={() => setShowDashboardSettings(true)}>
           <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>📊</div>
           <div className="tx-info"><span className="tx-note">Customize Dashboard</span></div>
           <span className="chevron">›</span>
         </button>
         <div style={{ padding: '0 16px' }}>
-          <div className="transaction-row" style={{ padding: '12px 0', borderBottom: settings.budgetCycleStartDay > 1 ? '1px solid var(--border)' : 'none' }}>
+          <div className="transaction-row" style={{ padding: '12px 0', borderBottom: isCustomCycle(settings) ? '1px solid var(--border)' : 'none' }}>
             <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>🔄</div>
             <div className="tx-info"><span className="tx-note">Custom budget cycle</span></div>
-            <input type="checkbox" switch checked={settings.budgetCycleStartDay > 1} onChange={(e) => handleCycleDayChange(e.target.checked ? 28 : 1)} />
+            <input
+              type="checkbox" switch
+              checked={isCustomCycle(settings)}
+              onChange={(e) => handleCycleModeChange(e.target.checked ? 'fixedDay' : 'off')}
+            />
           </div>
-          {settings.budgetCycleStartDay > 1 && (
-            <div className="form-row" style={{ padding: '11px 0 4px', borderBottom: 'none' }}>
+          {isCustomCycle(settings) && (
+            <div className="form-row" style={{ padding: '11px 0 4px', borderBottom: 'none', flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
               <span className="form-row-label" style={{ color: 'var(--text-dim)', fontSize: 13, paddingLeft: 46 }}>Starts on</span>
-              <select value={settings.budgetCycleStartDay} onChange={(e) => handleCycleDayChange(parseInt(e.target.value))} style={{ width: 'auto' }}>
-                {Array.from({ length: 27 }, (_, i) => i + 2).map((day) => (
-                  <option key={day} value={day}>{ordinal(day)} of the month</option>
-                ))}
+              <select
+                value={settings.budgetCycleMode === 'lastBusinessDay' ? 'lastBusinessDay' : 'fixedDay'}
+                onChange={(e) => handleCycleModeChange(e.target.value as CycleMode)}
+              >
+                <option value="fixedDay">A specific day each month</option>
+                <option value="lastBusinessDay">The last business day of the month</option>
               </select>
+              {settings.budgetCycleMode === 'fixedDay' && (
+                <select value={settings.budgetCycleStartDay} onChange={(e) => handleCycleDayChange(parseInt(e.target.value))} style={{ width: 'auto' }}>
+                  {Array.from({ length: 27 }, (_, i) => i + 2).map((day) => (
+                    <option key={day} value={day}>{ordinal(day)} of the month</option>
+                  ))}
+                </select>
+              )}
+              {settings.budgetCycleMode === 'lastBusinessDay' && (
+                <p className="hint" style={{ margin: 0 }}>The last weekday (Mon–Fri) of each month — moves around a little month to month, same as most payroll schedules that pay "on the last business day."</p>
+              )}
             </div>
           )}
           <p className="hint" style={{ marginTop: 4, marginBottom: 12 }}>If "this month" should reset on payday instead of the 1st — Safe to Spend, budgets, and Insights all shift together.</p>

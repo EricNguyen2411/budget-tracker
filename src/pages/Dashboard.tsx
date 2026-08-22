@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, RecurringTransaction } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses } from '../calculations'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
+import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
@@ -111,11 +112,29 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const pieSlices = useMemo(() => categoryBreakdown(categories, transactions, now), [categories, transactions, now.toDateString()])
   const dailySpend = useMemo(() => last14DaysSpend(transactions, categories, now), [categories, transactions, now.toDateString()])
   const monthRecap = useMemo(() => buildMonthRecap(categories, transactions, now), [categories, transactions, now.toDateString()])
-  const lastMonthDate = useMemo(() => new Date(now.getFullYear(), now.getMonth() - 1, 1), [now.toDateString()])
+  // Confirmed a real bug: "day 1 of the previous calendar month" is NOT
+  // always the same period as "the previous full budget cycle" once a
+  // custom cycle start day is in play — e.g. with a 25th-of-the-month
+  // cycle and today being Aug 30 (in the Aug25–Sep25 cycle), the naive
+  // calendar-month subtraction lands on Jul 1, which resolves to the
+  // Jun25–Jul25 cycle — a whole cycle further back than intended,
+  // silently understating "last month's" income by an entire pay
+  // period. referenceDateOffsetBy is the cycle-aware equivalent,
+  // already used correctly elsewhere (insights.ts).
+  const lastMonthDate = useMemo(() => referenceDateOffsetBy(-1, now), [now.toDateString()])
   const expectedIncome = useMemo(() => computeDashboardTotals(categories, transactions, lastMonthDate).income, [categories, transactions, lastMonthDate])
   const totalAllocated = useMemo(() => categories.filter((c) => !c.parentId).reduce((sum, c) => sum + effectiveBudget(c, categories), 0), [categories])
   const unallocated = expectedIncome - totalAllocated
-  const monthRecapLabel = now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
+  const cycleSettings = useMemo(() => getSettings(), [])
+  const currentPeriodForLabel = useMemo(() => periodContaining(now, getCycleConfig()), [now.toDateString()])
+  // A plain "August 2026" label is misleading once a custom cycle start
+  // day means the reviewed window doesn't actually align with a
+  // calendar month (it might be mostly late-July, for instance) — shown
+  // as an explicit date range instead whenever that's the case, same
+  // pattern as Spending by Category.
+  const monthRecapLabel = isCustomCycle(cycleSettings)
+    ? `${currentPeriodForLabel.start.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} – ${new Date(currentPeriodForLabel.end.getTime() - 86400000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
+    : now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
   const monthlyTrend = useMemo(() => last6PeriodsSpend(categories, transactions, now), [categories, transactions, now.toDateString()])
   const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(categories, transactions, now), [categories, transactions, now.toDateString()])
   const hidden = getHiddenWidgets()

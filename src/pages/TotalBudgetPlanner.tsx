@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { suggestBudgets } from '../budgetSuggestions'
 import { formatCurrency, goalProgress, computeDashboardTotals } from '../calculations'
+import { referenceDateOffsetBy } from '../budgetPeriod'
 import { saveCategory } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 
@@ -43,7 +44,13 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   // FULL month, not the still-in-progress current one, since that
   // wouldn't be a complete figure yet. Still fully editable, same as
   // savings and the total below.
-  const lastMonth = useMemo(() => new Date(now.getFullYear(), now.getMonth() - 1, 1), [])
+  // Same off-by-one-cycle risk as Dashboard.tsx's expected-income figure
+  // — calendar-month subtraction doesn't reliably land on "the previous
+  // full pay cycle" once a custom cycle start day is set. Using the
+  // cycle-aware helper instead means the pre-filled income/savings
+  // suggestions below are always the actual previous cycle, not
+  // sometimes a cycle further back.
+  const lastMonth = useMemo(() => referenceDateOffsetBy(-1, now), [])
   const lastMonthTotals = useMemo(() => computeDashboardTotals(categories, transactions, lastMonth), [categories, transactions, lastMonth])
   const suggestedIncome = lastMonthTotals.income
 

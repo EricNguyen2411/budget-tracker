@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { buildMonthRecap, classify } from '../monthlyRecap'
-import { formatCurrency } from '../calculations'
+import { formatCurrency, localDateInputValue } from '../calculations'
+import { periodOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { useSwipeBack } from '../useSwipeBack'
 import RecapBucketDetail, { type RecapBucket } from './RecapBucketDetail'
 import AnimatedProgressBar from '../components/AnimatedProgressBar'
@@ -22,8 +23,31 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
   const [openBucket, setOpenBucket] = useState<RecapBucket | null>(null)
 
   const now = new Date()
-  const referenceDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1)
-  const monthLabel = referenceDate.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
+  const settings = getSettings()
+  // Confirmed a real, separate bug: building referenceDate as "day 1 of
+  // (this calendar month + offset)" doesn't reliably land in the period
+  // actually containing today once a custom cycle is in play — for a
+  // late-month cycle (a fixed day past the 1st, or "last business
+  // day"), day 1 of the current calendar month falls in the PREVIOUS
+  // cycle whenever today's date is past the cycle's own start day, so
+  // offset=0 could silently show last cycle instead of the current
+  // one. periodOffsetBy resolves the actual target period directly
+  // from today, correct for any cycle mode — a date safely inside that
+  // period (its start + 1 day) is then used as referenceDate wherever
+  // one is needed for calculations.
+  const period = periodOffsetBy(monthOffset, now, getCycleConfig())
+  const referenceDate = new Date(period.start.getTime() + 24 * 60 * 60 * 1000)
+  const { start: periodStart, end: periodEnd } = period
+  // periodOffsetBy's `end` is EXCLUSIVE (the instant the next period
+  // starts) — but onOpenCategoryPeriod's `end` string is documented and
+  // consumed as INCLUSIVE (see PeriodDetail.tsx). Passing periodEnd
+  // through unadjusted would silently include one extra day belonging
+  // to the NEXT cycle. periodEndInclusive is periodEnd minus one day —
+  // the actual last day that belongs to this period.
+  const periodEndInclusive = new Date(periodEnd.getTime() - 86400000)
+  const monthLabel = isCustomCycle(settings)
+    ? `${periodStart.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} – ${periodEndInclusive.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
+    : referenceDate.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
 
   const recap = buildMonthRecap(categories, transactions, referenceDate)
 
@@ -40,9 +64,7 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
         onSave={onSaveTransaction}
         onDelete={onDeleteTransaction}
         onOpenCategory={(categoryId, name) => {
-          const monthStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1)
-          const monthEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0)
-          onOpenCategoryPeriod(`${name} — ${monthLabel}`, monthStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10), categoryId)
+          onOpenCategoryPeriod(`${name} — ${monthLabel}`, localDateInputValue(periodStart), localDateInputValue(periodEndInclusive), categoryId)
         }}
       />
     )
@@ -116,9 +138,7 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
               <span className="section-heading" style={{ margin: '0 0 10px' }}>🎯 Savings Goals</span>
               {recap.goals.map((g) => (
                 <button key={g.categoryId} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 10 }} onClick={() => {
-                  const monthStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1)
-                  const monthEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0)
-                  onOpenCategoryPeriod(`${g.name} — ${monthLabel}`, monthStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10), g.categoryId)
+                  onOpenCategoryPeriod(`${g.name} — ${monthLabel}`, localDateInputValue(periodStart), localDateInputValue(periodEndInclusive), g.categoryId)
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
                     <span>{g.icon} {g.name}</span>
@@ -139,9 +159,7 @@ export default function MonthlyRecapPage({ categories, transactions, onBack, onS
               const over = c.budget > 0 && c.spent > c.budget
               return (
                 <button key={c.categoryId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: '8px 0' }} onClick={() => {
-                  const monthStart = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1)
-                  const monthEnd = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0)
-                  onOpenCategoryPeriod(`${c.name} — ${monthLabel}`, monthStart.toISOString().slice(0, 10), monthEnd.toISOString().slice(0, 10), c.categoryId)
+                  onOpenCategoryPeriod(`${c.name} — ${monthLabel}`, localDateInputValue(periodStart), localDateInputValue(periodEndInclusive), c.categoryId)
                 }}>
                   <span style={{ fontSize: 13 }}>{c.icon} {c.name}</span>
                   <span className="amount" style={{ fontSize: 13, color: over ? 'var(--red)' : 'var(--text)' }}>
