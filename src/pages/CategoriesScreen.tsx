@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Category } from '../types'
 import { createCategory, saveCategory, deleteCategory, mergeCategoryInto } from '../db'
-import { localDateInputValue } from '../calculations'
+import { localDateInputValue, effectiveBudget, formatCurrency } from '../calculations'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 
@@ -38,6 +38,13 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {topLevel.map((c, i) => {
           const subs = categories.filter((s) => s.parentId === c.id)
+          const subsTotal = subs.reduce((sum, s) => sum + s.monthlyBudget, 0)
+          // The parent's own number is silently ignored in favor of the
+          // subcategories' sum the moment any of them has a budget set —
+          // see effectiveBudget(). Surfacing that here, right where the
+          // parent's own figure is set, is what makes that override
+          // visible instead of a surprise later in Safe to Spend.
+          const overridden = subsTotal > 0 && c.monthlyBudget > 0 && c.monthlyBudget !== subsTotal
           return (
             <div key={c.id}>
               <div className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }}>
@@ -50,7 +57,13 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
                   <div className="tx-info">
                     <span className="tx-note">{c.name}</span>
                     {c.isSavingsCategory && <span className="tx-category">Savings</span>}
+                    {overridden && (
+                      <span className="tx-category" style={{ color: 'var(--amber)' }}>
+                        ⚠️ {formatCurrency(c.monthlyBudget)} set here, but ignored — subcategories total {formatCurrency(subsTotal)}
+                      </span>
+                    )}
                   </div>
+                  <span className="amount" style={{ fontSize: 14, color: 'var(--text-dim)' }}>{formatCurrency(effectiveBudget(c, categories))}</span>
                   <span className="chevron">›</span>
                 </button>
               </div>
@@ -58,6 +71,7 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
                 <button key={s.id} className="transaction-row" style={{ borderBottom: '1px solid var(--border)', paddingLeft: 34 }} onClick={() => setEditingCategory(s)}>
                   <div className="tx-icon" style={{ background: s.color + '33', width: 30, height: 30 }}>{s.icon}</div>
                   <div className="tx-info"><span className="tx-note" style={{ fontSize: 14 }}>{s.name}</span></div>
+                  <span className="amount" style={{ fontSize: 13, color: 'var(--text-dim)' }}>{formatCurrency(s.monthlyBudget)}</span>
                   <span className="chevron">›</span>
                 </button>
               ))}

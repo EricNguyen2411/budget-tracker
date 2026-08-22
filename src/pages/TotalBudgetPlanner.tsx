@@ -73,13 +73,26 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   // pre-reduced figure you'd then have to add savings back on top of.
   const effectiveTotalBudget = totalBudgetTouched ? (parseFloat(totalBudget) || 0) : parsedIncome
 
+  // What a category will actually contribute to Safe to Spend once
+  // saved — the subcategory total if any subcategory has one set
+  // (which silently wins, per effectiveBudget()), otherwise whatever's
+  // in its own input box here. Used everywhere this screen adds
+  // category numbers together, so "Total Allocated" and the "Other"
+  // remainder both match what Safe to Spend will actually compute
+  // after Save, rather than the pre-override figures shown in each box.
+  function actualContribution(categoryId: string): number {
+    const subsTotal = categories.filter((s) => s.parentId === categoryId).reduce((sum, s) => sum + s.monthlyBudget, 0)
+    if (subsTotal > 0) return subsTotal
+    return parseFloat(displayBudget(categoryId)) || 0
+  }
+
   const otherRemainder = useMemo(() => {
     if (!otherCategory) return 0
     const othersSum = topLevel
       .filter((c) => c.id !== otherCategory.id)
-      .reduce((sum, c) => sum + (parseFloat(budgets.get(c.id) ?? '') || 0), 0)
+      .reduce((sum, c) => sum + actualContribution(c.id), 0)
     return Math.max(0, effectiveTotalBudget - othersSum)
-  }, [otherCategory, topLevel, budgets, effectiveTotalBudget])
+  }, [otherCategory, topLevel, budgets, categories, effectiveTotalBudget])
 
   // What's actually shown/saved per category — Other is overridden with
   // the live-computed remainder instead of whatever's sitting in the
@@ -89,8 +102,7 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
     return budgets.get(categoryId) ?? ''
   }
 
-  const totalAllocated = spendingCats.reduce((sum, c) => sum + (parseFloat(displayBudget(c.id)) || 0), 0)
-    + topLevel.filter((c) => c.isSavingsCategory).reduce((sum, c) => sum + (parseFloat(budgets.get(c.id) ?? '') || 0), 0)
+  const totalAllocated = topLevel.reduce((sum, c) => sum + actualContribution(c.id), 0)
 
   function applySuggestion(categoryId: string) {
     const s = suggestionByCategory.get(categoryId)
@@ -191,6 +203,14 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
         {topLevel.map((c) => {
           const suggestion = suggestionByCategory.get(c.id)
           const isOther = otherCategory?.id === c.id
+          const subsTotal = categories.filter((s) => s.parentId === c.id).reduce((sum, s) => sum + s.monthlyBudget, 0)
+          // Confirmed real gap: this planner only ever writes to
+          // top-level category budgets, but Safe to Spend uses the sum
+          // of a category's subcategories instead of its own number the
+          // moment any of them has a budget set — silently ignoring
+          // whatever's set here. Surfacing it at save-time, right on the
+          // row it affects, is what stops that from being a surprise.
+          const willBeIgnored = subsTotal > 0
           return (
             <div key={c.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
@@ -203,6 +223,11 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
                   style={{ width: 100, textAlign: 'right', color: isOther ? 'var(--text-dim)' : undefined }}
                 />
               </div>
+              {willBeIgnored && (
+                <span style={{ fontSize: 12, color: 'var(--amber)', display: 'block' }}>
+                  ⚠️ Ignored — "{c.name}" has subcategories totaling {formatCurrency(subsTotal)}, which is used instead. Edit them individually in Categories, or clear their budgets to let this number apply again.
+                </span>
+              )}
               {isOther && (
                 <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Automatically the remainder of your total spending budget</span>
               )}
