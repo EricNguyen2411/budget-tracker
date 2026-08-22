@@ -20,9 +20,24 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   const [savingsTouched, setSavingsTouched] = useState(false)
   const [totalBudget, setTotalBudget] = useState('')
   const [totalBudgetTouched, setTotalBudgetTouched] = useState(false)
-  const [budgets, setBudgets] = useState<Map<string, string>>(new Map(categories.filter((c) => !c.parentId).map((c) => [c.id, c.monthlyBudget ? String(c.monthlyBudget) : ''])))
+
+  // A category with subcategories never gets its own editable box here
+  // — see subsOf() below — so the only things that ever need an entry
+  // in this map are actual leaf categories: top-level categories with
+  // no children, plus every subcategory. This is what makes the
+  // planner and Safe to Spend agree by construction: there's no longer
+  // a parent-level number that can silently be overridden, because the
+  // planner never writes one in the first place when subcategories
+  // exist.
+  const [budgets, setBudgets] = useState<Map<string, string>>(
+    new Map(categories.filter((c) => isLeaf(c, categories)).map((c) => [c.id, c.monthlyBudget ? String(c.monthlyBudget) : '']))
+  )
 
   const now = new Date()
+
+  function subsOf(categoryId: string): Category[] {
+    return categories.filter((s) => s.parentId === categoryId)
+  }
 
   // Auto-populated from what you actually earned last month — the last
   // FULL month, not the still-in-progress current one, since that
@@ -65,7 +80,11 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   // own number set, computed fresh on every render rather than stored
   // and kept in sync by hand, so it can never drift out of date with
   // whatever you've typed elsewhere. Matched by name since there's no
-  // dedicated flag for "this is the leftover bucket."
+  // dedicated flag for "this is the leftover bucket." Assumes "Other"
+  // itself has no subcategories — a category being both a leftover
+  // bucket and split into subcategories isn't a combination this
+  // handles specially, since there'd be no single field to write the
+  // remainder into.
   const otherCategory = spendingCats.find((c) => c.name.trim().toLowerCase() === 'other')
 
   // Defaults straight to your income — the whole point is putting your
@@ -73,16 +92,18 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   // pre-reduced figure you'd then have to add savings back on top of.
   const effectiveTotalBudget = totalBudgetTouched ? (parseFloat(totalBudget) || 0) : parsedIncome
 
-  // What a category will actually contribute to Safe to Spend once
-  // saved — the subcategory total if any subcategory has one set
-  // (which silently wins, per effectiveBudget()), otherwise whatever's
-  // in its own input box here. Used everywhere this screen adds
-  // category numbers together, so "Total Allocated" and the "Other"
-  // remainder both match what Safe to Spend will actually compute
-  // after Save, rather than the pre-override figures shown in each box.
+  // What a top-level category will actually contribute to Safe to
+  // Spend once saved. For a category split into subcategories, that's
+  // the live sum of what's currently in each subcategory's own box
+  // here — not a separate parent number, since one is never shown or
+  // saved for it. This is what makes "Total Allocated" below always
+  // equal to what Safe to Spend will show immediately after Save, with
+  // no separate override step to go out of sync.
   function actualContribution(categoryId: string): number {
-    const subsTotal = categories.filter((s) => s.parentId === categoryId).reduce((sum, s) => sum + s.monthlyBudget, 0)
-    if (subsTotal > 0) return subsTotal
+    const subs = subsOf(categoryId)
+    if (subs.length > 0) {
+      return subs.reduce((sum, s) => sum + (parseFloat(displayBudget(s.id)) || 0), 0)
+    }
     return parseFloat(displayBudget(categoryId)) || 0
   }
 
@@ -94,9 +115,9 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
     return Math.max(0, effectiveTotalBudget - othersSum)
   }, [otherCategory, topLevel, budgets, categories, effectiveTotalBudget])
 
-  // What's actually shown/saved per category — Other is overridden with
-  // the live-computed remainder instead of whatever's sitting in the
-  // budgets map for it.
+  // What's actually shown/saved per leaf category — Other is overridden
+  // with the live-computed remainder instead of whatever's sitting in
+  // the budgets map for it.
   function displayBudget(categoryId: string): string {
     if (otherCategory && categoryId === otherCategory.id) return String(Math.round(otherRemainder))
     return budgets.get(categoryId) ?? ''
@@ -104,22 +125,49 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
 
   const totalAllocated = topLevel.reduce((sum, c) => sum + actualContribution(c.id), 0)
 
+  /** Splits a suggested total evenly across a category's subcategories
+   * as whole dollars, giving any leftover cent-of-a-dollar to the first
+   * few rather than letting rounding silently drop it — so the split
+   * always reconstructs the original suggested amount exactly. */
+  function splitEvenly(total: number, count: number): number[] {
+    const base = Math.floor(total / count)
+    const remainder = Math.round(total - base * count)
+    return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0))
+  }
+
   function applySuggestion(categoryId: string) {
     const s = suggestionByCategory.get(categoryId)
     if (!s) return
-    setBudgets((prev) => new Map(prev).set(categoryId, String(s.suggestedAmount)))
+    const subs = subsOf(categoryId)
+    if (subs.length > 0) {
+      const shares = splitEvenly(s.suggestedAmount, subs.length)
+      setBudgets((prev) => {
+        const next = new Map(prev)
+        subs.forEach((sub, i) => next.set(sub.id, String(shares[i])))
+        return next
+      })
+    } else {
+      setBudgets((prev) => new Map(prev).set(categoryId, String(s.suggestedAmount)))
+    }
   }
 
   function fillAllRecognized() {
     const next = new Map(budgets)
     for (const s of suggestions) {
-      if (!next.get(s.categoryId)) next.set(s.categoryId, String(s.suggestedAmount))
+      const subs = subsOf(s.categoryId)
+      if (subs.length > 0) {
+        if (subs.some((sub) => next.get(sub.id))) continue // at least one already has a number — leave the group alone
+        const shares = splitEvenly(s.suggestedAmount, subs.length)
+        subs.forEach((sub, i) => next.set(sub.id, String(shares[i])))
+      } else if (!next.get(s.categoryId)) {
+        next.set(s.categoryId, String(s.suggestedAmount))
+      }
     }
     setBudgets(next)
   }
 
   async function handleSave() {
-    for (const c of topLevel) {
+    for (const c of categories.filter((cat) => isLeaf(cat, categories))) {
       const value = parseFloat(displayBudget(c.id)) || 0
       if (value !== c.monthlyBudget) {
         await saveCategory({ ...c, monthlyBudget: value })
@@ -203,37 +251,53 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
         {topLevel.map((c) => {
           const suggestion = suggestionByCategory.get(c.id)
           const isOther = otherCategory?.id === c.id
-          const subsTotal = categories.filter((s) => s.parentId === c.id).reduce((sum, s) => sum + s.monthlyBudget, 0)
-          // Confirmed real gap: this planner only ever writes to
-          // top-level category budgets, but Safe to Spend uses the sum
-          // of a category's subcategories instead of its own number the
-          // moment any of them has a budget set — silently ignoring
-          // whatever's set here. Surfacing it at save-time, right on the
-          // row it affects, is what stops that from being a surprise.
-          const willBeIgnored = subsTotal > 0
+          const subs = subsOf(c.id)
+          const hasSubs = subs.length > 0
+
           return (
             <div key={c.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: hasSubs ? 8 : 6 }}>
                 <span style={{ flex: 1, fontSize: 14 }}>{c.icon} {c.name}{c.isSavingsCategory && <span className="badge">Savings</span>}</span>
-                <input
-                  type="number" inputMode="decimal" placeholder="0.00"
-                  value={displayBudget(c.id)}
-                  onChange={(e) => !isOther && setBudgets((prev) => new Map(prev).set(c.id, e.target.value))}
-                  readOnly={isOther}
-                  style={{ width: 100, textAlign: 'right', color: isOther ? 'var(--text-dim)' : undefined }}
-                />
+                {hasSubs ? (
+                  // No editable box for a category split into
+                  // subcategories — its number is always the live sum
+                  // of the boxes below, shown read-only so it's clear
+                  // this row itself isn't what to edit.
+                  <span className="amount" style={{ fontSize: 14, color: 'var(--text-dim)' }}>{formatCurrency(actualContribution(c.id))}</span>
+                ) : (
+                  <input
+                    type="number" inputMode="decimal" placeholder="0.00"
+                    value={displayBudget(c.id)}
+                    onChange={(e) => !isOther && setBudgets((prev) => new Map(prev).set(c.id, e.target.value))}
+                    readOnly={isOther}
+                    style={{ width: 100, textAlign: 'right', color: isOther ? 'var(--text-dim)' : undefined }}
+                  />
+                )}
               </div>
-              {willBeIgnored && (
-                <span style={{ fontSize: 12, color: 'var(--amber)', display: 'block' }}>
-                  ⚠️ Ignored — "{c.name}" has subcategories totaling {formatCurrency(subsTotal)}, which is used instead. Edit them individually in Categories, or clear their budgets to let this number apply again.
-                </span>
+
+              {hasSubs && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingLeft: 16, marginBottom: 4 }}>
+                  {subs.map((s) => (
+                    <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ flex: 1, fontSize: 13, color: 'var(--text-dim)' }}>{s.icon} {s.name}</span>
+                      <input
+                        type="number" inputMode="decimal" placeholder="0.00"
+                        value={displayBudget(s.id)}
+                        onChange={(e) => setBudgets((prev) => new Map(prev).set(s.id, e.target.value))}
+                        style={{ width: 90, textAlign: 'right', fontSize: 13 }}
+                      />
+                    </div>
+                  ))}
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Split across subcategories — {c.name}'s own total above is just their sum.</span>
+                </div>
               )}
+
               {isOther && (
                 <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Automatically the remainder of your total spending budget</span>
               )}
               {suggestion && !isOther && (
                 <button onClick={() => applySuggestion(c.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
-                  Suggested: {formatCurrency(suggestion.suggestedAmount)} ({suggestion.explanation})
+                  Suggested: {formatCurrency(suggestion.suggestedAmount)} ({suggestion.explanation}){hasSubs ? ' — split evenly across subcategories' : ''}
                 </button>
               )}
             </div>
@@ -249,4 +313,8 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
       </div>
     </div>
   )
+}
+
+function isLeaf(category: Category, allCategories: Category[]): boolean {
+  return !allCategories.some((c) => c.parentId === category.id)
 }
