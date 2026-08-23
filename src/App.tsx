@@ -237,6 +237,7 @@ export default function App() {
           transactions={transactions}
           onBack={() => setTab(returnTab)}
           onOpenTag={(tag) => { setPendingTransactionsSearch(`#${tag}`); setTab('transactions') }}
+          onChanged={reload}
         />
       )}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
@@ -272,7 +273,7 @@ export default function App() {
       )}
 
       {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
-        <div style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
+        <div className="floating-back-button" style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
           <button className="round-icon-button" style={{ background: 'var(--surface-3)' }} onClick={() => setTab('more')}>‹</button>
         </div>
       )}

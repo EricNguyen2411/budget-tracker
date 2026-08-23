@@ -142,7 +142,7 @@ function buildSuggestions(args: {
     )
   }
 
-  if (needsPct > 0.5 && wantsPct <= 0.35) {
+  if (Math.round(needsPct * 100) > 50 && wantsPct <= 0.35) {
     suggestions.push(
       `Essential spending ("needs") was ${Math.round(needsPct * 100)}% of income — above the textbook 50%, though this is common in Sydney specifically once rent is factored in, and isn't necessarily a problem on its own if it's mostly housing.`
     )

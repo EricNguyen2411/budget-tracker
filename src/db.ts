@@ -3,6 +3,8 @@ import type { Category, Transaction, RecurringTransaction, ShoppingList } from '
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
+import { normalizeTag, dedupeTags } from './tags'
+import { localDateInputValue } from './calculations'
 
 interface AutoBackupEntry {
   id: string
@@ -198,6 +200,46 @@ export async function deleteTransaction(id: string) {
   await db.delete('transactions', id)
 }
 
+/** Renames a tag across every transaction that has it. If `newTag`
+ * already matches an existing different tag on some of those
+ * transactions, this doubles as a merge — dedupeTags collapses the two
+ * into one rather than leaving a duplicate. Returns how many
+ * transactions were actually touched, so the UI can report something
+ * more concrete than "done." */
+export async function renameTag(oldTag: string, newTag: string): Promise<number> {
+  const from = normalizeTag(oldTag)
+  const to = normalizeTag(newTag)
+  if (!from || !to || from === to) return 0
+
+  const db = await getDB()
+  const all = await db.getAll('transactions')
+  let count = 0
+  for (const t of all) {
+    if (!t.tags.some((tag) => normalizeTag(tag) === from)) continue
+    const updatedTags = dedupeTags(t.tags.map((tag) => (normalizeTag(tag) === from ? to : tag)))
+    await db.put('transactions', { ...t, tags: updatedTags })
+    count++
+  }
+  return count
+}
+
+/** Removes a tag from every transaction that has it — the transactions
+ * themselves aren't touched otherwise, only the tag association. */
+export async function deleteTagEverywhere(tag: string): Promise<number> {
+  const target = normalizeTag(tag)
+  if (!target) return 0
+
+  const db = await getDB()
+  const all = await db.getAll('transactions')
+  let count = 0
+  for (const t of all) {
+    if (!t.tags.some((tg) => normalizeTag(tg) === target)) continue
+    await db.put('transactions', { ...t, tags: t.tags.filter((tg) => normalizeTag(tg) !== target) })
+    count++
+  }
+  return count
+}
+
 export async function getRecurring(): Promise<RecurringTransaction[]> {
   const db = await getDB()
   return db.getAll('recurring')
@@ -246,13 +288,41 @@ export function newId() {
   return uuid()
 }
 
+// Preferences and learned data that live in localStorage rather than the
+// IndexedDB stores above — genuine user setup that's easy to forget when
+// adding a new one of these, so it's collected by explicit key here
+// rather than scattered ad hoc. Deliberately an ALLOWLIST, not "every
+// budget-tracker-* key": several other keys in this app (last-backup
+// timestamps, a one-time migration flag, the "why did this change"
+// snapshot cache) are device-local bookkeeping, not user data — blindly
+// restoring those from an old backup would be actively wrong (e.g.
+// resetting the "haven't backed up in a while" reminder, or replaying a
+// stale Safe to Spend comparison).
+const BACKED_UP_LOCAL_STORAGE_KEYS = [
+  'budget-tracker-settings', // budget cycle mode/day, dismissed recurring suggestions, nudge preference
+  'budget-tracker-cycle-overrides', // confirmed per-cycle payday corrections
+  'budget-tracker-merchant-rules', // learned + manually pinned category suggestions
+  'budget-tracker-dashboard-widgets', // hidden dashboard widgets
+  'budget-tracker-dashboard-widget-order' // dashboard widget ordering
+]
+
+function collectLocalSettings(): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const key of BACKED_UP_LOCAL_STORAGE_KEYS) {
+    const value = localStorage.getItem(key)
+    if (value !== null) result[key] = value
+  }
+  return result
+}
+
 export async function exportBackup(): Promise<string> {
   const db = await getDB()
   const categories = await db.getAll('categories')
   const transactions = await db.getAll('transactions')
   const recurring = await db.getAll('recurring')
   const shoppingLists = await db.getAll('shoppingLists')
-  return JSON.stringify({ formatVersion: 2, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists }, null, 2)
+  const localSettings = collectLocalSettings()
+  return JSON.stringify({ formatVersion: 3, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, localSettings }, null, 2)
 }
 
 export async function importBackup(json: string): Promise<{ categoriesCount: number; transactionsCount: number }> {
@@ -268,6 +338,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   let recurring: RecurringTransaction[] = []
   let shoppingLists: ShoppingList[] = []
   let merchantRulesToImport: { key: string; categoryId: string }[] = []
+  let localSettings: Record<string, string> = {}
 
   if (isNativeBackupFormat(parsed)) {
     const translated = translateNativeBackup(parsed)
@@ -282,6 +353,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
       transactions?: Transaction[]
       recurring?: RecurringTransaction[]
       shoppingLists?: ShoppingList[]
+      localSettings?: Record<string, string>
     }
     if (!Array.isArray(data.categories) || !Array.isArray(data.transactions)) {
       throw new Error('That doesn\u2019t look like a Budget Tracker backup file — missing categories or transactions.')
@@ -290,6 +362,10 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
     transactions = data.transactions
     recurring = data.recurring ?? []
     shoppingLists = data.shoppingLists ?? []
+    // Absent entirely in backups made before this existed — nothing to
+    // restore in that case, which is fine, current settings are simply
+    // left as they are rather than being cleared out.
+    localSettings = data.localSettings ?? {}
   }
 
   const db = await getDB()
@@ -358,6 +434,49 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
 
   for (const rule of merchantRulesToImport) {
     learnMerchant(rule.key, remapCategoryId(rule.categoryId))
+  }
+
+  // Only ever restores keys from the explicit allowlist above (enforced
+  // at export time, not here) — an old or hand-edited backup file can't
+  // smuggle in an arbitrary localStorage write through this path.
+  //
+  // Merchant rules need the same category-id remapping applied above —
+  // confirmed a real bug here: a rule's categoryId (and the keys of its
+  // per-category counts) point at whatever id the category had in the
+  // ORIGINAL export, which is frequently NOT the id that category ends
+  // up with after reconciliation-by-name against what's already local
+  // (e.g. every default category name already exists on a fresh
+  // install, so restoring is a rename onto existing ids, not a fresh
+  // write of the exported ones). Left unmapped, every restored rule
+  // pointed at a category id that no longer existed, showing as
+  // "Unknown category" and never actually suggesting anything.
+  for (const [key, value] of Object.entries(localSettings)) {
+    if (!BACKED_UP_LOCAL_STORAGE_KEYS.includes(key)) continue
+    if (key === 'budget-tracker-merchant-rules') {
+      try {
+        const remapCounts = (counts?: Record<string, number>) => {
+          if (!counts) return counts
+          const result: Record<string, number> = {}
+          for (const [catId, n] of Object.entries(counts)) {
+            const mapped = remapCategoryId(catId) ?? catId
+            result[mapped] = (result[mapped] ?? 0) + n // sum rather than overwrite, in case two original ids happen to remap onto the same target
+          }
+          return result
+        }
+        const rules = JSON.parse(value) as { key: string; categoryId: string; counts?: Record<string, number> }[]
+        const remapped = rules.map((r) => ({
+          ...r,
+          categoryId: remapCategoryId(r.categoryId) ?? r.categoryId,
+          counts: remapCounts(r.counts)
+        }))
+        localStorage.setItem(key, JSON.stringify(remapped))
+      } catch {
+        // Malformed value in the backup — skip this one key rather than
+        // failing the whole restore over it.
+      }
+    } else {
+      localStorage.setItem(key, value)
+    }
   }
 
   return { categoriesCount: categoriesToWrite.length, transactionsCount: transactionsToWrite.length }
@@ -461,14 +580,23 @@ export async function syncReimbursementCategoriesOnce(): Promise<number> {
 
 export function exportCSV(transactions: Transaction[], categories: Category[]): string {
   const catById = new Map(categories.map((c) => [c.id, c.name]))
-  const header = 'Date,Note,Category,Type,Amount,Tags\n'
+  const txById = new Map(transactions.map((t) => [t.id, t]))
+  const header = 'Date,Note,Category,Type,Amount,Tags,Reimburses\n'
   const rows = transactions.map((t) => {
-    const date = new Date(t.date).toISOString().slice(0, 10)
+    // Same UTC-shift issue documented elsewhere in this app:
+    // .toISOString() converts to UTC first, which silently shows the
+    // wrong (previous) calendar day for a positive-UTC-offset timezone
+    // like Australia's, for any transaction logged from early afternoon
+    // onward. localDateInputValue reads the LOCAL date/month/year
+    // directly instead.
+    const date = localDateInputValue(new Date(t.date))
     const note = `"${t.note.replace(/"/g, '""')}"`
     const category = catById.get(t.categoryId ?? '') ?? 'Uncategorized'
     const type = t.isExpense ? 'Expense' : 'Income'
     const tags = `"${(t.tags ?? []).join(', ').replace(/"/g, '""')}"`
-    return `${date},${note},${category},${type},${t.amount.toFixed(2)},${tags}`
+    const reimbursedExpense = t.reimbursesExpenseId ? txById.get(t.reimbursesExpenseId) : null
+    const reimburses = `"${(reimbursedExpense?.note ?? '').replace(/"/g, '""')}"`
+    return `${date},${note},${category},${type},${t.amount.toFixed(2)},${tags},${reimburses}`
   })
   return header + rows.join('\n')
 }

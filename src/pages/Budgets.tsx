@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { netSpentForCategory, effectiveBudget, formatCurrency } from '../calculations'
 import AnimatedProgressBar from '../components/AnimatedProgressBar'
@@ -10,11 +11,52 @@ interface Props {
 
 export default function Budgets({ categories, transactions, onOpenCategory }: Props) {
   const now = new Date()
-  const topLevel = categories.filter((c) => !c.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
+  const [sortMode, setSortMode] = useState<'default' | 'status'>('default')
+
+  const withStatus = categories
+    .filter((c) => !c.parentId)
+    .map((category) => {
+      const budget = effectiveBudget(category, categories)
+      const spent = Math.max(0, netSpentForCategory(category, categories, transactions, now))
+      return { category, budget, spent, remaining: budget - spent }
+    })
+
+  // "Status" order: over budget first (worst overage at the very top),
+  // then under budget (closest to the limit next), categories with no
+  // budget set at all pushed to the end — sorting by "remaining" alone
+  // would put those at a meaningless, arbitrary position since a $0
+  // budget and $0 spent both compute to remaining=0, indistinguishable
+  // from being exactly on budget.
+  const topLevel = sortMode === 'default'
+    ? withStatus.sort((a, b) => a.category.sortOrder - b.category.sortOrder).map((w) => w.category)
+    : withStatus
+        .sort((a, b) => {
+          if (a.budget <= 0 && b.budget <= 0) return a.category.sortOrder - b.category.sortOrder
+          if (a.budget <= 0) return 1
+          if (b.budget <= 0) return -1
+          return a.remaining - b.remaining
+        })
+        .map((w) => w.category)
 
   return (
     <div className="screen">
-      <h1 className="screen-title">Budgets</h1>
+      <div className="screen-header-row">
+        <h1 className="screen-title" style={{ margin: 0 }}>Budgets</h1>
+        <div style={{ display: 'flex', background: 'var(--surface-2)', borderRadius: 8, padding: 2 }}>
+          <button
+            onClick={() => setSortMode('default')}
+            style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6, fontWeight: sortMode === 'default' ? 600 : 400, background: sortMode === 'default' ? 'var(--surface)' : 'transparent' }}
+          >
+            Default
+          </button>
+          <button
+            onClick={() => setSortMode('status')}
+            style={{ fontSize: 12, padding: '5px 10px', borderRadius: 6, fontWeight: sortMode === 'status' ? 600 : 400, background: sortMode === 'status' ? 'var(--surface)' : 'transparent' }}
+          >
+            Over Budget First
+          </button>
+        </div>
+      </div>
 
       {topLevel.map((category) => {
         const budget = effectiveBudget(category, categories)

@@ -142,6 +142,15 @@ a {
   overscroll-behavior-y: contain;
 }
 
+/* Recurring/Shopping/Duplicates/Health also show a floating "‹ More"
+ * button (see App.tsx) whose top edge sits above the normal tab-bar
+ * clearance already baked into .screen's own padding — without this,
+ * the last row in a scrolled-to-the-bottom list sits directly behind
+ * that button instead of clearing it. */
+.screen:has(~ .floating-back-button) {
+  padding-bottom: calc(170px + env(safe-area-inset-bottom));
+}
+
 .card {
   background: var(--surface);
   border: 0.5px solid rgba(255, 255, 255, 0.06);
@@ -496,7 +505,7 @@ a {
   flex-shrink: 0;
 }
 .reorder-stepper button {
-  padding: 7px 12px;
+  padding: 13px 14px;
   font-size: 11px;
   line-height: 1;
   color: var(--blue);
