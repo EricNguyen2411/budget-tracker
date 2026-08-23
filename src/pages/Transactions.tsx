@@ -15,6 +15,7 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onChanged: () => void
+  onTransactionCreated?: (t: Transaction) => void
   initialSearch?: string
 }
 
@@ -30,7 +31,7 @@ function dayLabel(date: Date): string {
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: sameYear ? undefined : 'numeric' })
 }
 
-export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch }: Props) {
+export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated }: Props) {
   const [search, setSearch] = useState(initialSearch ?? '')
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
@@ -119,7 +120,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
         </div>
       </div>
 
-      <QuickAddBar categories={categories} onChanged={onChanged} />
+      <QuickAddBar categories={categories} onChanged={onChanged} onCreated={onTransactionCreated} />
 
       <input
         type="text"

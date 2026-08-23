@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { exportBackup, importBackup, exportCSV, recordManualBackup, daysSinceLastManualBackup } from '../db'
-import { getSettings, updateSettings, isCustomCycle, type CycleMode } from '../budgetPeriod'
+import { getSettings, updateSettings, isCustomCycle, getCycleOverrides, clearCycleOverride, type CycleMode } from '../budgetPeriod'
 import DashboardSettings from './DashboardSettings'
 
 function ordinal(n: number): string {
@@ -19,6 +19,7 @@ interface Props {
 export default function More({ categories, transactions, onCategoriesChanged, onNavigate }: Props) {
   const [status, setStatus] = useState<string | null>(null)
   const [settings, setSettings] = useState(getSettings())
+  const [overrides, setOverrides] = useState(getCycleOverrides())
   const [showDashboardSettings, setShowDashboardSettings] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -64,6 +65,21 @@ export default function More({ categories, transactions, onCategoriesChanged, on
       updateSettings({ budgetCycleMode: 'fixedDay', budgetCycleStartDay: settings.budgetCycleStartDay > 1 ? settings.budgetCycleStartDay : 28 })
     }
     setSettings(getSettings())
+  }
+
+  function handleClearOverride(bucketKey: string) {
+    clearCycleOverride(bucketKey)
+    setOverrides(getCycleOverrides())
+  }
+
+  function bucketKeyLabel(bucketKey: string): string {
+    const [y, m] = bucketKey.split('-').map(Number)
+    return new Date(y, m - 1, 1).toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
+  }
+
+  function dateLabel(iso: string): string {
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('en-AU', { day: 'numeric', month: 'long' })
   }
 
   async function handleImportFile(file: File) {
@@ -137,6 +153,25 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           <p className="hint" style={{ marginTop: 4, marginBottom: 12 }}>If "this month" should reset on payday instead of the 1st — Safe to Spend, budgets, and Insights all shift together.</p>
         </div>
       </div>
+
+      {isCustomCycle(settings) && overrides.length > 0 && (
+        <>
+          <span className="section-heading">Cycle Corrections</span>
+          <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
+            {overrides.map((o, i) => (
+              <div key={o.bucketKey} className="transaction-row" style={{ borderBottom: i < overrides.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>📌</div>
+                <div className="tx-info">
+                  <span className="tx-note">{bucketKeyLabel(o.bucketKey)}</span>
+                  <span className="tx-category">Cycle starts {dateLabel(o.actualStart)}</span>
+                </div>
+                <button onClick={() => handleClearOverride(o.bucketKey)} style={{ color: 'var(--red)', fontSize: 12 }}>Remove</button>
+              </div>
+            ))}
+          </div>
+          <p className="hint" style={{ marginTop: -8, marginBottom: 16 }}>Confirmed from a payslip that landed on a different date than predicted — each only affects its own cycle. Remove one to go back to the automatic prediction for that month.</p>
+        </>
+      )}
 
       {/* Tools — things you actively do or analyze */}
       <span className="section-heading">Tools</span>

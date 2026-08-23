@@ -5,7 +5,8 @@ import {
   getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce
 } from './db'
 import { processDueRecurring } from './recurring'
-import { getSettings } from './budgetPeriod'
+import { getSettings, isCustomCycle, getCycleConfig, predictedCycleFor, setCycleOverride } from './budgetPeriod'
+import { localDateInputValue } from './calculations'
 import { checkInAppNudge } from './notifications'
 import { useSwipeBack } from './useSwipeBack'
 import Dashboard from './pages/Dashboard'
@@ -50,6 +51,21 @@ export default function App() {
   const [statDetail, setStatDetail] = useState<StatKind | null>(null)
   const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string; categoryId?: string } | null>(null)
 
+  // "Did your pay actually land on a different day this cycle?" — the
+  // last-business-day (or fixed-day) rule is a PREDICTION, and real
+  // paydays sometimes shift (paid a day early for a bank holiday, an
+  // employer's own irregular schedule). Rather than requiring a perfect
+  // rule, a sizeable unlinked income entry whose date doesn't match the
+  // prediction gets offered as a one-off correction for THAT cycle
+  // specifically — see budgetPeriod.ts's override system. $500 and a
+  // 10-day window are deliberately conservative defaults: high enough
+  // to skip small refunds/gifts, tight enough to skip income that's
+  // obviously unrelated to payday timing (which would just be an
+  // unhelpful, confusing prompt) rather than a plausible payday shift.
+  const SALARY_LIKE_THRESHOLD = 5000
+  const MAX_CORRECTION_WINDOW_DAYS = 10
+  const [cyclePrompt, setCyclePrompt] = useState<{ bucketKey: string; txDateISO: string; txDateLabel: string; predictedLabel: string } | null>(null)
+
   useSwipeBack(
     () => setTab('more'),
     tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health'
@@ -87,9 +103,37 @@ export default function App() {
     if (existingId) {
       await saveTransaction({ ...data, id: existingId })
     } else {
-      await createTransaction(data)
+      const created = await createTransaction(data)
+      maybeOfferCycleCorrection(created)
     }
     await reload()
+  }
+
+  function maybeOfferCycleCorrection(t: Transaction) {
+    const settings = getSettings()
+    if (!isCustomCycle(settings)) return
+    if (t.isExpense || t.reimbursesExpenseId || t.amount < SALARY_LIKE_THRESHOLD) return
+
+    const txDate = new Date(t.date)
+    const txDateOnly = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate())
+    const { bucketKey, predictedStart } = predictedCycleFor(txDateOnly, getCycleConfig())
+    const predictedOnly = new Date(predictedStart.getFullYear(), predictedStart.getMonth(), predictedStart.getDate())
+    const diffDays = Math.round((txDateOnly.getTime() - predictedOnly.getTime()) / (24 * 60 * 60 * 1000))
+    if (diffDays === 0 || Math.abs(diffDays) > MAX_CORRECTION_WINDOW_DAYS) return
+
+    setCyclePrompt({
+      bucketKey,
+      txDateISO: localDateInputValue(txDateOnly),
+      txDateLabel: txDateOnly.toLocaleDateString('en-AU', { day: 'numeric', month: 'long' }),
+      predictedLabel: predictedOnly.toLocaleDateString('en-AU', { day: 'numeric', month: 'long' })
+    })
+  }
+
+  function confirmCycleCorrection() {
+    if (!cyclePrompt) return
+    setCycleOverride(cyclePrompt.bucketKey, cyclePrompt.txDateISO)
+    setCyclePrompt(null)
+    reload()
   }
 
   async function handleDeleteTransaction(id: string) {
@@ -148,7 +192,6 @@ export default function App() {
           onOpenMonthRecap={() => { setReturnTab('dashboard'); setTab('monthlyrecap') }}
           onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
           onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
-          onChanged={reload}
         />
       )}
       {tab === 'transactions' && (
@@ -159,6 +202,7 @@ export default function App() {
           onDelete={handleDeleteTransaction}
           onChanged={reload}
           initialSearch={pendingTransactionsSearch ?? undefined}
+          onTransactionCreated={maybeOfferCycleCorrection}
         />
       )}
       {tab === 'budgets' && <Budgets categories={categories} transactions={transactions} onOpenCategory={(id) => setCategoryDetailId(id)} />}
@@ -253,6 +297,33 @@ export default function App() {
           More
         </button>
       </nav>
+
+      {cyclePrompt && (
+        <div className="modal-backdrop" onClick={() => setCyclePrompt(null)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Adjust This Cycle?</span>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
+                This income landed on <strong>{cyclePrompt.txDateLabel}</strong>, not {cyclePrompt.predictedLabel} where your budget cycle currently expects it to start. Start this cycle from {cyclePrompt.txDateLabel} instead?
+              </p>
+              <p className="hint" style={{ marginBottom: 16 }}>
+                This only adjusts this one cycle — next cycle goes back to predicting automatically.
+              </p>
+              <button
+                onClick={confirmCycleCorrection}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, background: 'var(--blue)', color: '#fff', fontWeight: 600, marginBottom: 8 }}
+              >
+                Yes, start from {cyclePrompt.txDateLabel}
+              </button>
+              <button onClick={() => setCyclePrompt(null)} className="text-button" style={{ width: '100%', padding: '12px', textAlign: 'center' }}>
+                No, keep the prediction
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

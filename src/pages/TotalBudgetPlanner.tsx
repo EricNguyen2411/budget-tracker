@@ -5,6 +5,7 @@ import { formatCurrency, goalProgress, computeDashboardTotals } from '../calcula
 import { referenceDateOffsetBy } from '../budgetPeriod'
 import { saveCategory } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
+import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
@@ -21,6 +22,18 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   const [savingsTouched, setSavingsTouched] = useState(false)
   const [totalBudget, setTotalBudget] = useState('')
   const [totalBudgetTouched, setTotalBudgetTouched] = useState(false)
+  const [showIncomePicker, setShowIncomePicker] = useState(false)
+  const incomePickerClose = useModalClose(() => setShowIncomePicker(false))
+
+  // Reimbursements aren't salary — excluded the same way merchant
+  // learning and the cycle-correction prompt already exclude them, so
+  // "choose from your actual income" doesn't get cluttered with a
+  // friend paying back their share of dinner. Most recent first, since
+  // the payslip being looked for is almost always a recent one.
+  const incomeCandidates = useMemo(
+    () => transactions.filter((t) => !t.isExpense && !t.reimbursesExpenseId).sort((a, b) => b.date.localeCompare(a.date)),
+    [transactions]
+  )
 
   // A category with subcategories never gets its own editable box here
   // — see subsOf() below — so the only things that ever need an entry
@@ -114,6 +127,11 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
     return parseFloat(displayBudget(categoryId)) || 0
   }
 
+  // Rounding this to a whole dollar was the source of a real,
+  // confirmed bug: Total Allocated could end up a few cents short of
+  // the actual income entered above, purely from "Other" throwing away
+  // its own fractional remainder. Keeping the exact value here is what
+  // makes the two always reconcile precisely, cents included.
   const otherRemainder = useMemo(() => {
     if (!otherCategory) return 0
     const othersSum = topLevel
@@ -126,7 +144,7 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   // with the live-computed remainder instead of whatever's sitting in
   // the budgets map for it.
   function displayBudget(categoryId: string): string {
-    if (otherCategory && categoryId === otherCategory.id) return String(Math.round(otherRemainder))
+    if (otherCategory && categoryId === otherCategory.id) return formatBudgetInput(otherRemainder)
     return budgets.get(categoryId) ?? ''
   }
 
@@ -203,11 +221,16 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
           <span className="form-row-label">Total Monthly Income</span>
           <input
             type="number" inputMode="decimal"
-            placeholder={suggestedIncome > 0 ? suggestedIncome.toFixed(0) : '0.00'}
-            value={incomeTouched ? income : (suggestedIncome > 0 ? String(Math.round(suggestedIncome)) : '')}
+            placeholder={suggestedIncome > 0 ? formatBudgetInput(suggestedIncome) : '0.00'}
+            value={incomeTouched ? income : (suggestedIncome > 0 ? formatBudgetInput(suggestedIncome) : '')}
             onChange={(e) => { setIncome(e.target.value); setIncomeTouched(true) }}
           />
         </div>
+        {incomeCandidates.length > 0 && (
+          <button onClick={() => setShowIncomePicker(true)} style={{ fontSize: 12, color: 'var(--blue)', marginTop: 6 }}>
+            Choose from an actual income transaction
+          </button>
+        )}
         {suggestedIncome > 0 && (
           <p className="hint" style={{ marginTop: 10 }}>Pre-filled with what you actually earned last month ({formatCurrency(suggestedIncome)}) — change it to whatever you're expecting this month instead.</p>
         )}
@@ -216,8 +239,8 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
           <span className="form-row-label">Set Aside for Savings</span>
           <input
             type="number" inputMode="decimal"
-            placeholder={suggestedSavings > 0 ? suggestedSavings.toFixed(0) : '0.00'}
-            value={savingsTouched ? savings : (suggestedSavings > 0 ? String(Math.round(suggestedSavings)) : '')}
+            placeholder={suggestedSavings > 0 ? formatBudgetInput(suggestedSavings) : '0.00'}
+            value={savingsTouched ? savings : (suggestedSavings > 0 ? formatBudgetInput(suggestedSavings) : '')}
             onChange={(e) => { setSavings(e.target.value); setSavingsTouched(true) }}
           />
         </div>
@@ -238,8 +261,8 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
           <span className="form-row-label">Total Budget</span>
           <input
             type="number" inputMode="decimal"
-            placeholder={parsedIncome > 0 ? parsedIncome.toFixed(0) : '0.00'}
-            value={totalBudgetTouched ? totalBudget : (parsedIncome > 0 ? String(Math.round(parsedIncome)) : '')}
+            placeholder={parsedIncome > 0 ? formatBudgetInput(parsedIncome) : '0.00'}
+            value={totalBudgetTouched ? totalBudget : (parsedIncome > 0 ? formatBudgetInput(parsedIncome) : '')}
             onChange={(e) => { setTotalBudget(e.target.value); setTotalBudgetTouched(true) }}
           />
         </div>
@@ -318,10 +341,42 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
           {formatCurrency(totalAllocated)}{effectiveTotalBudget > 0 ? ` / ${formatCurrency(effectiveTotalBudget)}` : ''}
         </span>
       </div>
+
+      {showIncomePicker && (
+        <div className={`modal-backdrop${incomePickerClose.closing ? ' modal-closing' : ''}`} onClick={() => incomePickerClose.requestClose()}>
+          <div className={`modal-sheet${incomePickerClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Choose Income</span>
+              <button className="text-button" onClick={() => incomePickerClose.requestClose()}>Close</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>Pick a past income transaction to use its exact amount.</p>
+              {incomeCandidates.map((t) => (
+                <button
+                  key={t.id}
+                  className="picker-row"
+                  onClick={() => incomePickerClose.requestClose(() => { setIncome(formatBudgetInput(t.amount)); setIncomeTouched(true); setShowIncomePicker(false) })}
+                >
+                  <span>{t.note || 'Income'}</span>
+                  <span className="amount" style={{ fontSize: 13 }}>{formatCurrency(t.amount)} · {new Date(t.date).toLocaleDateString('en-AU')}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 function isLeaf(category: Category, allCategories: Category[]): boolean {
   return !allCategories.some((c) => c.parentId === category.id)
+}
+
+/** For pre-filling a budget input from a computed suggestion — keeps
+ * real cents (income and savings are rarely round numbers) instead of
+ * rounding them away, which previously meant the very first value shown
+ * in these boxes already didn't match your real income to the cent. */
+function formatBudgetInput(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2)
 }

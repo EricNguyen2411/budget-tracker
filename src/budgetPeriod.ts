@@ -69,18 +69,103 @@ function lastBusinessDayOfMonth(year: number, month: number): Date {
   return d
 }
 
-/** The calendar date the cycle boundary falls on for the given
- * (year, month), under the given config. For 'fixedDay', clamped to
- * that month's real last day — so a startDay of 31 means "the last day
- * of the month" for a 30-day month rather than silently rolling into
- * the next month, which is what native Date rollover would otherwise
- * do with `new Date(year, month, 31)` on a 30-day month. */
+/** The calendar date the RULE (unadjusted by any override) predicts for
+ * the cycle boundary in the given (year, month), under the given
+ * config. For 'fixedDay', clamped to that month's real last day — so a
+ * startDay of 31 means "the last day of the month" for a 30-day month
+ * rather than silently rolling into the next month, which is what
+ * native Date rollover would otherwise do with `new Date(year, month,
+ * 31)` on a 30-day month. */
 function cycleBoundaryDate(year: number, month: number, config: CycleConfig): Date {
   if (config.mode === 'lastBusinessDay') {
     return lastBusinessDayOfMonth(year, month)
   }
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   return new Date(year, month, Math.min(config.startDay, daysInMonth))
+}
+
+// ---------- Per-cycle overrides ----------
+//
+// The rule (fixed day, or last business day) is a PREDICTION — real
+// paydays sometimes land on a different date than predicted (paid a
+// day early for a bank holiday, an irregular employer schedule, etc).
+// Rather than requiring a new rule for every such quirk, a single
+// cycle's actual start can be confirmed/corrected directly (offered
+// when an income transaction's date doesn't match the prediction — see
+// App.tsx) and remembered here, without changing the rule itself or
+// any other cycle.
+//
+// Overrides are keyed by "bucket" (the YYYY-MM the RULE would have
+// used for that cycle) rather than by the resulting date, so the key
+// stays stable even after an override changes what date it points to.
+
+const OVERRIDES_KEY = 'budget-tracker-cycle-overrides'
+
+interface CycleOverride {
+  bucketKey: string // YYYY-MM, the rule's own (unoverridden) bucket label
+  actualStart: string // YYYY-MM-DD
+}
+
+function readOverrides(): CycleOverride[] {
+  try {
+    const raw = localStorage.getItem(OVERRIDES_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+function writeOverrides(list: CycleOverride[]) {
+  localStorage.setItem(OVERRIDES_KEY, JSON.stringify(list))
+}
+
+function bucketKeyFor(year: number, month: number): string {
+  // Routes through a real Date so a month outside 0-11 (from stepping
+  // -1 or +offset elsewhere in this file) normalizes to the correct
+  // adjacent year automatically, same as everywhere else in here.
+  const d = new Date(year, month, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function getCycleOverrides(): CycleOverride[] {
+  return readOverrides().sort((a, b) => b.bucketKey.localeCompare(a.bucketKey))
+}
+
+export function setCycleOverride(bucketKey: string, actualStart: string) {
+  writeOverrides([...readOverrides().filter((o) => o.bucketKey !== bucketKey), { bucketKey, actualStart }])
+}
+
+export function clearCycleOverride(bucketKey: string) {
+  writeOverrides(readOverrides().filter((o) => o.bucketKey !== bucketKey))
+}
+
+function parseLocalDateString(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+/** The actual resolved start of the given bucket — the confirmed
+ * override if one's been set for it, otherwise the rule's own
+ * prediction. This is the one place override-awareness lives; every
+ * period calculation below is built from this. */
+function resolveBucketStart(year: number, month: number, config: CycleConfig): Date {
+  const predicted = cycleBoundaryDate(year, month, config)
+  const override = readOverrides().find((o) => o.bucketKey === bucketKeyFor(year, month))
+  return override ? parseLocalDateString(override.actualStart) : predicted
+}
+
+/** Which (year, month) bucket referenceDate falls into, under the
+ * given config — i.e. whether it's on or after that bucket's resolved
+ * start but before the next bucket's. Shared by periodContaining and
+ * periodOffsetBy so both step through buckets exactly the same way. */
+function resolveBucketFor(referenceDate: Date, config: CycleConfig): { bucketYear: number; bucketMonth: number } {
+  const bucketYear = referenceDate.getFullYear()
+  let bucketMonth = referenceDate.getMonth()
+  const periodStart = resolveBucketStart(bucketYear, bucketMonth, config)
+  if (referenceDate < periodStart) {
+    bucketMonth -= 1
+  }
+  return { bucketYear, bucketMonth }
 }
 
 export interface Period {
@@ -101,12 +186,27 @@ export function periodContaining(referenceDate: Date, config: CycleConfig | numb
     return { start, end }
   }
 
-  let periodStart = cycleBoundaryDate(referenceDate.getFullYear(), referenceDate.getMonth(), resolved)
-  if (referenceDate < periodStart) {
-    periodStart = cycleBoundaryDate(referenceDate.getFullYear(), referenceDate.getMonth() - 1, resolved)
-  }
-  const periodEnd = cycleBoundaryDate(periodStart.getFullYear(), periodStart.getMonth() + 1, resolved)
-  return { start: periodStart, end: periodEnd }
+  const { bucketYear, bucketMonth } = resolveBucketFor(referenceDate, resolved)
+  const start = resolveBucketStart(bucketYear, bucketMonth, resolved)
+  const end = resolveBucketStart(bucketYear, bucketMonth + 1, resolved)
+  return { start, end }
+}
+
+/** The bucket key and rule prediction for a boundary in referenceDate's
+ * OWN calendar month — what to compare an actual date (like a payslip)
+ * against to decide whether it's meant to BE that boundary. Note this
+ * is deliberately NOT the same lookup as resolveBucketFor: that answers
+ * "which already-in-progress cycle is referenceDate currently inside"
+ * (backward-looking — Aug 15 belongs to the cycle that started in
+ * July), which would give the wrong bucket to correct here. A payslip
+ * dated Aug 28 is meant to correct AUGUST's boundary, not July's, even
+ * though Aug 28 itself would currently be classified as still "inside"
+ * July's ongoing cycle under the unoverridden rule. */
+export function predictedCycleFor(referenceDate: Date, config: CycleConfig | number = getCycleConfig()): { bucketKey: string; predictedStart: Date } {
+  const resolved: CycleConfig = typeof config === 'number' ? { mode: 'fixedDay', startDay: config } : config
+  const year = referenceDate.getFullYear()
+  const month = referenceDate.getMonth()
+  return { bucketKey: bucketKeyFor(year, month), predictedStart: cycleBoundaryDate(year, month, resolved) }
 }
 
 export function isInSamePeriod(date: Date, referenceDate: Date = new Date(), config: CycleConfig | number = getCycleConfig()): boolean {
@@ -116,14 +216,24 @@ export function isInSamePeriod(date: Date, referenceDate: Date = new Date(), con
 
 /** The period `offset` cycles before (negative) or after (positive) the one containing referenceDate. */
 export function periodOffsetBy(offset: number, referenceDate: Date = new Date(), config: CycleConfig | number = getCycleConfig()): Period {
-  const current = periodContaining(referenceDate, config)
-  // Stepping by calendar months off the current period's OWN start
-  // date (not a fixed day number) is what makes this correct for
-  // 'lastBusinessDay' too — cycleBoundaryDate inside periodContaining
-  // re-resolves the actual boundary for whichever month this lands in,
-  // rather than assuming the same day-of-month applies every month.
-  const shiftedRef = new Date(current.start.getFullYear(), current.start.getMonth() + offset, current.start.getDate())
-  return periodContaining(shiftedRef, config)
+  const resolved: CycleConfig = typeof config === 'number' ? { mode: 'fixedDay', startDay: config } : config
+
+  if (resolved.mode === 'fixedDay' && resolved.startDay <= 1) {
+    const base = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + offset, 1)
+    return periodContaining(base, resolved)
+  }
+
+  // Stepping the BUCKET coordinates by `offset` months (not the
+  // resolved start date itself) is what keeps this correct once
+  // overrides are in play — an override can land close to either edge
+  // of its rule-predicted month, and re-deriving a reference date from
+  // it risks miscounting which bucket that lands back in. Stepping the
+  // bucket directly sidesteps that entirely.
+  const { bucketYear, bucketMonth } = resolveBucketFor(referenceDate, resolved)
+  const targetMonth = bucketMonth + offset
+  const start = resolveBucketStart(bucketYear, targetMonth, resolved)
+  const end = resolveBucketStart(bucketYear, targetMonth + 1, resolved)
+  return { start, end }
 }
 
 export function referenceDateOffsetBy(offset: number, referenceDate: Date = new Date(), config: CycleConfig | number = getCycleConfig()): Date {

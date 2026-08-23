@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Category } from '../types'
+import type { Category, Transaction } from '../types'
 import { parseQuickAdd, type QuickAddResult } from '../quickAdd'
 import { learnMerchant } from '../merchantRules'
 import { createTransaction, deleteTransaction } from '../db'
@@ -8,9 +8,10 @@ import { formatCurrency } from '../calculations'
 interface Props {
   categories: Category[]
   onChanged: () => void
+  onCreated?: (t: Transaction) => void
 }
 
-export default function QuickAddBar({ categories, onChanged }: Props) {
+export default function QuickAddBar({ categories, onChanged, onCreated }: Props) {
   const [text, setText] = useState('')
   const [preview, setPreview] = useState<QuickAddResult | null>(null)
   const [confirmation, setConfirmation] = useState<{ id: string; summary: string } | null>(null)
@@ -40,6 +41,7 @@ export default function QuickAddBar({ categories, onChanged }: Props) {
       tags: parsed.tags
     })
     onChanged()
+    onCreated?.(created)
 
     const cat = parsed.categoryId ? categoryById.get(parsed.categoryId) : undefined
     const summary = `${parsed.isExpense ? '-' : '+'}${formatCurrency(parsed.amount)}` +
