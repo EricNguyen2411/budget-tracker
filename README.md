@@ -73,7 +73,7 @@ git init
 git add .
 git commit -m "budget tracker"
 git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
+git remote add origin https://github.com/EricNguyen2411/PawBook.git
 git push -u origin main
 ```
 First time using Git, a browser window may pop up asking you to sign into GitHub — approve it.
