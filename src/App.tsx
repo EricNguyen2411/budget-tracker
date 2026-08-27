@@ -192,6 +192,7 @@ export default function App() {
           onOpenMonthRecap={() => { setReturnTab('dashboard'); setTab('monthlyrecap') }}
           onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
           onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
+          onOpenRecurring={() => setTab('recurring')}
         />
       )}
       {tab === 'transactions' && (

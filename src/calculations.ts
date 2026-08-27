@@ -1,5 +1,6 @@
 import type { Category, Transaction, RecurringTransaction } from './types'
 import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetPeriod'
+import { normalizeMerchantKey } from './merchantRules'
 
 export function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1)
@@ -270,18 +271,38 @@ export interface MerchantTotal {
 }
 
 export function topMerchantsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
-  const thisMonth = transactions.filter((t) => {
-    if (!t.isExpense || !t.note.trim() || !isInSamePeriod(new Date(t.date), referenceDate)) return false
-    const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
-    return !cat?.isSavingsCategory
-  })
-  const map = new Map<string, number>()
+  const thisMonth = transactions
+    .filter((t) => {
+      if (!t.isExpense || !t.note.trim() || !isInSamePeriod(new Date(t.date), referenceDate)) return false
+      const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+      return !cat?.isSavingsCategory
+    })
+    .sort((a, b) => b.date.localeCompare(a.date)) // most recent first, so each group's representative label below is its latest note, not an arbitrary one
+
+  // Grouped by the same first-word "brand" heuristic merchant learning
+  // already uses (see merchantRules.ts) — confirmed a real gap without
+  // it: "WOOLWORTHS FAIRFIELD" and "WOOLWORTHS BURWOOD" have different
+  // suburb text, so grouping by the full normalized note (or the raw
+  // note, as before) shows them as two separate, smaller entries
+  // instead of one "Woolworths" total. Beem is excluded from this
+  // grouping specifically — its notes are the actual payment
+  // description ("food", "rent split"), not a merchant name, so
+  // collapsing every Beem-labeled transaction under one meaningless
+  // "Beem" bucket would be actively worse than keeping them separate.
+  const map = new Map<string, { amount: number; note: string }>()
+  let beemCounter = 0
   for (const t of thisMonth) {
-    const key = t.note.trim()
-    map.set(key, (map.get(key) ?? 0) + netAmount(t, transactions))
+    const normalized = normalizeMerchantKey(t.note)
+    const brandKey = normalized.split(' ')[0] || normalized || t.note.trim().toLowerCase()
+    const key = /beem/i.test(brandKey) ? `beem-${beemCounter++}` : brandKey
+    const existing = map.get(key)
+    if (existing) {
+      existing.amount += netAmount(t, transactions)
+    } else {
+      map.set(key, { amount: netAmount(t, transactions), note: t.note.trim() })
+    }
   }
-  return Array.from(map.entries())
-    .map(([note, amount]) => ({ note, amount }))
+  return Array.from(map.values())
     .sort((a, b) => b.amount - a.amount)
     .slice(0, limit)
 }

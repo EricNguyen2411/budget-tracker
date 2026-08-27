@@ -22,6 +22,7 @@ interface Props {
   onOpenMonthRecap: () => void
   onOpenCategoryBreakdown: () => void
   onOpenImport: (files: FileList) => void
+  onOpenRecurring: () => void
 }
 
 /** Compares the last two COMPLETE periods, deliberately excluding the
@@ -51,7 +52,7 @@ function trendSummary(periods: { periodStart: Date; amount: number }[], noun: st
   )
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring }: Props) {
   const now = new Date()
   const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
   const days = daysRemainingInMonth(now)
@@ -104,12 +105,42 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
     .sort((a, b) => b.spent / (b.budget || 1) - a.spent / (a.budget || 1))
     .slice(0, 5)
 
+  // Due within the next 14 days, soonest first — genuinely upcoming
+  // rather than already-overdue (Health Check is where overdue items
+  // get flagged, so this stays focused on "what's coming"). Compared at
+  // day granularity, not exact timestamp — confirmed a real bug here: a
+  // due date is conventionally stored at midnight, so comparing it
+  // directly against `now` (which has a real time-of-day) meant a bill
+  // due "today" silently dropped out of the list the moment any time
+  // had passed since midnight, even though "today" is exactly what this
+  // widget should be showing.
+  const UPCOMING_WINDOW_DAYS = 14
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const upcomingCutoff = new Date(todayStart.getTime() + UPCOMING_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+  const upcomingBills = recurring
+    .filter((r) => {
+      if (!r.isActive) return false
+      const due = new Date(r.nextDueDate)
+      const dueStart = new Date(due.getFullYear(), due.getMonth(), due.getDate())
+      return dueStart >= todayStart && dueStart <= upcomingCutoff
+    })
+    .sort((a, b) => a.nextDueDate.localeCompare(b.nextDueDate))
+    .slice(0, 5)
+
   const insights = useMemo(() => generateInsights(categories, transactions, now), [categories, transactions, now.toDateString()])
   const goalCategories = categories.filter((c) => !c.parentId && isGoal(c))
 
   const pieSlices = useMemo(() => categoryBreakdown(categories, transactions, now), [categories, transactions, now.toDateString()])
   const dailySpend = useMemo(() => last14DaysSpend(transactions, categories, now), [categories, transactions, now.toDateString()])
   const monthRecap = useMemo(() => buildMonthRecap(categories, transactions, now), [categories, transactions, now.toDateString()])
+  const needsWantsPct = useMemo(() => {
+    if (monthRecap.income <= 0) return { needs: 0, wants: 0, saved: 0 }
+    return {
+      needs: (monthRecap.needsSpent / monthRecap.income) * 100,
+      wants: (monthRecap.wantsSpent / monthRecap.income) * 100,
+      saved: (monthRecap.totalSaved / monthRecap.income) * 100
+    }
+  }, [monthRecap])
   // Confirmed a real bug: "day 1 of the previous calendar month" is NOT
   // always the same period as "the previous full budget cycle" once a
   // custom cycle start day is in play — e.g. with a 25th-of-the-month
@@ -366,6 +397,56 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
               {monthRecap.suggestions[0] && (
                 <p className="hint" style={{ margin: 0 }}>💡 {monthRecap.suggestions[0]}</p>
               )}
+            </button>
+          ),
+
+          needsWantsRatio: monthRecap.income > 0 && (needsWantsPct.needs + needsWantsPct.wants + needsWantsPct.saved > 0) && (
+            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenMonthRecap}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Needs vs Wants</span>
+                <span className="chevron">›</span>
+              </div>
+              <div style={{ display: 'flex', width: '100%', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--surface-2)' }}>
+                {needsWantsPct.needs > 0 && <div style={{ width: `${needsWantsPct.needs}%`, background: 'var(--blue)' }} />}
+                {needsWantsPct.wants > 0 && <div style={{ width: `${needsWantsPct.wants}%`, background: 'var(--purple)' }} />}
+                {needsWantsPct.saved > 0 && <div style={{ width: `${needsWantsPct.saved}%`, background: 'var(--indigo)' }} />}
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 10, fontSize: 12 }}>
+                <span><span style={{ color: 'var(--blue)' }}>●</span> Needs {Math.round(needsWantsPct.needs)}% <span style={{ color: 'var(--text-faint)' }}>(~50% guide)</span></span>
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 4, fontSize: 12 }}>
+                <span><span style={{ color: 'var(--purple)' }}>●</span> Wants {Math.round(needsWantsPct.wants)}% <span style={{ color: 'var(--text-faint)' }}>(~30% guide)</span></span>
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 4, fontSize: 12 }}>
+                <span><span style={{ color: 'var(--indigo)' }}>●</span> Saved {Math.round(needsWantsPct.saved)}% <span style={{ color: 'var(--text-faint)' }}>(~20% guide)</span></span>
+              </div>
+            </button>
+          ),
+
+          upcomingBills: upcomingBills.length > 0 && (
+            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenRecurring}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Upcoming Bills</span>
+                <span className="chevron">›</span>
+              </div>
+              {upcomingBills.map((r) => {
+                const cat = r.categoryId ? categories.find((c) => c.id === r.categoryId) : null
+                const due = new Date(r.nextDueDate)
+                const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate())
+                const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                const daysUntil = Math.round((dueDay.getTime() - nowDay.getTime()) / (24 * 60 * 60 * 1000))
+                const whenLabel = daysUntil === 0 ? 'Today' : daysUntil === 1 ? 'Tomorrow' : `in ${daysUntil} days`
+                return (
+                  <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                    <div className="tx-icon" style={{ width: 30, height: 30, background: (cat?.color ?? '#5C6167') + '33', flexShrink: 0 }}>{cat?.icon ?? '🔁'}</div>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{whenLabel}</div>
+                    </div>
+                    <span className="amount" style={{ fontSize: 13 }}>{formatCurrency(r.amount)}</span>
+                  </div>
+                )
+              })}
             </button>
           ),
 
