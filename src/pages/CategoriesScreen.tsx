@@ -11,6 +11,21 @@ interface Props {
   onChanged: () => void
 }
 
+function needWantBadge(c: Category) {
+  if (c.isSavingsCategory) return null
+  if (c.needWantType === 'need') {
+    return <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue)', marginLeft: 8, verticalAlign: 1 }}>Need</span>
+  }
+  if (c.needWantType === 'want') {
+    return <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--purple)', marginLeft: 8, verticalAlign: 1 }}>Want</span>
+  }
+  // Not set yet — a category created before this was required, or an
+  // old backup restored from before the field existed. Flagged rather
+  // than silently guessed here, since this list is exactly where
+  // someone would come to find and fix it.
+  return <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--amber)', marginLeft: 8, verticalAlign: 1 }}>⚠️ Not set</span>
+}
+
 export default function CategoriesScreen({ categories, onBack, onChanged }: Props) {
   useSwipeBack(onBack)
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null)
@@ -55,7 +70,7 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
                 <button className="transaction-row" style={{ padding: 0, flex: 1 }} onClick={() => setEditingCategory(c)}>
                   <div className="tx-icon" style={{ background: c.color + '33' }}>{c.icon}</div>
                   <div className="tx-info">
-                    <span className="tx-note">{c.name}</span>
+                    <span className="tx-note">{c.name}{needWantBadge(c)}</span>
                     {c.isSavingsCategory && <span className="tx-category">Savings</span>}
                     {overridden && (
                       <span className="tx-category" style={{ color: 'var(--amber)' }}>
@@ -70,7 +85,7 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
               {subs.map((s) => (
                 <button key={s.id} className="transaction-row" style={{ borderBottom: '1px solid var(--border)', paddingLeft: 34 }} onClick={() => setEditingCategory(s)}>
                   <div className="tx-icon" style={{ background: s.color + '33', width: 30, height: 30 }}>{s.icon}</div>
-                  <div className="tx-info"><span className="tx-note" style={{ fontSize: 14 }}>{s.name}</span></div>
+                  <div className="tx-info"><span className="tx-note" style={{ fontSize: 14 }}>{s.name}{needWantBadge(s)}</span></div>
                   <span className="amount" style={{ fontSize: 13, color: 'var(--text-dim)' }}>{formatCurrency(s.monthlyBudget)}</span>
                   <span className="chevron">›</span>
                 </button>
@@ -113,6 +128,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [goalRecurring, setGoalRecurring] = useState(category?.goalRecurring ?? false)
   const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
   const [needWantType, setNeedWantType] = useState<'need' | 'want' | null>(category?.needWantType ?? null)
+  const [needWantError, setNeedWantError] = useState(false)
   const [showDeleteOptions, setShowDeleteOptions] = useState(false)
   const { closing, requestClose } = useModalClose(onClose)
   const deleteOptionsClose = useModalClose(() => setShowDeleteOptions(false))
@@ -133,6 +149,16 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
 
   async function handleSave() {
     if (!name.trim()) return
+    // Every spending category (savings/investment categories are exempt
+    // — "need" or "want" doesn't really mean anything for money being
+    // set aside rather than spent) must have an explicit choice here.
+    // Enforced at save time rather than silently defaulting to
+    // something, since a wrong silent guess would quietly skew Month in
+    // Review's 50/30/20 numbers in a way that's hard to notice.
+    if (!isSavings && !needWantType) {
+      setNeedWantError(true)
+      return
+    }
     const data = {
       name: name.trim(),
       icon,
@@ -227,11 +253,14 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
           {!isSavings && (
             <>
               <label className="field-label">Need or Want</label>
-              <div className="segmented" style={{ marginBottom: 12 }}>
-                <button className={needWantType === 'need' ? 'segmented-active' : ''} onClick={() => setNeedWantType(needWantType === 'need' ? null : 'need')}>Need</button>
-                <button className={needWantType === 'want' ? 'segmented-active' : ''} onClick={() => setNeedWantType(needWantType === 'want' ? null : 'want')}>Want</button>
+              <div className="segmented" style={{ marginBottom: needWantError ? 4 : 12 }}>
+                <button className={needWantType === 'need' ? 'segmented-active' : ''} onClick={() => { setNeedWantType('need'); setNeedWantError(false) }}>Need</button>
+                <button className={needWantType === 'want' ? 'segmented-active' : ''} onClick={() => { setNeedWantType('want'); setNeedWantError(false) }}>Want</button>
               </div>
-              <p className="hint" style={{ marginTop: -8, marginBottom: 12 }}>Used by Month in Review to check spending against the 50/30/20 guideline. Leave unset to let it guess from the category name instead.</p>
+              {needWantError && (
+                <p className="hint hint-warning" style={{ marginTop: 0, marginBottom: 12 }}>Pick one before saving — every spending category needs a Need/Want setting now, so Month in Review's 50/30/20 split is never left guessing.</p>
+              )}
+              <p className="hint" style={{ marginTop: needWantError ? 0 : -8, marginBottom: 12 }}>Used by Month in Review to check spending against the 50/30/20 guideline.</p>
             </>
           )}
 

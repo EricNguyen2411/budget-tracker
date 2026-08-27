@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, excessForReimbursement, netSpentForCategory, effectiveBudget } from '../calculations'
+import { formatCurrency, netAmount, excessForReimbursement, effectiveBudget } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
+import { isSavingsOrChildOfSavings, directSpentForCategory } from '../monthlyRecap'
 import { useSwipeBack } from '../useSwipeBack'
 import TransactionEditor from '../components/TransactionEditor'
 
@@ -13,7 +14,7 @@ interface Props {
   referenceDate: Date
   categories: Category[]
   transactions: Transaction[]
-  classify: (c: Category) => 'need' | 'want' | 'unknown'
+  classify: (c: Category, allCategories?: Category[]) => 'need' | 'want' | 'unknown'
   onBack: () => void
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
@@ -35,9 +36,24 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
 
   if (bucket === 'needs' || bucket === 'wants') {
     const wanted = bucket === 'needs' ? 'need' : 'want'
+    // Every non-savings category's own DIRECT spend (not rolled up, and
+    // not restricted to "leaf" categories) — exactly matching how the
+    // headline Needs/Wants totals on the main Month in Review screen are
+    // computed. Confirmed directly this matters in two ways: a
+    // subcategory marked differently from its parent needs to count
+    // under its own classification rather than being silently absorbed
+    // into the parent's rolled-up total, AND a parent's own direct
+    // transactions (categorized straight to it, not any subcategory)
+    // need counting too — an earlier leaf-only version of this silently
+    // dropped those entirely.
     const rows = categories
-      .filter((c) => !c.parentId && !c.isSavingsCategory && classify(c) === wanted)
-      .map((c) => ({ category: c, spent: Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), budget: effectiveBudget(c, categories) }))
+      .filter((c) => !isSavingsOrChildOfSavings(c, categories) && classify(c, categories) === wanted)
+      .map((c) => ({
+        category: c,
+        parent: c.parentId ? categories.find((p) => p.id === c.parentId) : null,
+        spent: Math.max(0, directSpentForCategory(c, transactions, referenceDate)),
+        budget: effectiveBudget(c, categories)
+      }))
       .filter((r) => r.spent > 0)
       .sort((a, b) => b.spent - a.spent)
     const total = rows.reduce((s, r) => s + r.spent, 0)
@@ -60,7 +76,7 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
               <div className="tx-icon" style={{ background: r.category.color + '33' }}>{r.category.icon}</div>
               <div className="tx-info">
                 <span className="tx-note">{r.category.name}</span>
-                <span className="tx-category">{total > 0 ? Math.round((r.spent / total) * 100) : 0}% of {wanted}s</span>
+                <span className="tx-category">{r.parent ? `${r.parent.name} · ` : ''}{total > 0 ? Math.round((r.spent / total) * 100) : 0}% of {wanted}s</span>
               </div>
               <span className="amount">{formatCurrency(r.spent)}</span>
               <span className="chevron">›</span>

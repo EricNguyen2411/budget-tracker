@@ -72,5 +72,5 @@ export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [
   { name: 'Shopping', icon: '🛍️', color: '#64D2FF', monthlyBudget: 0, sortOrder: 6, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null, needWantType: 'want', goalRecurring: false },
   { name: 'Health', icon: '💊', color: '#4ECDC4', monthlyBudget: 0, sortOrder: 7, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null, needWantType: 'need', goalRecurring: false },
   { name: 'Savings', icon: '🐷', color: '#0A84FF', monthlyBudget: 0, sortOrder: 8, parentId: null, isSavingsCategory: true, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null, needWantType: null, goalRecurring: false },
-  { name: 'Other', icon: '📦', color: '#9AA0A6', monthlyBudget: 0, sortOrder: 9, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null, needWantType: null, goalRecurring: false }
+  { name: 'Other', icon: '📦', color: '#9AA0A6', monthlyBudget: 0, sortOrder: 9, parentId: null, isSavingsCategory: false, goalTargetAmount: 0, goalTargetDate: null, goalStartDate: null, needWantType: 'want', goalRecurring: false }
 ]

@@ -1,25 +1,69 @@
 import type { Category, Transaction } from './types'
 import {
   netSpentForCategory, effectiveBudget, computeDashboardTotals, formatCurrency,
-  goalProgress, goalProgressFraction, projectedGoalCompletionDate
+  goalProgress, goalProgressFraction, projectedGoalCompletionDate, netAmount, totalExcessReimbursement
 } from './calculations'
+import { isInSamePeriod } from './budgetPeriod'
 
 // Needs vs wants, per MoneySmart (ASIC)'s own categorization within the
 // 50/30/20 framework: housing, food, utilities, transport and essential
 // insurance are needs; dining out, entertainment, hobbies and
-// discretionary shopping are wants. Matched by keyword against whatever
-// the user has actually named their categories — a best-effort guess,
-// not a guarantee, since there's no explicit needs/wants flag on a
-// category yet.
+// discretionary shopping are wants. `needWantType` is now a required
+// field on every non-savings category (enforced in the category
+// editor), so the keyword guess below only ever matters for a category
+// that existed before that was required and hasn't been re-saved since.
 const NEED_KEYWORDS = ['rent', 'mortgage', 'housing', 'groceries', 'grocery', 'utilities', 'utility', 'transport', 'health', 'medical', 'insurance', 'bills', 'phone', 'internet']
 const WANT_KEYWORDS = ['dining', 'restaurant', 'entertainment', 'shopping', 'hobbies', 'hobby', 'subscriptions', 'games', 'travel', 'holiday', 'fun', 'leisure']
 
-export function classify(category: Category): 'need' | 'want' | 'unknown' {
+/** A category's own need/want classification — checked on the category
+ * ITSELF first (what actually matters, now that every spending category
+ * is required to have one set), then its parent's (covers a
+ * subcategory that predates the requirement and hasn't been individually
+ * set yet), then finally a keyword guess from the name as a last resort. */
+export function classify(category: Category, allCategories: Category[] = []): 'need' | 'want' | 'unknown' {
   if (category.needWantType) return category.needWantType
+  if (category.parentId) {
+    const parent = allCategories.find((c) => c.id === category.parentId)
+    if (parent?.needWantType) return parent.needWantType
+  }
   const name = category.name.toLowerCase()
   if (NEED_KEYWORDS.some((k) => name.includes(k))) return 'need'
   if (WANT_KEYWORDS.some((k) => name.includes(k))) return 'want'
   return 'unknown'
+}
+
+export function isLeaf(category: Category, allCategories: Category[]): boolean {
+  return !allCategories.some((c) => c.parentId === category.id)
+}
+
+/** True for a savings/investment category, or a subcategory of one —
+ * need/want doesn't mean anything for money being set aside rather than
+ * spent, so these are excluded from the 50/30/20 split entirely
+ * (matching how top-level savings categories were already excluded). */
+export function isSavingsOrChildOfSavings(category: Category, allCategories: Category[]): boolean {
+  if (category.isSavingsCategory) return true
+  if (!category.parentId) return false
+  const parent = allCategories.find((c) => c.id === category.parentId)
+  return parent?.isSavingsCategory ?? false
+}
+
+/** A category's OWN spend only — unlike netSpentForCategory, does NOT
+ * roll up subcategories. Needed because a parent category can have
+ * transactions categorized directly to IT (not any specific
+ * subcategory) alongside subcategories that have their own,
+ * potentially different, classification — confirmed directly: using
+ * netSpentForCategory (which rolls up) on only "leaf" categories was
+ * silently dropping a parent's own direct spend entirely, since a
+ * parent with children isn't a leaf. Summing this across EVERY
+ * category (leaf or not) exactly reconstructs total spend with no
+ * double-counting, since every transaction belongs to exactly one
+ * category. */
+export function directSpentForCategory(category: Category, transactions: Transaction[], referenceDate: Date): number {
+  const relevant = transactions.filter((t) => t.categoryId === category.id && isInSamePeriod(new Date(t.date), referenceDate))
+  const expenses = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
+  const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, transactions), 0)
+  const unlinkedIncome = relevant.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+  return expenses - excess - unlinkedIncome
 }
 
 export interface CategoryRecapRow {
@@ -68,12 +112,28 @@ export function buildMonthRecap(categories: Category[], transactions: Transactio
       icon: c.icon,
       spent: Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)),
       budget: effectiveBudget(c, categories),
-      classification: classify(c)
+      classification: classify(c, categories)
     }))
     .filter((r) => r.spent > 0 || r.budget > 0)
 
-  const needsSpent = categoryRows.filter((r) => r.classification === 'need').reduce((s, r) => s + r.spent, 0)
-  const wantsSpent = categoryRows.filter((r) => r.classification === 'want').reduce((s, r) => s + r.spent, 0)
+  // Computed separately from the display rows above, at the level of
+  // EACH category's own direct spend (not "leaf" categories, and not
+  // netSpentForCategory's rollup) — confirmed directly this matters: a
+  // parent with subcategories can also have transactions categorized
+  // straight to IT, and those need counting under the PARENT's own
+  // classification even while a differently-classified subcategory's
+  // spend counts separately under its own. Summing every category's own
+  // direct spend this way has no double-counting (each transaction
+  // belongs to exactly one category) and is what makes a subcategory's
+  // own Need/Want setting actually matter instead of being silently
+  // governed by its parent.
+  const classifiable = categories.filter((c) => !isSavingsOrChildOfSavings(c, categories))
+  const needsSpent = classifiable
+    .filter((c) => classify(c, categories) === 'need')
+    .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate)), 0)
+  const wantsSpent = classifiable
+    .filter((c) => classify(c, categories) === 'want')
+    .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate)), 0)
   // Unclassified categories aren't forced into either bucket — better to
   // leave the split honestly incomplete than silently miscategorize
   // spending into the wrong benchmark.
