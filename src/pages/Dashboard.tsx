@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, RecurringTransaction } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses } from '../calculations'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod } from '../calculations'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
 import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { generateInsights } from '../insights'
@@ -92,11 +92,15 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const netSpentSoFar = topLevelForBudget
     .filter((c) => !c.isSavingsCategory)
     .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
+  // A sub-breakdown of what's already folded into netSpentSoFar above,
+  // not a separate deduction — purely so "why is my net spend lower
+  // than what I actually paid for things" has a visible answer.
+  const fundedFromSavings = fundedFromSavingsThisPeriod(categories, transactions, now)
   // Prorated across the year rather than only counting what happens to
   // be due this exact month — an annual premium due in October still
   // needs a share set aside in March, otherwise it looks "free" for 11
   // months and blows the budget the one month it actually lands.
-  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring)
+  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring, transactions, now)
 
   const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const budgetRows = topLevel
@@ -129,6 +133,15 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
 
   const insights = useMemo(() => generateInsights(categories, transactions, now), [categories, transactions, now.toDateString()])
   const goalCategories = categories.filter((c) => !c.parentId && isGoal(c))
+  // A savings category with no target amount — an ongoing pool like
+  // "Travel Savings" rather than a goal with an end point — was
+  // completely invisible on the dashboard before this: isGoal() (and so
+  // the widget above) explicitly requires a target > 0. Confirmed via
+  // testing this leaves genuinely no way to see an open-ended balance
+  // anywhere on the dashboard, even though the balance itself was
+  // already being tracked correctly underneath (goalProgress works
+  // fine with or without a target).
+  const openEndedSavingsCategories = categories.filter((c) => !c.parentId && c.isSavingsCategory && c.goalTargetAmount <= 0 && goalProgress(c, transactions) > 0)
 
   const pieSlices = useMemo(() => categoryBreakdown(categories, transactions, now), [categories, transactions, now.toDateString()])
   const dailySpend = useMemo(() => last14DaysSpend(transactions, categories, now), [categories, transactions, now.toDateString()])
@@ -221,6 +234,14 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 <span style={{ fontSize: 14 }}>Net Spend So Far</span>
                 <span className="amount" style={{ color: 'var(--red)' }}>−{formatCurrency(netSpentSoFar)}</span>
               </div>
+              {fundedFromSavings > 0 && (
+                <div style={{ padding: '4px 0 10px', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-dim)', paddingLeft: 14 }}>↳ includes {formatCurrency(fundedFromSavings)} funded from savings</span>
+                  </div>
+                  <p className="hint" style={{ marginTop: 4, paddingLeft: 14 }}>Not new spending — money already set aside in an earlier period, so it doesn't reduce Safe to Spend a second time.</p>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                 <span style={{ fontSize: 14 }}>Savings & Investments This Month</span>
                 <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
@@ -303,7 +324,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
             </div>
           ),
 
-          goals: goalCategories.length > 0 && (
+          goals: (goalCategories.length > 0 || openEndedSavingsCategories.length > 0) && (
             <div className="card" style={{ marginTop: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 10px' }}>🎯 Savings Goals</span>
               {goalCategories.map((c) => {
@@ -323,6 +344,15 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                       <span className="amount">{formatCurrency(progress)} of {formatCurrency(c.goalTargetAmount)}</span>
                       {projected && <span>~{projected.toLocaleDateString('en-AU', { month: 'short', year: 'numeric' })}</span>}
                     </div>
+                  </button>
+                )
+              })}
+              {openEndedSavingsCategories.map((c) => {
+                const balance = goalProgress(c, transactions)
+                return (
+                  <button key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(c.id)}>
+                    <span style={{ fontSize: 13 }}>{c.icon} {c.name}</span>
+                    <span className="amount" style={{ fontSize: 15, fontWeight: 600 }}>{formatCurrency(balance)} saved</span>
                   </button>
                 )
               })}

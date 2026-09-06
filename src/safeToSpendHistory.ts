@@ -40,7 +40,7 @@ export function computeSnapshot(categories: Category[], transactions: Transactio
     periodKey: periodKeyFor(referenceDate),
     safeToSpend: totals.safeToSpend,
     totalBudget: totals.totalBudget,
-    recurringReserve: monthlyEquivalentRecurringExpenses(recurring),
+    recurringReserve: monthlyEquivalentRecurringExpenses(recurring, transactions, referenceDate),
     transactions: txMap
   }
 }

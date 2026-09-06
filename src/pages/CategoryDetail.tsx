@@ -70,10 +70,29 @@ export default function CategoryDetail({ category, allCategories, transactions, 
         </div>
       )}
 
+      {/* An open-ended savings category (no target amount, like an
+         ongoing "Travel Savings" pool rather than a goal with an end
+         point) still has a real running balance — confirmed via testing
+         this was previously shown nowhere at all, on this screen or the
+         dashboard, even though the underlying number (contributions
+         minus what's been drawn down, e.g. via Fund From Savings) was
+         already being tracked correctly. */}
+      {!goal && category.isSavingsCategory && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Total saved</span>
+            <span className="amount" style={{ fontSize: 24, fontWeight: 700 }}>{formatCurrency(goalProgress(category, transactions))}</span>
+          </div>
+          <p className="hint" style={{ marginTop: 6 }}>
+            Every contribution counted, minus anything already drawn down (e.g. funded to an expense) — this is what's actually available to use.
+          </p>
+        </div>
+      )}
+
       {!goal && budget > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-            <span>Spent this period</span>
+            <span>{category.isSavingsCategory ? 'Contributed this period' : 'Spent this period'}</span>
             <span className="amount" style={{ color: spent > budget ? 'var(--red)' : 'var(--text-dim)' }}>{formatCurrency(spent)} / {formatCurrency(budget)}</span>
           </div>
           <AnimatedProgressBar fraction={budget > 0 ? spent / budget : 0} color={spent > budget ? 'var(--red)' : category.color} />

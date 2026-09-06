@@ -87,7 +87,17 @@ export default function TransactionEditor({ transaction, categories, allTransact
   function handleSave() {
     const parsed = parseFloat(amount)
     if (isNaN(parsed) || parsed <= 0) return
-    learnMerchant(note.trim(), categoryId)
+    // Derived directly from the linked expense at save time, rather
+    // than relying solely on the effect above having already flushed
+    // into categoryId state by the moment Save is pressed — removes any
+    // dependency on effect timing, so this can't come out stale
+    // regardless of how quickly a reimbursement gets linked and saved.
+    let effectiveCategoryId = categoryId
+    if (!isExpense && reimbursesId && !effectiveCategoryId) {
+      const linkedExpense = allTransactions.find((t) => t.id === reimbursesId)
+      if (linkedExpense?.categoryId) effectiveCategoryId = linkedExpense.categoryId
+    }
+    learnMerchant(note.trim(), effectiveCategoryId)
     onSave({
       amount: parsed,
       note: note.trim(),
@@ -96,7 +106,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
         return new Date(y, m - 1, d).toISOString()
       })(),
       isExpense,
-      categoryId,
+      categoryId: effectiveCategoryId,
       reimbursesExpenseId: isExpense ? null : reimbursesId,
       tags: dedupeTags(tags)
     })
@@ -114,11 +124,16 @@ export default function TransactionEditor({ transaction, categories, allTransact
     if (!transaction) return
     const parsed = parseFloat(fundAmount)
     if (isNaN(parsed) || parsed <= 0) return
-    const savingsCat = categories.find((c) => c.id === savingsCategoryId)
+    // A short note referencing what's actually being paid for, not the
+    // savings category — the row's own subtitle already says "funded
+    // from X savings" once this is linked (see repaysNote), so echoing
+    // the same phrase again in the note itself just doubles up on the
+    // word "savings" ("Funded from Holidays" note + "funded from
+    // Holidays savings" subtitle read as "Holidays savings" twice).
     await createTransaction({
       amount: parsed,
-      note: `Funded from ${savingsCat?.name ?? 'savings'}`,
-      date: transaction.date,
+      note: transaction.note ? `Re: ${transaction.note}` : 'Savings withdrawal',
+      date: new Date().toISOString(),
       isExpense: false,
       categoryId: savingsCategoryId,
       reimbursesExpenseId: transaction.id,
