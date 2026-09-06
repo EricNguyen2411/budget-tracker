@@ -64,17 +64,41 @@ function resolvedDateForHeader(text: string): Date | null {
   return null
 }
 
-function isRowAnchorMarker(text: string): boolean {
+function isStrongRowAnchor(text: string): boolean {
   if (/card ending \d+/i.test(text)) return true
   if (/bal\s*\$\d{1,3}(,\d{3})*\.\d{2}/i.test(text)) return true
-  // Some rows (confirmed via testing — a cardless ATM withdrawal) show a
-  // transaction-type label instead of a running balance, with no "bal
-  // $X" line at all. Without recognizing these too, that row has no
-  // anchor to attach to and silently disappears, same failure mode as
-  // the "Yesterday" header bug found earlier.
+  return false
+}
+
+// Some rows (confirmed via testing — a cardless ATM withdrawal) show a
+// transaction-type label instead of a running balance, with no "bal $X"
+// line at all. Without recognizing these too, that row has no anchor to
+// attach to and silently disappears, same failure mode as the
+// "Yesterday" header bug found earlier. But confirmed via testing
+// against a real Westpac screenshot that these same words ("Transfers"
+// especially) also commonly appear as the bank's OWN category tag on a
+// row that ALREADY has a perfectly good "bal $X" anchor — treating them
+// as anchors unconditionally there creates a second, spurious anchor
+// for one real transaction, corrupting the parse (the transaction's own
+// content gets split across two "rows," and the tag-only one fails to
+// find an amount and gets reported as skipped even though nothing was
+// actually skipped). So these weaker markers only count as anchors when
+// nothing stronger was found ANYWHERE in the screenshot — a real
+// fallback, not a competing signal.
+function isWeakRowAnchor(text: string): boolean {
   if (/^(ATM\/EFTPOS|Online) Withdrawal$/i.test(text.trim())) return true
   if (/^Transfers?$/i.test(text.trim())) return true
   return false
+}
+
+// A bank's own auto-assigned category label ("Uncategorised",
+// "Transfers") shown on its own line — confirmed via testing this
+// appears as an isolated OCR line, contributing nothing but noise if
+// it ends up glued into a transaction's note text. Excluded from note
+// construction the same way a date header already is, rather than
+// trying to regex it back out of already-concatenated text later.
+function isBankCategoryTagLine(text: string): boolean {
+  return /^(Uncategorised|Uncategorized|Transfers?)$/i.test(text.trim())
 }
 
 // ---------- Format detection ----------
@@ -118,7 +142,7 @@ function isBeemActionLine(text: string): boolean {
 
 export function detectFormat(items: TextItem[]): DetectedFormat {
   const hasDateHeader = items.some((i) => isAnyDateHeader(i.text))
-  const hasRowAnchor = items.some((i) => isRowAnchorMarker(i.text))
+  const hasRowAnchor = items.some((i) => isStrongRowAnchor(i.text) || isWeakRowAnchor(i.text))
   if (hasDateHeader && hasRowAnchor) return 'appScreenshot'
 
   const hasPaymentSuccessful = items.some((i) => /payment\s+(success|received|sent)/i.test(i.text))
@@ -172,6 +196,13 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
 
   const dateHeaders: { y: number; date: Date | null }[] = []
   const rowAnchors: { index: number; y: number }[] = []
+  // Confirmed via testing against a real Westpac screenshot: "Transfers"
+  // (and similar) only gets treated as an anchor at all when nothing
+  // stronger exists anywhere in the screenshot — see isWeakRowAnchor.
+  const hasStrongAnchorAnywhere = merged.some((item) => isStrongRowAnchor(item.text.trim()))
+  function isRowAnchorMarker(text: string): boolean {
+    return isStrongRowAnchor(text) || (!hasStrongAnchorAnywhere && isWeakRowAnchor(text))
+  }
   merged.forEach((item, index) => {
     const text = item.text.trim()
     if (isAnyDateHeader(text)) dateHeaders.push({ y: item.box.y0, date: resolvedDateForHeader(text) })
@@ -197,6 +228,27 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
     })
   }
 
+  // Symmetric case at the other end: anything well below the LAST row
+  // anchor is bottom nav-bar chrome, not trailing transaction content.
+  // Needed once nearest-anchor assignment below switched to absolute
+  // distance (required to fix cross-row contamination) — without a
+  // floor here, chrome below the last anchor has nothing else to
+  // compete with and gets pulled onto that final transaction's note
+  // instead of being excluded outright, confirmed via direct testing.
+  // The margin (0.035 of image height) is picked from real
+  // measurements: comfortably above genuine trailing content on the
+  // last row (confirmed as close as 0.023 away in real testing) and
+  // below where nav chrome actually starts (confirmed no closer than
+  // 0.048 away in the same real screenshots).
+  if (rowAnchors.length > 0) {
+    const bottommostAnchorY = Math.max(...rowAnchors.map((a) => a.y))
+    merged.forEach((item, index) => {
+      const text = item.text.trim()
+      if (isAnyDateHeader(text) || isRowAnchorMarker(text)) return
+      if (item.box.y0 > bottommostAnchorY + 0.035) excludedIndices.add(index)
+    })
+  }
+
   // Exclude each header's own trailing running-total, found as the
   // plain-amount block whose Y is closest to that specific header.
   for (const header of dateHeaders) {
@@ -213,19 +265,29 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
     if (closestIndex !== null) excludedIndices.add(closestIndex)
   }
 
-  // Assign every remaining text block to its nearest row anchor (the
-  // closest anchor at or below it).
+  // Assign every remaining text block to its nearest row anchor —
+  // confirmed via testing against a real Westpac screenshot that
+  // "nearest at-or-below only" is wrong whenever a row's anchor (its
+  // "bal $X" line) isn't the LAST line of that row's content, which
+  // happens routinely once a description wraps to 3+ lines: the anchor
+  // ends up glued to the middle line, and anything below it (a trailing
+  // reference fragment, the bank's own category tag) has no anchor
+  // at-or-below IT specifically, so it was falling through to the NEXT
+  // transaction's anchor instead — contaminating that transaction's note
+  // with this one's leftovers. Absolute distance fixes this directly:
+  // content is always going to be closer to its OWN row's anchor than
+  // to a neighboring row's, regardless of which line within the row the
+  // anchor happens to sit on.
   const textByAnchor = new Map<number, string[]>()
   merged.forEach((item, index) => {
     const text = item.text.trim()
-    if (!text || isAnyDateHeader(text) || excludedIndices.has(index)) return
+    if (!text || isAnyDateHeader(text) || isBankCategoryTagLine(text) || excludedIndices.has(index)) return
     const isThisAnAnchor = rowAnchors.some((a) => a.index === index)
 
     let bestAnchor: number | null = null
     let bestDist = Infinity
     for (const anchor of rowAnchors) {
-      if (anchor.y < item.box.y0 - 0.005) continue // anchor must be at or below this text
-      const dist = anchor.y - item.box.y0
+      const dist = Math.abs(anchor.y - item.box.y0)
       if (dist < bestDist) { bestDist = dist; bestAnchor = anchor.index }
     }
     if (bestAnchor === null) return
@@ -257,14 +319,82 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
       continue
     }
 
-    let note = combinedText
-      .replace(/[+-]?\s?\$\s?\d{1,3}(?:,\d{3})*\.\d{2}/g, ' ')
+    const rawNoteSource = [...blockTexts, anchorText].join(' ')
+    let note = rawNoteSource
+      // The anchor's own line is included above — confirmed via testing
+      // that for Westpac specifically, that line routinely carries real
+      // description content alongside the "bal $X" marker itself (e.g.
+      // "1539251 TFR Westpac Lif bal $2,323.25"), which was being
+      // dropped entirely under the old assumption that an anchor line
+      // is nothing but its own marker. Amount parsing above deliberately
+      // still uses combinedText WITHOUT the anchor line, so this can't
+      // accidentally hand the running balance to parseSignedAmount as if
+      // it were the transaction's own amount.
+      //
+      // "bal $X" has to be stripped BEFORE the generic dollar-amount
+      // strip below, not after — confirmed via testing that the other
+      // order leaves a dangling, orphaned "bal" behind: once the plain
+      // amount pattern has already consumed the "$X" half, "bal $X" has
+      // nothing left to match against.
       .replace(/bal\s*\$\d{1,3}(,\d{3})*\.\d{2}/gi, ' ')
+      .replace(/[+-]?\s?\$\s?\d{1,3}(?:,\d{3})*\.\d{2}/g, ' ')
       .replace(/card ending \d+/gi, ' ')
       .replace(/[>›]/g, ' ') // trailing disclosure chevron, present on every row in some formats
+      // Confirmed via testing against a real Westpac screenshot: a
+      // transaction reference number right after the transaction type
+      // ("EFTPOS DEBIT 0355210", "WITHDRAWAL MOBILE 1539251") is pure
+      // internal noise, never a merchant name — stripped so it doesn't
+      // dominate the note ahead of whatever real description follows.
+      // The reference number isn't always immediately adjacent (an
+      // incoming EFTPOS credit's reference number confirmed to sometimes
+      // land on the anchor's own separate line instead) — the type
+      // phrase and a bare 6-8 digit reference number are each also
+      // stripped independently below to cover that case too.
+      .replace(/\b(EFTPOS|VISA)\s+(DEBIT|CREDIT)\s+\d+/gi, ' ')
+      .replace(/\bWITHDRAWAL\s+MOBILE\s+\d+/gi, ' ')
+      .replace(/\b(EFTPOS|VISA)\s+(DEBIT|CREDIT)\b/gi, ' ')
+      .replace(/\bWITHDRAWAL\s+MOBILE\b/gi, ' ')
+      .replace(/\b\d{6,8}\b/g, ' ')
+      // A Beem-originated bank transaction carries a long hex reference
+      // ID instead of any human-readable description ("Beem\Be\00358e
+      // 53a7f34f12a4519f65bd3") — confirmed real, not occasional, in
+      // testing. Collapsed to a single recognizable "Beem" token rather
+      // than left as unreadable noise.
+      .replace(/\bBeem\\?Be\\?[0-9a-f]{4,}\.{0,3}/gi, 'Beem')
+      // The same hex reference ID is sometimes wrapped across two OCR
+      // lines by the screen's own layout (confirmed via testing: "Beem
+      // \Be\00358e53a7f3" / "4f12a4519f65bd3" is one continuous hex
+      // string split in two) — the first half is caught by the Beem
+      // pattern above, but the second half has nothing marking it as
+      // reference noise once separated from the "Beem\Be\" prefix that
+      // identified the first half. A bare run of 8+ pure hex characters
+      // is a safe general signal on its own: vanishingly unlikely to be
+      // a real merchant name regardless of which bank or context it
+      // came from.
+      .replace(/\b[0-9a-f]{8,}\b/gi, ' ')
+      // A trailing DD/MM reference-date fragment, distinct from the
+      // transaction's own actual date (already captured separately from
+      // the date header above).
+      .replace(/\b\d{2}\/\d{2}\b/g, ' ')
+      // A small brand-logo icon sitting on the same line as the merchant
+      // name sometimes OCRs as a short run of symbol garbage ahead of
+      // the real name (confirmed via testing against a real NAB
+      // screenshot: "=) Spotify"). Only strips a PURELY non-alphanumeric
+      // leading token — deliberately not touching a leading short word
+      // like "A" or "Go", since those are indistinguishable from a
+      // legitimate merchant name that genuinely starts that way, and a
+      // wrong guess there would silently eat real text instead of
+      // leaving fixable noise.
+      .replace(/^[^\w\s]{1,3}\s+/, '')
       .replace(/\s+/g, ' ')
       .trim()
-    if (!note) note = 'Transaction'
+    // A note left with nothing but a stray digit or two (the leftover
+    // of an OCR-misread icon badge, confirmed via testing against a
+    // real Westpac screenshot — every row's "$" icon badge sometimes
+    // reads as a bare digit) is functionally as empty as a fully blank
+    // one for the user's purposes, so it gets the same fallback.
+    const isEffectivelyEmpty = !note || /^\d{1,2}$/.test(note)
+    if (isEffectivelyEmpty) note = /beem/i.test(rawNoteSource) ? 'Beem transfer' : 'Transaction'
 
     drafts.push({ amount: parsedAmount.amount, note, date, textIsExpense: parsedAmount.isExpense, balanceAfter: parseBalance(anchorText) })
   }

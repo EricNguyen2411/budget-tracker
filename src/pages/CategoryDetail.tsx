@@ -105,24 +105,43 @@ export default function CategoryDetail({ category, allCategories, transactions, 
       {sorted.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing logged {showAllTime ? '' : 'this period'} yet.</p>}
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {sorted.map((t, i) => (
-          <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
-            <div className="tx-info">
-              <span className="tx-note">{t.note || 'Uncategorized'}</span>
-              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions) && ` · ${repaysNote(t, transactions)}`}</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-              {reimbursementNote(t, transactions) && (
-                <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
-                  {formatCurrency(t.amount)}
-                </span>
+        {sorted.map((t, i) => {
+          // Only meaningful once this parent has subcategories at all —
+          // otherwise every transaction here trivially belongs to
+          // `category` itself and repeating its own icon on every row
+          // would just be noise. When it IS filed under a specific
+          // subcategory (not the parent directly), that subcategory's
+          // own icon and name are shown instead of the parent's, so a
+          // parent-level list actually says which bucket each row is in
+          // rather than just "somewhere under here."
+          const txCategory = t.categoryId ? allCategories.find((c) => c.id === t.categoryId) : null
+          const isUnderSubcategory = subcategories.length > 0 && txCategory && txCategory.id !== category.id
+          return (
+            <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
+              {subcategories.length > 0 && (
+                <div className="tx-icon" style={{ background: (txCategory ?? category).color + '33' }}>{(txCategory ?? category).icon}</div>
               )}
-              <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-                {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
-              </span>
-            </div>
-          </button>
-        ))}
+              <div className="tx-info">
+                <span className="tx-note">{t.note || 'Uncategorized'}</span>
+                <span className="tx-category">
+                  {new Date(t.date).toLocaleDateString('en-AU')}
+                  {isUnderSubcategory && ` · ${txCategory!.name}`}
+                  {repaysNote(t, transactions) && ` · ${repaysNote(t, transactions)}`}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+                {reimbursementNote(t, transactions) && (
+                  <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
+                    {formatCurrency(t.amount)}
+                  </span>
+                )}
+                <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+                  {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
+                </span>
+              </div>
+            </button>
+          )
+        })}
       </div>
 
       {editing && (
