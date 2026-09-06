@@ -98,7 +98,7 @@ export interface DashboardTotals {
  * since a category can hold several unrelated transactions and matching
  * on category alone could let some other purchase silently "cover" a
  * subscription it has nothing to do with. */
-function paidOccurrencesThisPeriod(item: RecurringTransaction, transactions: Transaction[], referenceDate: Date): number {
+export function paidOccurrencesThisPeriod(item: RecurringTransaction, transactions: Transaction[], referenceDate: Date): number {
   const itemKey = normalizeMerchantKey(item.note)
   if (!itemKey) return 0
   return transactions.filter((t) =>
@@ -106,6 +106,23 @@ function paidOccurrencesThisPeriod(item: RecurringTransaction, transactions: Tra
     isInSamePeriod(new Date(t.date), referenceDate) &&
     normalizeMerchantKey(t.note) === itemKey
   ).length
+}
+
+/** The other direction of the same match — given one real transaction,
+ * which active recurring item (if any) does it correspond to. Used to
+ * show a plain confirmation on the transaction itself that this exact
+ * charge is the one keeping its recurring item's reserve from double
+ * counting, rather than leaving that connection invisible and only
+ * checkable by reading the Safe to Spend math. */
+export function matchingRecurringItem(transaction: Transaction, recurring: RecurringTransaction[]): RecurringTransaction | null {
+  if (!transaction.note.trim()) return null
+  const txKey = normalizeMerchantKey(transaction.note)
+  if (!txKey) return null
+  return recurring.find((r) =>
+    r.isActive &&
+    r.isExpense === transaction.isExpense &&
+    normalizeMerchantKey(r.note) === txKey
+  ) ?? null
 }
 
 /** The monthly reserve set aside for recurring bills. Confirmed via

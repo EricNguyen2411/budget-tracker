@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import type { Category, Transaction } from '../types'
-import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed } from '../calculations'
+import type { Category, RecurringTransaction, Transaction } from '../types'
+import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed, matchingRecurringItem } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
 import { allTagsFrom, dedupeTags, normalizeTag } from '../tags'
 import { createTransaction, deleteTransaction } from '../db'
+import { frequencyLabel } from '../recurring'
 import { useModalClose } from '../useModalClose'
 
 interface Props {
@@ -14,9 +15,10 @@ interface Props {
   onDelete?: () => void
   onClose: () => void
   onChanged?: () => void
+  recurring?: RecurringTransaction[]
 }
 
-export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose, onChanged }: Props) {
+export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose, onChanged, recurring = [] }: Props) {
   const { closing, requestClose } = useModalClose(onClose)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
   const [showExpensePicker, setShowExpensePicker] = useState(false)
@@ -34,6 +36,10 @@ export default function TransactionEditor({ transaction, categories, allTransact
   const existingTags = allTagsFrom(allTransactions)
 
   const selectedCategory = categories.find((c) => c.id === categoryId)
+  // Confirms, directly on the transaction, that this exact charge is
+  // recognized as covering an active recurring item — added so that
+  // isn't something only checkable by reading the Safe to Spend math.
+  const matchedRecurring = isExpense && note.trim() ? matchingRecurringItem({ note, isExpense } as Transaction, recurring) : null
   const reimbursedExpense = allTransactions.find((t) => t.id === reimbursesId)
 
   // Funding an expense from savings is the SAME underlying mechanism as
@@ -188,6 +194,11 @@ export default function TransactionEditor({ transaction, categories, allTransact
               return recent.map((n) => <option key={n} value={n} />)
             })()}
           </datalist>
+          {matchedRecurring && (
+            <p className="hint" style={{ color: 'var(--green)', marginTop: -8, marginBottom: 12 }}>
+              ✓ Matches your "{matchedRecurring.note}" recurring ({frequencyLabel(matchedRecurring.frequency)}) — its reserve won't double-count this charge in Safe to Spend.
+            </p>
+          )}
 
           <label className="field-label">Date</label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />

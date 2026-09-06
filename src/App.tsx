@@ -225,6 +225,7 @@ export default function App() {
           onChanged={reload}
           initialSearch={pendingTransactionsSearch ?? undefined}
           onTransactionCreated={maybeOfferCycleCorrection}
+          recurring={recurring}
         />
       )}
       {tab === 'budgets' && <Budgets categories={categories} transactions={transactions} onOpenCategory={(id) => setCategoryDetailId(id)} />}

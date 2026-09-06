@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction } from '../types'
+import type { Category, RecurringTransaction, Transaction } from '../types'
 import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote, reimbursementsFor } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import { normalizeTag } from '../tags'
@@ -17,6 +17,7 @@ interface Props {
   onChanged: () => void
   onTransactionCreated?: (t: Transaction) => void
   initialSearch?: string
+  recurring?: RecurringTransaction[]
 }
 
 function dayLabel(date: Date): string {
@@ -31,7 +32,7 @@ function dayLabel(date: Date): string {
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: sameYear ? undefined : 'numeric' })
 }
 
-export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated }: Props) {
+export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated, recurring = [] }: Props) {
   const [search, setSearch] = useState(initialSearch ?? '')
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
@@ -247,6 +248,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           onDelete={editing ? () => { onDelete(editing.id); setEditing(null) } : undefined}
           onClose={() => { setEditing(null); setCreating(false) }}
           onChanged={onChanged}
+          recurring={recurring}
         />
       )}
 

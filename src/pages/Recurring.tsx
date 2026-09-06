@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Category, RecurringTransaction, RecurrenceFrequency, Transaction } from '../types'
 import { detectRecurring, frequencyLabel } from '../recurring'
-import { formatCurrency, localDateInputValue } from '../calculations'
+import { formatCurrency, localDateInputValue, paidOccurrencesThisPeriod } from '../calculations'
 import { getSettings, updateSettings } from '../budgetPeriod'
 import { createRecurring, saveRecurring, deleteRecurring } from '../db'
 import SwipeableRow from '../components/SwipeableRow'
@@ -94,18 +94,42 @@ export default function RecurringPage({ categories, transactions, recurring, onC
       {recurring.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>None yet — add rent, subscriptions, or a paycheck so you don't re-enter them every period.</p>}
       {recurring.map((item) => {
         const cat = item.categoryId ? catById.get(item.categoryId) : undefined
+        // Confirms, per item, exactly what the Safe to Spend math is
+        // doing with it this period — added directly in response to not
+        // being able to tell, from the number alone, whether a jump in
+        // Safe to Spend was the fix correctly recognizing an
+        // already-paid bill or something to be concerned about.
+        const paidCount = item.isActive ? paidOccurrencesThisPeriod(item, transactions, new Date()) : 0
+        const matchStatus = (() => {
+          if (!item.isActive) return null
+          if (item.frequency === 'yearly') return { text: 'Reserved monthly year-round, regardless of when it\u2019s actually due', color: 'var(--text-faint)' }
+          if (item.frequency === 'monthly') {
+            return paidCount > 0
+              ? { text: '✓ Matched to this month\u2019s charge — not reserved separately', color: 'var(--green)' }
+              : { text: 'No matching charge yet this period — still reserved', color: 'var(--text-faint)' }
+          }
+          // weekly
+          return paidCount > 0
+            ? { text: `✓ ${paidCount} matching charge${paidCount === 1 ? '' : 's'} found this period — reserve reduced accordingly`, color: 'var(--green)' }
+            : { text: 'No matching charges yet this period — fully reserved', color: 'var(--text-faint)' }
+        })()
         return (
           <SwipeableRow key={item.id} onDelete={() => remove(item.id)} borderRadius={16}>
-            <div className="card" style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '🔁'}</div>
-              <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setEditingItem(item)}>
-                <div style={{ fontSize: 14 }}>{item.note}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-                  {frequencyLabel(item.frequency)} · next {new Date(item.nextDueDate).toLocaleDateString('en-AU')}
-                </div>
-              </button>
-              <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(item.amount)}</span>
-              <input type="checkbox" switch checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
+            <div className="card" style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '🔁'}</div>
+                <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setEditingItem(item)}>
+                  <div style={{ fontSize: 14 }}>{item.note}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+                    {frequencyLabel(item.frequency)} · next {new Date(item.nextDueDate).toLocaleDateString('en-AU')}
+                  </div>
+                </button>
+                <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(item.amount)}</span>
+                <input type="checkbox" switch checked={item.isActive} onChange={() => toggleActive(item)} style={{ width: 18, height: 18 }} />
+              </div>
+              {matchStatus && (
+                <p style={{ fontSize: 11, color: matchStatus.color, margin: '2px 0 0 52px' }}>{matchStatus.text}</p>
+              )}
             </div>
           </SwipeableRow>
         )
