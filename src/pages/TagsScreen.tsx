@@ -150,14 +150,25 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
                 type="text"
                 value={renameInput}
                 onChange={(e) => setRenameInput(e.target.value)}
-                list="existing-tags-for-merge"
                 autoFocus
               />
-              <datalist id="existing-tags-for-merge">
-                {otherTags.map((t) => <option key={t} value={t} />)}
-              </datalist>
+              {otherTags.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                  {otherTags
+                    .filter((t) => !normalizeTag(renameInput) || t.includes(normalizeTag(renameInput)))
+                    .map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setRenameInput(t)}
+                        style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--text-dim)' }}
+                      >
+                        #{t}
+                      </button>
+                    ))}
+                </div>
+              )}
               <p className="hint" style={{ marginTop: 10 }}>
-                Renaming to a tag that already exists (like one from the list above) merges the two — every transaction tagged #{renaming} will be re-tagged, and any that already had both just keep one.
+                Renaming to a tag that already exists (tap one above, or type it) merges the two — every transaction tagged #{renaming} will be re-tagged, and any that already had both just keep one.
               </p>
             </div>
           </div>

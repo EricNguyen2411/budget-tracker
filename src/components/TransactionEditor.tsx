@@ -166,13 +166,37 @@ export default function TransactionEditor({ transaction, categories, allTransact
                 removeTag(tags[tags.length - 1])
               }
             }}
-            list="tag-suggestions"
           />
-          <datalist id="tag-suggestions">
-            {existingTags.filter((t) => !tags.includes(t)).map((t) => <option key={t} value={t} />)}
-          </datalist>
-          {tagInput.trim() && (
-            <button className="text-button" style={{ fontSize: 12, color: 'var(--blue)', marginTop: 4 }} onClick={() => addTag(tagInput)}>
+          {/* A visible, tappable chip list rather than the browser's
+             native <datalist> — confirmed that datalist's dropdown is
+             unreliable on mobile (iOS Safari in particular often
+             doesn't surface it usefully, if at all), which is exactly
+             why re-using an existing tag still meant retyping it by
+             hand. Filters live as you type, same matching a datalist
+             would have done, just actually visible and one tap. */}
+          {(() => {
+            const query = normalizeTag(tagInput)
+            const suggestions = existingTags
+              .filter((t) => !tags.includes(t))
+              .filter((t) => !query || t.includes(query))
+              .slice(0, 8)
+            if (suggestions.length === 0) return null
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {suggestions.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => addTag(t)}
+                    style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--text-dim)' }}
+                  >
+                    #{t}
+                  </button>
+                ))}
+              </div>
+            )
+          })()}
+          {tagInput.trim() && normalizeTag(tagInput) && !existingTags.includes(normalizeTag(tagInput)) && (
+            <button className="text-button" style={{ fontSize: 12, color: 'var(--blue)', marginTop: 8 }} onClick={() => addTag(tagInput)}>
               Add "{normalizeTag(tagInput)}"
             </button>
           )}

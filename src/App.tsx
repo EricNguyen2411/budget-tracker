@@ -29,6 +29,7 @@ import AutoBackups from './pages/AutoBackups'
 import CategoryBreakdownByMonth from './pages/CategoryBreakdownByMonth'
 import MonthlyRecapPage from './pages/MonthlyRecapPage'
 import TagsScreen from './pages/TagsScreen'
+import TagDetail from './pages/TagDetail'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
 type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags'
@@ -48,6 +49,7 @@ export default function App() {
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>([])
   const [loaded, setLoaded] = useState(false)
   const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
+  const [viewingTagDetail, setViewingTagDetail] = useState<string | null>(null)
   const [statDetail, setStatDetail] = useState<StatKind | null>(null)
   const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string; categoryId?: string } | null>(null)
 
@@ -144,7 +146,7 @@ export default function App() {
   if (!loaded) return null
 
   const categoryDetail = categoryDetailId ? categories.find((c) => c.id === categoryDetailId) : null
-  const anyOverlay = categoryDetail || statDetail || dateRangeNav
+  const anyOverlay = categoryDetail || statDetail || dateRangeNav || viewingTagDetail
 
   return (
     <div className="app-shell">
@@ -157,6 +159,21 @@ export default function App() {
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
           onOpenCategory={(c) => setCategoryDetailId(c.id)}
+        />
+      ) : viewingTagDetail ? (
+        <TagDetail
+          tag={viewingTagDetail}
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setViewingTagDetail(null)}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onViewInTransactions={() => {
+            const tag = viewingTagDetail
+            setViewingTagDetail(null)
+            setPendingTransactionsSearch(`#${tag}`)
+            setTab('transactions')
+          }}
         />
       ) : statDetail ? (
         <TypedTransactions
@@ -237,7 +254,7 @@ export default function App() {
           categories={categories}
           transactions={transactions}
           onBack={() => setTab(returnTab)}
-          onOpenTag={(tag) => { setPendingTransactionsSearch(`#${tag}`); setTab('transactions') }}
+          onOpenTag={(tag) => setViewingTagDetail(tag)}
           onChanged={reload}
         />
       )}
@@ -282,19 +299,19 @@ export default function App() {
       )}
 
       <nav className="tab-bar">
-        <button className={`tab-button ${tab === 'dashboard' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('dashboard') }}>
+        <button className={`tab-button ${tab === 'dashboard' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('dashboard') }}>
           <DashboardIcon active={tab === 'dashboard' && !anyOverlay} />
           Dashboard
         </button>
-        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setPendingTransactionsSearch(null); setTab('transactions') }}>
+        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setPendingTransactionsSearch(null); setTab('transactions') }}>
           <ListIcon active={tab === 'transactions' && !anyOverlay} />
           Transactions
         </button>
-        <button className={`tab-button ${tab === 'budgets' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('budgets') }}>
+        <button className={`tab-button ${tab === 'budgets' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('budgets') }}>
           <TargetIcon active={tab === 'budgets' && !anyOverlay} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setTab('more') }}>
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('more') }}>
           <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay} />
           More
         </button>
