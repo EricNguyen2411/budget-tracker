@@ -159,6 +159,7 @@ export default function App() {
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
           onOpenCategory={(c) => setCategoryDetailId(c.id)}
+          onChanged={reload}
         />
       ) : viewingTagDetail ? (
         <TagDetail
@@ -174,6 +175,7 @@ export default function App() {
             setPendingTransactionsSearch(`#${tag}`)
             setTab('transactions')
           }}
+          onChanged={reload}
         />
       ) : statDetail ? (
         <TypedTransactions
@@ -183,6 +185,7 @@ export default function App() {
           onBack={() => setStatDetail(null)}
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
+          onChanged={reload}
         />
       ) : dateRangeNav ? (
         <PeriodDetail
@@ -195,6 +198,7 @@ export default function App() {
           start={dateRangeNav.start}
           end={dateRangeNav.end}
           initialCategoryId={dateRangeNav.categoryId}
+          onChanged={reload}
         />
       ) : (
         <>
@@ -247,7 +251,7 @@ export default function App() {
           onBack={() => setTab('more')}
         />
       )}
-      {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} />}
+      {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'tags' && (
         <TagsScreen
@@ -287,6 +291,7 @@ export default function App() {
           onDeleteTransaction={handleDeleteTransaction}
           onOpenCategoryPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
           initialMonthOffset={returnTab === 'dashboard' ? 0 : -1}
+          onChanged={reload}
         />
       )}
 

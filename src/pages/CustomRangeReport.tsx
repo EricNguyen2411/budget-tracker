@@ -12,9 +12,10 @@ interface Props {
   onBack: () => void
   initialStart?: string
   initialEnd?: string
+  onChanged: () => void
 }
 
-export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd }: Props) {
+export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd, onChanged }: Props) {
   useSwipeBack(onBack)
   const now = new Date()
   const [start, setStart] = useState(initialStart ?? localDateInputValue(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
@@ -164,10 +165,10 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
           <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
             <div className="tx-info">
               <span className="tx-note">{t.note || 'Uncategorized'}</span>
-              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions) && ` · ${repaysNote(t, transactions)}`}</span>
+              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories) && ` · ${repaysNote(t, transactions, categories)}`}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-              {reimbursementNote(t, transactions) && (
+              {reimbursementNote(t, transactions, categories) && (
                 <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                   {formatCurrency(t.amount)}
                 </span>
@@ -188,6 +189,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
           onSave={(data) => { onSave(data, editing.id); setEditing(null) }}
           onDelete={() => setEditing(null)}
           onClose={() => setEditing(null)}
+          onChanged={onChanged}
         />
       )}
     </div>

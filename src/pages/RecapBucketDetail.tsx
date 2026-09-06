@@ -19,6 +19,7 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onOpenCategory: (categoryId: string, name: string) => void
+  onChanged: () => void
 }
 
 const BUCKET_TITLES: Record<RecapBucket, string> = {
@@ -28,7 +29,7 @@ const BUCKET_TITLES: Record<RecapBucket, string> = {
   saved: 'Saved'
 }
 
-export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, categories, transactions, classify, onBack, onSave, onDelete, onOpenCategory }: Props) {
+export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, categories, transactions, classify, onBack, onSave, onDelete, onOpenCategory, onChanged }: Props) {
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Transaction | null>(null)
 
@@ -143,6 +144,7 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
           onSave={(data) => { onSave(data, editing.id); setEditing(null) }}
           onDelete={() => { onDelete(editing.id); setEditing(null) }}
           onClose={() => setEditing(null)}
+          onChanged={onChanged}
         />
       )}
     </div>

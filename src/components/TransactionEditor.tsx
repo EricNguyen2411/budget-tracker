@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, localDateInputValue } from '../calculations'
+import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
 import { allTagsFrom, dedupeTags, normalizeTag } from '../tags'
+import { createTransaction, deleteTransaction } from '../db'
 import { useModalClose } from '../useModalClose'
 
 interface Props {
@@ -12,9 +13,10 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>) => void
   onDelete?: () => void
   onClose: () => void
+  onChanged?: () => void
 }
 
-export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose }: Props) {
+export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose, onChanged }: Props) {
   const { closing, requestClose } = useModalClose(onClose)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
   const [showExpensePicker, setShowExpensePicker] = useState(false)
@@ -33,6 +35,24 @@ export default function TransactionEditor({ transaction, categories, allTransact
 
   const selectedCategory = categories.find((c) => c.id === categoryId)
   const reimbursedExpense = allTransactions.find((t) => t.id === reimbursesId)
+
+  // Funding an expense from savings is the SAME underlying mechanism as
+  // a friend reimbursing you (an income transaction linked via
+  // reimbursesExpenseId) — just categorized under a savings category
+  // instead of "someone paid me back." Confirmed directly: this
+  // correctly keeps the expense out of that period's Safe to Spend
+  // (since it's money already set aside, not new spending) while
+  // correctly drawing down the savings category's own running balance,
+  // for both an open-ended category and one with a specific goal
+  // target. Only offered once the expense itself is already saved,
+  // since linking needs a real id on both sides.
+  const [showFundPicker, setShowFundPicker] = useState(false)
+  const fundPickerClose = useModalClose(() => setShowFundPicker(false))
+  const [fundAmount, setFundAmount] = useState('')
+  const fundingLinks = transaction ? allTransactions.filter((t) => t.reimbursesExpenseId === transaction.id) : []
+  const totalFunded = transaction ? totalReimbursed(transaction, allTransactions) : 0
+  const remainingToFund = transaction ? Math.max(0, transaction.amount - totalFunded) : 0
+  const savingsCategories = categories.filter((c) => !c.parentId && c.isSavingsCategory)
 
   // Auto-suggest a category from past learning as the note is typed —
   // only for a brand-new transaction with nothing picked yet, so it
@@ -89,6 +109,30 @@ export default function TransactionEditor({ transaction, categories, allTransact
       const target = new Date(date).getTime()
       return Math.abs(new Date(a.date).getTime() - target) - Math.abs(new Date(b.date).getTime() - target)
     })
+
+  async function fundFromSavings(savingsCategoryId: string) {
+    if (!transaction) return
+    const parsed = parseFloat(fundAmount)
+    if (isNaN(parsed) || parsed <= 0) return
+    const savingsCat = categories.find((c) => c.id === savingsCategoryId)
+    await createTransaction({
+      amount: parsed,
+      note: `Funded from ${savingsCat?.name ?? 'savings'}`,
+      date: transaction.date,
+      isExpense: false,
+      categoryId: savingsCategoryId,
+      reimbursesExpenseId: transaction.id,
+      tags: []
+    })
+    onChanged?.()
+    setShowFundPicker(false)
+    setFundAmount('')
+  }
+
+  async function removeFundingLink(id: string) {
+    await deleteTransaction(id)
+    onChanged?.()
+  }
 
   return (
     <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
@@ -201,6 +245,42 @@ export default function TransactionEditor({ transaction, categories, allTransact
             </button>
           )}
 
+          {isExpense && transaction && (
+            <>
+              <label className="field-label">Funded from Savings</label>
+              {fundingLinks.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+                  {fundingLinks.map((link) => {
+                    const cat = link.categoryId ? categories.find((c) => c.id === link.categoryId) : null
+                    return (
+                      <div key={link.id} className="picker-row" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{cat ? `${cat.icon} ${cat.name}` : 'Savings'}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span className="amount">{formatCurrency(link.amount)}</span>
+                          <button onClick={() => removeFundingLink(link.id)} aria-label="Remove funding link" style={{ color: 'var(--red)', fontSize: 14 }}>×</button>
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {remainingToFund > 0 && savingsCategories.some((c) => goalProgress(c, allTransactions) > 0) && (
+                <button className="text-button" style={{ fontSize: 13, color: 'var(--blue)' }} onClick={() => { setFundAmount(String(remainingToFund)); setShowFundPicker(true) }}>
+                  + Fund {fundingLinks.length > 0 ? `remaining ${formatCurrency(remainingToFund)}` : formatCurrency(remainingToFund)} from savings
+                </button>
+              )}
+              {remainingToFund > 0 && savingsCategories.length === 0 && (
+                <p className="hint">No savings categories set up yet — mark a category as Savings in More → Categories first.</p>
+              )}
+              {remainingToFund > 0 && savingsCategories.length > 0 && !savingsCategories.some((c) => goalProgress(c, allTransactions) > 0) && (
+                <p className="hint">You have savings categories, but none of them have a balance to draw from yet.</p>
+              )}
+              <p className="hint" style={{ marginTop: 6 }}>
+                For money you already set aside — this keeps it counted in your spending history without also counting against this period's Safe to Spend, since it isn't new money leaving your pocket.
+              </p>
+            </>
+          )}
+
           {!isExpense && (
             <>
               <label className="field-label">Reimburses</label>
@@ -208,10 +288,13 @@ export default function TransactionEditor({ transaction, categories, allTransact
                 <span>{reimbursedExpense ? (reimbursedExpense.note || 'Untitled') : 'None (optional)'}</span>
                 <span className="chevron">›</span>
               </button>
-              {selectedCategory?.isSavingsCategory && (
+              {selectedCategory?.isSavingsCategory && !reimbursesId && (
                 <p className="hint hint-warning">
-                  Income in a savings category won't count toward Saved — that tracks money moving out to savings, logged as Expense.
+                  Income in a savings category won't count toward Saved — that tracks money moving out to savings, logged as Expense. To fund a purchase FROM savings instead, add it on that expense's own edit screen — it'll set this up correctly.
                 </p>
+              )}
+              {selectedCategory?.isSavingsCategory && reimbursesId && (
+                <p className="hint">Draws down your {selectedCategory.name} balance by {amount ? formatCurrency(parseFloat(amount) || 0) : 'this amount'}.</p>
               )}
             </>
           )}
@@ -302,6 +385,55 @@ export default function TransactionEditor({ transaction, categories, allTransact
                     <span className="amount">{formatCurrency(e.amount)}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+      {showFundPicker && (() => {
+        const { closing: fundClosing, requestClose: requestFundClose } = fundPickerClose
+        return (
+          <div className={`modal-backdrop${fundClosing ? ' modal-closing' : ''}`} onClick={() => requestFundClose(() => setShowFundPicker(false))}>
+            <div className={`modal-sheet${fundClosing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <button onClick={() => requestFundClose(() => setShowFundPicker(false))} className="text-button">Cancel</button>
+                <span className="modal-title">Fund From Savings</span>
+                <span style={{ width: 60 }} />
+              </div>
+              <div className="modal-body">
+                <label className="field-label">Amount to draw</label>
+                <input
+                  type="number" inputMode="decimal" placeholder="0.00"
+                  value={fundAmount}
+                  onChange={(e) => setFundAmount(e.target.value)}
+                  className="amount-input"
+                  style={{ marginBottom: 16 }}
+                />
+                <p className="hint" style={{ marginTop: -10, marginBottom: 12 }}>Tap a category below to draw this amount from its balance.</p>
+                {(() => {
+                  // Sorted highest-balance-first (the ones actually
+                  // useful to draw from belong at the top), and a
+                  // zero-balance category is hidden entirely rather than
+                  // just shown — confirmed via testing that every fresh
+                  // install starts with a default "Savings" category
+                  // alongside whatever the user names their own, so
+                  // without this a genuinely $0 category would always
+                  // clutter this list even though tapping it to "fund"
+                  // something makes no real sense.
+                  const withBalance = savingsCategories
+                    .map((c) => ({ category: c, balance: goalProgress(c, allTransactions) }))
+                    .filter((s) => s.balance > 0)
+                    .sort((a, b) => b.balance - a.balance)
+                  if (withBalance.length === 0) {
+                    return <p className="hint">None of your savings categories have a balance to draw from yet.</p>
+                  }
+                  return withBalance.map(({ category: c, balance }) => (
+                    <button key={c.id} className="picker-row" onClick={() => fundFromSavings(c.id)}>
+                      <span>{c.icon} {c.name}</span>
+                      <span className="amount" style={{ fontSize: 13, color: 'var(--text-dim)' }}>{formatCurrency(balance)} available</span>
+                    </button>
+                  ))
+                })()}
               </div>
             </div>
           </div>

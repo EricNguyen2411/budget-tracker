@@ -147,6 +147,7 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
             if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
           }}
           onClose={() => setEditing(null)}
+          onChanged={onCategoriesChanged}
         />
       )}
     </div>

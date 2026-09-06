@@ -15,6 +15,7 @@ interface Props {
   onBack: () => void
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
+  onChanged: () => void
 }
 
 const TITLES: Record<StatKind, string> = {
@@ -24,7 +25,7 @@ const TITLES: Record<StatKind, string> = {
   saved: 'Saved'
 }
 
-export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete }: Props) {
+export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete, onChanged }: Props) {
   useSwipeBack(onBack)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
@@ -92,10 +93,10 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
               <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
               <div className="tx-info">
                 <span className="tx-note">{t.note || cat?.name || 'Uncategorized'}</span>
-                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions) && ` · ${repaysNote(t, transactions)}`}</span>
+                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories) && ` · ${repaysNote(t, transactions, categories)}`}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                {reimbursementNote(t, transactions) && (
+                {reimbursementNote(t, transactions, categories) && (
                   <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                     {formatCurrency(t.amount)}
                   </span>
@@ -117,6 +118,7 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
           onSave={(data) => { onSave(data, editing.id); setEditing(null) }}
           onDelete={() => { onDelete(editing.id); setEditing(null) }}
           onClose={() => setEditing(null)}
+          onChanged={onChanged}
         />
       )}
     </div>

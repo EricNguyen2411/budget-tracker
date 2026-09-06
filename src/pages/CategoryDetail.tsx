@@ -15,9 +15,10 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onOpenCategory: (category: Category) => void
+  onChanged: () => void
 }
 
-export default function CategoryDetail({ category, allCategories, transactions, onBack, onSave, onDelete, onOpenCategory }: Props) {
+export default function CategoryDetail({ category, allCategories, transactions, onBack, onSave, onDelete, onOpenCategory, onChanged }: Props) {
   useSwipeBack(onBack)
   const [showAllTime, setShowAllTime] = useState(false)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
@@ -126,11 +127,11 @@ export default function CategoryDetail({ category, allCategories, transactions, 
                 <span className="tx-category">
                   {new Date(t.date).toLocaleDateString('en-AU')}
                   {isUnderSubcategory && ` · ${txCategory!.name}`}
-                  {repaysNote(t, transactions) && ` · ${repaysNote(t, transactions)}`}
+                  {repaysNote(t, transactions, allCategories) && ` · ${repaysNote(t, transactions, allCategories)}`}
                 </span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                {reimbursementNote(t, transactions) && (
+                {reimbursementNote(t, transactions, allCategories) && (
                   <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                     {formatCurrency(t.amount)}
                   </span>
@@ -152,6 +153,7 @@ export default function CategoryDetail({ category, allCategories, transactions, 
           onSave={(data) => { onSave(data, editing.id); setEditing(null) }}
           onDelete={() => { onDelete(editing.id); setEditing(null) }}
           onClose={() => setEditing(null)}
+          onChanged={onChanged}
         />
       )}
     </div>

@@ -14,9 +14,10 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onViewInTransactions: () => void
+  onChanged: () => void
 }
 
-export default function TagDetail({ tag, categories, transactions, onBack, onSave, onDelete, onViewInTransactions }: Props) {
+export default function TagDetail({ tag, categories, transactions, onBack, onSave, onDelete, onViewInTransactions, onChanged }: Props) {
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Transaction | null>(null)
   const normalized = normalizeTag(tag)
@@ -66,6 +67,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
         onSave={(data) => { onSave(data, editing.id); setEditing(null) }}
         onDelete={() => { onDelete(editing.id); setEditing(null) }}
         onClose={() => setEditing(null)}
+        onChanged={onChanged}
       />
     )
   }

@@ -154,9 +154,9 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
             {group.transactions.map((t, i) => {
               const category = t.categoryId ? categoryById.get(t.categoryId) : undefined
               const amount = netAmount(t, transactions)
-              const reimbursedNote = reimbursementNote(t, transactions)
+              const reimbursedNote = reimbursementNote(t, transactions, categories)
               const excessNote = excessIncomeNote(t, transactions)
-              const repayNote = repaysNote(t, transactions)
+              const repayNote = repaysNote(t, transactions, categories)
               const reimbursementCount = t.isExpense ? reimbursementsFor(t, transactions).length : 0
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
@@ -246,6 +246,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           }}
           onDelete={editing ? () => { onDelete(editing.id); setEditing(null) } : undefined}
           onClose={() => { setEditing(null); setCreating(false) }}
+          onChanged={onChanged}
         />
       )}
 

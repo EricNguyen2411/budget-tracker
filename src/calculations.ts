@@ -307,10 +307,17 @@ export function topMerchantsThisMonth(transactions: Transaction[], categories: C
     .slice(0, limit)
 }
 
-export function repaysNote(transaction: Transaction, all: Transaction[]): string | null {
+export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = []): string | null {
   if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
   if (!expense) return null
+  // Distinguishes "I funded this from my own savings" from "someone
+  // else paid me back" — same underlying mechanism (an income
+  // transaction linked to the expense it covers), but conceptually
+  // different, and worth being explicit about rather than describing
+  // both the same way just because they share one field.
+  const ownCategory = transaction.categoryId ? categories.find((c) => c.id === transaction.categoryId) : null
+  if (ownCategory?.isSavingsCategory) return `funded from ${ownCategory.name} savings`
   return `repays ${expense.note || 'transaction'}`
 }
 
@@ -340,11 +347,24 @@ export function excessIncomeNote(transaction: Transaction, all: Transaction[]): 
   return excess > 0 ? `${formatCurrency(excess)} extra, counted as income` : null
 }
 
-export function reimbursementNote(transaction: Transaction, all: Transaction[]): string | null {
+export function reimbursementNote(transaction: Transaction, all: Transaction[], categories: Category[] = []): string | null {
   if (!transaction.isExpense) return null
   const reimbursed = totalReimbursed(transaction, all)
   if (reimbursed <= 0) return null
-  return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed`
+  // Same distinction as repaysNote, from the expense's side this time —
+  // if every linked transaction covering this expense was funded from a
+  // savings category (not necessarily the same one, though that's the
+  // common case), say so plainly rather than the generic "reimbursed"
+  // wording, which reads as if a friend paid it back. A genuinely mixed
+  // source (part savings, part an actual friend) falls back to the
+  // neutral wording rather than guessing which framing fits better.
+  const linkedTransactions = all.filter((t) => t.reimbursesExpenseId === transaction.id)
+  const allFromSavings = linkedTransactions.length > 0 && linkedTransactions.every((t) => {
+    const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+    return cat?.isSavingsCategory ?? false
+  })
+  const verb = allFromSavings ? 'funded from savings' : 'reimbursed'
+  return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} ${verb}`
 }
 
 export function isGoal(category: Category): boolean {
