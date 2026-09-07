@@ -92,7 +92,14 @@ export function runHealthCheck(
   const incomeInSavings = transactions.filter((t) => {
     if (t.isExpense || !t.categoryId) return false
     const cat = categories.find((c) => c.id === t.categoryId)
-    return cat?.isSavingsCategory === true
+    // A reimbursement-linked income transaction here is a deliberate
+    // "Fund from Savings" withdrawal (see TransactionEditor), not a
+    // mistake — confirmed this would otherwise get flagged by this very
+    // check and told to "switch to Expense," which is wrong advice that
+    // would break a correctly-set-up funding link. Only an UNLINKED
+    // income transaction sitting in a savings category is the real
+    // pattern this warning exists to catch.
+    return cat?.isSavingsCategory === true && !t.reimbursesExpenseId
   })
   if (incomeInSavings.length > 0) {
     findings.push({

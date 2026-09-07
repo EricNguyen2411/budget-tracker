@@ -115,6 +115,14 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {tagged.map((t, i) => {
           const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+          const net = netAmount(t, transactions)
+          // A tag total should still show what a trip or event actually
+          // cost, even for a transaction fully paid down by savings —
+          // net is correctly $0.00 for Safe to Spend purposes, but that
+          // alone hides the real amount from a screen that's meant to
+          // answer "how much did this cost," so the original amount is
+          // shown alongside whenever the two differ.
+          const wasReduced = t.isExpense && net !== t.amount
           return (
             <button key={t.id} className="transaction-row" style={{ borderBottom: i < tagged.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
               <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
@@ -122,9 +130,14 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
                 <span className="tx-note">{t.note || 'Uncategorized'}</span>
                 <span className="tx-category">{formatDate(t.date)}{cat ? ` · ${cat.name}` : ''}</span>
               </div>
-              <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-                {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+                  {t.isExpense ? '-' : '+'}{formatCurrency(net)}
+                </span>
+                {wasReduced && (
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>(was {formatCurrency(t.amount)})</span>
+                )}
+              </div>
             </button>
           )
         })}

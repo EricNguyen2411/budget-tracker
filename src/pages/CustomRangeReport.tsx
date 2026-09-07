@@ -65,23 +65,44 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
     })
   }, [transactions, start, end])
 
-  const totalSpent = rangeTransactions.filter((t) => t.isExpense).reduce((s, t) => s + netAmount(t, transactions), 0)
+  const categoryTotals = useMemo(() => {
+    const map = new Map<string, number>()
+    // Every relevant transaction, not just expenses — confirmed via
+    // direct testing this matters: an unlinked refund (plain income,
+    // not a reimbursement link) recorded under a category needs to
+    // offset that category's total here the same way it already does
+    // for the Dashboard's own Spent figure, or a category with a large
+    // same-period refund could show a bigger total here than it
+    // actually cost net — and, worse, disagree with the Dashboard stat
+    // whenever this report's range happens to exactly match the
+    // current period (the "This Pay Cycle" preset below sets up exactly
+    // that case). A reimbursement-linked income transaction is
+    // deliberately NOT subtracted again here — its effect is already
+    // folded into the linked expense's own netAmount, so treating it as
+    // a second, separate offset would double count it.
+    for (const t of rangeTransactions.filter((t) => t.categoryId)) {
+      const delta = t.isExpense ? netAmount(t, transactions) : (t.reimbursesExpenseId ? 0 : -t.amount)
+      map.set(t.categoryId!, (map.get(t.categoryId!) ?? 0) + delta)
+    }
+    return Array.from(map.entries())
+      .map(([id, amount]) => ({ category: categories.find((c) => c.id === id), amount: Math.max(0, amount) }))
+      .filter((x) => x.category && x.amount > 0)
+      .sort((a, b) => b.amount - a.amount)
+  }, [rangeTransactions, transactions, categories])
+
+  // Derived from the same per-category breakdown above, rather than
+  // summed independently from the raw transaction list — guarantees
+  // this can't drift from what the category rows below add up to, and
+  // (since each category is floored at zero before summing, exactly
+  // like the Dashboard's own Spent calculation) matches that stat
+  // exactly whenever this report's range lines up with the current
+  // period.
+  const totalSpent = categoryTotals.reduce((s, x) => s + x.amount, 0)
   const unlinkedIncome = rangeTransactions.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((s, t) => s + t.amount, 0)
   const excessFromLinked = rangeTransactions
     .filter((t) => !t.isExpense && t.reimbursesExpenseId)
     .reduce((s, t) => s + excessForReimbursement(t, transactions), 0)
   const totalIncome = unlinkedIncome + excessFromLinked
-
-  const categoryTotals = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const t of rangeTransactions.filter((t) => t.isExpense && t.categoryId)) {
-      map.set(t.categoryId!, (map.get(t.categoryId!) ?? 0) + netAmount(t, transactions))
-    }
-    return Array.from(map.entries())
-      .map(([id, amount]) => ({ category: categories.find((c) => c.id === id), amount }))
-      .filter((x) => x.category)
-      .sort((a, b) => b.amount - a.amount)
-  }, [rangeTransactions])
 
   const displayedTransactions = categoryFilter
     ? rangeTransactions.filter((t) => t.categoryId === categoryFilter)
