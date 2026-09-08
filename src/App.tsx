@@ -214,6 +214,7 @@ export default function App() {
           onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
           onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
           onOpenRecurring={() => setTab('recurring')}
+          onOpenTags={() => { setReturnTab('dashboard'); setTab('tags') }}
         />
       )}
       {tab === 'transactions' && (

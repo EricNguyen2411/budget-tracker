@@ -195,8 +195,24 @@ export async function saveTransaction(transaction: Transaction) {
   await db.put('transactions', transaction)
 }
 
+/** Deleting a transaction that other transactions are linked to via
+ * reimbursesExpenseId (a friend's repayment, or a Fund From Savings
+ * withdrawal) would otherwise leave those links pointing at nothing —
+ * confirmed directly this makes the linked amount vanish from every
+ * dashboard total entirely, not just stop being "reimbursed": an
+ * orphaned link is neither unlinked income (it still has
+ * reimbursesExpenseId set) nor a valid reimbursement (the expense it
+ * points to no longer exists), so it contributes zero to Income AND
+ * zero to Reimbursed — real money that's still sitting in the database
+ * just disappears from view. Clearing the stale link is the safe
+ * choice: it keeps the transaction and its dollar value, correctly
+ * re-counting it as ordinary unlinked income instead of losing it. */
 export async function deleteTransaction(id: string) {
   const db = await getDB()
+  const orphaned = (await db.getAll('transactions')).filter((t) => t.reimbursesExpenseId === id)
+  for (const t of orphaned) {
+    await db.put('transactions', { ...t, reimbursesExpenseId: null })
+  }
   await db.delete('transactions', id)
 }
 

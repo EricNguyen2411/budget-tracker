@@ -76,12 +76,12 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
     <div className="screen">
       <div className="screen-header-row">
         <button onClick={onBack} className="text-button">‹ Back</button>
-        <h1 className="screen-title" style={{ fontSize: 20 }}>#{normalized}</h1>
+        <h1 className="screen-title" style={{ fontSize: 20 }}>🏷️ {normalized}</h1>
         <button onClick={onViewInTransactions} className="text-button" style={{ fontSize: 13 }}>List</button>
       </div>
 
       <div className="card hero-card" style={{ marginBottom: 16 }}>
-        <span className="hero-label">Spent on #{normalized}</span>
+        <span className="hero-label">Spent on "{normalized}"</span>
         <span className="hero-amount amount" style={{ fontSize: 32 }}>{formatCurrency(expenseTotal)}</span>
         {incomeTotal > 0 && (
           <span style={{ fontSize: 13, color: 'var(--green)' }}>+{formatCurrency(incomeTotal)} income also tagged here</span>

@@ -103,7 +103,7 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
             <button className="transaction-row" style={{ padding: 0, flex: 1 }} onClick={() => onOpenTag(s.tag)}>
               <div className="tx-icon" style={{ background: '#9B7EDE33' }}>🏷️</div>
               <div className="tx-info">
-                <span className="tx-note">#{s.tag}</span>
+                <span className="tx-note">{s.tag}</span>
                 <span className="tx-category">{s.count} transaction{s.count === 1 ? '' : 's'}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -111,7 +111,7 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
                 {s.incomeTotal > 0 && <span className="amount" style={{ fontSize: 12, color: 'var(--green)' }}>+{formatCurrency(s.incomeTotal)}</span>}
               </div>
             </button>
-            <button onClick={() => setActionsFor(s.tag)} style={{ padding: '0 4px 0 12px', fontSize: 18, color: 'var(--text-dim)' }} aria-label={`Actions for #${s.tag}`}>
+            <button onClick={() => setActionsFor(s.tag)} style={{ padding: '0 4px 0 12px', fontSize: 18, color: 'var(--text-dim)' }} aria-label={`Actions for tag ${s.tag}`}>
               ⋯
             </button>
           </div>
@@ -122,7 +122,7 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
         <div className={`modal-backdrop${actionsClose.closing ? ' modal-closing' : ''}`} onClick={() => actionsClose.requestClose()}>
           <div className={`modal-sheet${actionsClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">#{actionsFor}</span>
+              <span className="modal-title">🏷️ {actionsFor}</span>
               <button className="text-button" onClick={() => actionsClose.requestClose()}>Close</button>
             </div>
             <div className="modal-body">
@@ -142,7 +142,7 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
           <div className={`modal-sheet${renameClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <button className="text-button" onClick={() => renameClose.requestClose()}>Cancel</button>
-              <span className="modal-title">Rename #{renaming}</span>
+              <span className="modal-title">Rename "{renaming}"</span>
               <button className="text-button text-button-primary" onClick={confirmRename}>Save</button>
             </div>
             <div className="modal-body">
@@ -162,13 +162,13 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
                         onClick={() => setRenameInput(t)}
                         style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--text-dim)' }}
                       >
-                        #{t}
+                        {t}
                       </button>
                     ))}
                 </div>
               )}
               <p className="hint" style={{ marginTop: 10 }}>
-                Renaming to a tag that already exists (tap one above, or type it) merges the two — every transaction tagged #{renaming} will be re-tagged, and any that already had both just keep one.
+                Renaming to a tag that already exists (tap one above, or type it) merges the two — every transaction tagged "{renaming}" will be re-tagged, and any that already had both just keep one.
               </p>
             </div>
           </div>
@@ -179,14 +179,14 @@ export default function TagsScreen({ transactions, onBack, onOpenTag, onChanged 
         <div className={`modal-backdrop${confirmDeleteClose.closing ? ' modal-closing' : ''}`} onClick={() => confirmDeleteClose.requestClose()}>
           <div className={`modal-sheet${confirmDeleteClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <span className="modal-title">Delete #{confirmingDelete}?</span>
+              <span className="modal-title">Delete "{confirmingDelete}"?</span>
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 14, marginBottom: 16 }}>
                 Removes this tag from every transaction that has it. The transactions themselves — amounts, notes, categories — aren't touched, only the tag.
               </p>
               <button onClick={confirmDelete} style={{ width: '100%', padding: '12px', borderRadius: 10, background: 'var(--red)', color: '#fff', fontWeight: 600, marginBottom: 8 }}>
-                Delete #{confirmingDelete}
+                Delete "{confirmingDelete}"
               </button>
               <button onClick={() => confirmDeleteClose.requestClose()} className="text-button" style={{ width: '100%', padding: '12px', textAlign: 'center' }}>
                 Cancel

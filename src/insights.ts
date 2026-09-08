@@ -20,17 +20,28 @@ function categoryComparisons(categories: Category[], transactions: Transaction[]
     const change = (thisPeriod - lastPeriod) / lastPeriod
     if (Math.abs(change) < 0.15) continue
 
+    // Same fragile-baseline problem confirmed and fixed on the
+    // dashboard's own trend widgets: a small last-period amount (a
+    // category with just one or two transactions in it) turns a
+    // perfectly ordinary dollar swing into an absurd, alarming-looking
+    // percentage like "9900%". Below a small baseline, the dollar
+    // change alone is both more accurate and more readable — the
+    // percentage doesn't add information, just noise.
     const pct = Math.round(Math.abs(change) * 100)
+    const useDollarPhrasing = lastPeriod < 50 || pct > 300
+    const amountPhrase = useDollarPhrasing
+      ? `by ${formatCurrency(Math.abs(thisPeriod - lastPeriod))}`
+      : `${pct}%`
     if (change > 0) {
       results.push({
         icon: '📈',
-        text: `${category.name} is up ${pct}% from last period (${formatCurrency(lastPeriod)} → ${formatCurrency(thisPeriod)}).`,
+        text: `${category.name} is up ${amountPhrase} from last period (${formatCurrency(lastPeriod)} → ${formatCurrency(thisPeriod)}).`,
         sentiment: 'warning'
       })
     } else {
       results.push({
         icon: '📉',
-        text: `${category.name} is down ${pct}% from last period (${formatCurrency(lastPeriod)} → ${formatCurrency(thisPeriod)}).`,
+        text: `${category.name} is down ${amountPhrase} from last period (${formatCurrency(lastPeriod)} → ${formatCurrency(thisPeriod)}).`,
         sentiment: 'positive'
       })
     }

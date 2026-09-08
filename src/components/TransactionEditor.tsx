@@ -217,7 +217,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
                   key={t}
                   style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--purple)' }}
                 >
-                  #{t}
+                  {t}
                   <button onClick={() => removeTag(t)} aria-label={`Remove tag ${t}`} style={{ fontSize: 14, lineHeight: 1, color: 'var(--text-dim)' }}>×</button>
                 </span>
               ))}
@@ -259,7 +259,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
                     onClick={() => addTag(t)}
                     style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--text-dim)' }}
                   >
-                    #{t}
+                    {t}
                   </button>
                 ))}
               </div>

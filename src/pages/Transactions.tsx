@@ -192,7 +192,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                               onClick={(e) => { e.stopPropagation(); setSearch(`#${tag}`) }}
                               style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--purple)' }}
                             >
-                              #{tag}
+                              {tag}
                             </span>
                           ))}
                         </div>

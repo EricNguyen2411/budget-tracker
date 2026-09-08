@@ -3,6 +3,7 @@ import { findDuplicates } from './duplicates'
 import { goalProgress, projectedGoalCompletionDate, netSpentForCategory } from './calculations'
 import { detectRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
+import { normalizeMerchantKey } from './merchantRules'
 
 export interface HealthFinding {
   icon: string
@@ -61,18 +62,38 @@ export function runHealthCheck(
     }
   }
 
-  const transitKeywords = ['opal', 'transportfornsw', 'transport for nsw', 'tfnsw']
+  // Transport NSW (and Opal generally) authorizes contactless fares as
+  // a small placeholder hold — confirmed via real NAB screenshots
+  // earlier as an exact "Transport NSW (Contactless) -$1.00" line,
+  // repeated across multiple days — then finalizes the REAL fare
+  // separately once the trip is calculated, sometimes hours later,
+  // sometimes the next day. Banks don't reliably update the original
+  // transaction in place, so a small entry that's still sitting there
+  // after a couple of days is very likely showing the placeholder
+  // amount, not what actually got charged.
+  //
+  // Confirmed directly that the keyword list here never actually
+  // matched that real format: "transport for nsw" requires the word
+  // "for", which the real note doesn't have ("Transport NSW", no
+  // "for") — so this check could never fire for the single most common
+  // real-world case it exists to catch. Added the exact real pattern
+  // rather than assuming the near-miss keywords already covered it.
+  const transitKeywords = ['opal', 'transport nsw', 'transportfornsw', 'transport for nsw', 'tfnsw']
   const stalePendingFares = transactions.filter((t) => {
     if (!t.isExpense || t.amount > 2.0) return false
     const lower = t.note.toLowerCase()
     if (!transitKeywords.some((k) => lower.includes(k))) return false
-    return referenceDate.getTime() - new Date(t.date).getTime() > 7 * 24 * 60 * 60 * 1000
+    // Tightened from 7 days: Opal fares confirmed to typically finalize
+    // within a day or two, not a week — 7 days left this sitting
+    // unflagged for most of a week after the real fare had almost
+    // certainly already posted.
+    return referenceDate.getTime() - new Date(t.date).getTime() > 2 * 24 * 60 * 60 * 1000
   })
   if (stalePendingFares.length > 0) {
     findings.push({
       icon: '🚊',
       title: `${stalePendingFares.length} old pending transit fare${stalePendingFares.length === 1 ? '' : 's'}`,
-      detail: 'Still showing a small placeholder amount from over a week ago — may need a manual update to the real fare.',
+      detail: 'Still showing a small placeholder amount from a couple of days ago or more — check your bank app for the real fare and update these.',
       severity: 'info',
       transactions: stalePendingFares
     })
@@ -84,6 +105,34 @@ export function runHealthCheck(
       icon: '🔁',
       title: `${staleRecurring.length} recurring item${staleRecurring.length === 1 ? '' : 's'} overdue by 45+ days`,
       detail: 'Still marked active, but the due date is well in the past. Check Recurring to confirm these are still happening.',
+      severity: 'warning',
+      transactions: []
+    })
+  }
+
+  // Two active recurring items with the same merchant name only matters
+  // because of how matching actually works: matchingRecurringItem picks
+  // the FIRST one found for any given real transaction, so a genuine
+  // duplicate (the same subscription accidentally added twice) means
+  // the second one can never be matched to anything — it just reserves
+  // its full amount every period, forever, with no way for a real
+  // charge to ever satisfy it. Surfaced here since nothing else would
+  // ever explain why one subscription's reserve never clears.
+  const recurringKeyGroups = new Map<string, RecurringTransaction[]>()
+  for (const r of recurring) {
+    if (!r.isActive) continue
+    const key = `${r.isExpense}:${normalizeMerchantKey(r.note)}`
+    if (!key || key === 'true:' || key === 'false:') continue
+    if (!recurringKeyGroups.has(key)) recurringKeyGroups.set(key, [])
+    recurringKeyGroups.get(key)!.push(r)
+  }
+  const duplicateRecurringNames = Array.from(recurringKeyGroups.values()).filter((group) => group.length > 1)
+  if (duplicateRecurringNames.length > 0) {
+    const names = duplicateRecurringNames.map((g) => g[0].note).join(', ')
+    findings.push({
+      icon: '👥',
+      title: `${duplicateRecurringNames.length} recurring item${duplicateRecurringNames.length === 1 ? '' : 's'} listed more than once`,
+      detail: `${names} — each has more than one active recurring entry with the same name. Only one can ever be matched to a real charge, so the other reserves its full amount every period without a way to clear. Worth checking whether one is a leftover duplicate.`,
       severity: 'warning',
       transactions: []
     })

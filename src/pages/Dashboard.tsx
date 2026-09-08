@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, RecurringTransaction } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod } from '../calculations'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements } from '../calculations'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
 import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { generateInsights } from '../insights'
@@ -23,6 +23,7 @@ interface Props {
   onOpenCategoryBreakdown: () => void
   onOpenImport: (files: FileList) => void
   onOpenRecurring: () => void
+  onOpenTags: () => void
 }
 
 /** Compares the last two COMPLETE periods, deliberately excluding the
@@ -44,15 +45,28 @@ function trendSummary(periods: { periodStart: Date; amount: number }[], noun: st
   const isInProgress = now < currentEnd
   const currentLabel = currentPeriod.periodStart.toLocaleDateString('en-AU', { month: 'short' }) + (isInProgress ? ' so far' : '')
   const previousLabel = previousPeriod.periodStart.toLocaleDateString('en-AU', { month: 'short' })
+  // A percentage against a small or sparse baseline explodes into
+  // something like "17010%" — technically the correct division, but
+  // useless and alarming to read. Confirmed via testing this isn't a
+  // rare edge case: it happens naturally any time an earlier month only
+  // has a couple of small transactions in it (a fresh install, a light
+  // month), not just with deliberately extreme data. Below a small
+  // baseline or past a sane swing size, the dollar difference is always
+  // meaningful regardless of how tiny the comparison month was — the
+  // percentage isn't.
+  const dollarChange = currentPeriod.amount - previousPeriod.amount
+  const showAsDollarChange = previousPeriod.amount < 50 || Math.abs(pctChange) > 300
   return (
     <span>
-      <span style={{ color, fontWeight: 600 }}>{up ? '↑' : '↓'} {Math.abs(pctChange).toFixed(0)}%</span>
+      <span style={{ color, fontWeight: 600 }}>
+        {up ? '↑' : '↓'} {showAsDollarChange ? formatCurrency(Math.abs(dollarChange)) : `${Math.abs(pctChange).toFixed(0)}%`}
+      </span>
       {' '}{noun}: {currentLabel} vs {previousLabel}
     </span>
   )
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags }: Props) {
   const now = new Date()
   const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
   const days = daysRemainingInMonth(now)
@@ -181,6 +195,9 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(categories, transactions, now), [categories, transactions, now.toDateString()])
   const hidden = getHiddenWidgets()
   const topMerchants = useMemo(() => topMerchantsThisMonth(transactions, categories, now), [categories, transactions, now.toDateString()])
+  const topTags = useMemo(() => topTagsThisMonth(transactions, categories, now), [categories, transactions, now.toDateString()])
+  const owedToYou = useMemo(() => outstandingReimbursements(transactions), [transactions])
+  const totalOwed = owedToYou.reduce((sum, o) => sum + o.owed, 0)
 
   return (
     <div className="screen">
@@ -191,6 +208,30 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
           <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { if (e.target.files && e.target.files.length > 0) onOpenImport(e.target.files) }} />
         </label>
       </div>
+
+      {transactions.length === 0 && (
+        // A brand new install otherwise lands directly on a wall of
+        // "$0.00" tiles with zero explanation of what any of them mean
+        // or what to do next — confirmed via testing this is genuinely
+        // the very first thing anyone sees, not a rare edge case.
+        // Deliberately just guidance, not a flow of its own: the
+        // fastest real path in is the Quick Add bar already sitting at
+        // the top of Transactions, or the camera icon above for
+        // importing a bank screenshot, so this points there rather than
+        // duplicating either.
+        <div className="card" style={{ marginBottom: 16 }}>
+          <span className="section-heading" style={{ margin: '0 0 8px' }}>👋 Welcome</span>
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 10 }}>
+            Safe to Spend and everything else here is calculated from your actual transactions and category budgets — there's nothing to see yet because there's nothing logged yet.
+          </p>
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 10 }}>
+            Fastest way in: add a transaction from the <b>Transactions</b> tab (type something like "spent 12 on coffee" into Quick Add, or tap +), or tap the camera icon above to import a bank screenshot.
+          </p>
+          <p style={{ fontSize: 14, lineHeight: 1.5 }}>
+            Then set a monthly budget on a few categories in <b>More → Categories</b> — that's what Safe to Spend is measured against.
+          </p>
+        </div>
+      )}
 
       {changeSummary && (
         <button
@@ -561,6 +602,39 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                   <span style={{ color: 'var(--text-faint)', fontSize: 13, width: 16 }}>{i + 1}</span>
                   <span style={{ flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.note}</span>
                   <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(m.amount)}</span>
+                </div>
+              ))}
+            </div>
+          ),
+
+          topTags: topTags.length > 0 && (
+            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenTags}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Top Tags This Month</span>
+                <span className="chevron">›</span>
+              </div>
+              {topTags.map((t, i) => (
+                <div key={t.tag} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                  <span style={{ color: 'var(--text-faint)', fontSize: 13, width: 16 }}>{i + 1}</span>
+                  <span style={{ flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.tag}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{t.count}×</span>
+                  <span className="amount" style={{ color: 'var(--text-dim)' }}>{formatCurrency(t.amount)}</span>
+                </div>
+              ))}
+            </button>
+          ),
+
+          outstandingReimbursements: owedToYou.length > 0 && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Money Owed to You</span>
+                <span className="amount" style={{ fontSize: 16, fontWeight: 700, color: 'var(--blue)' }}>{formatCurrency(totalOwed)}</span>
+              </div>
+              <p className="hint" style={{ margin: '0 0 10px' }}>Expenses part-paid back so far — not counting the part already covered.</p>
+              {owedToYou.slice(0, 5).map((o) => (
+                <div key={o.transaction.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+                  <span style={{ flex: 1, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.transaction.note || 'Uncategorized'}</span>
+                  <span className="amount" style={{ color: 'var(--blue)' }}>{formatCurrency(o.owed)}</span>
                 </div>
               ))}
             </div>

@@ -1,6 +1,7 @@
 import type { Category, Transaction, RecurringTransaction } from './types'
 import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
+import { normalizeTag } from './tags'
 
 export function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1)
@@ -390,8 +391,71 @@ export function topMerchantsThisMonth(transactions: Transaction[], categories: C
     }
   }
   return Array.from(map.values())
+    // A transaction fully covered by a reimbursement or Fund From
+    // Savings link nets to $0 — genuinely correct for what it cost, but
+    // meaningless as a "top merchant" entry, and confirmed via testing
+    // that it can otherwise occupy a ranked slot showing "$0.00" for no
+    // useful reason.
+    .filter((m) => m.amount > 0)
     .sort((a, b) => b.amount - a.amount)
     .slice(0, limit)
+}
+
+export interface TagTotal {
+  tag: string
+  amount: number
+  count: number
+}
+
+/** Mirrors topMerchantsThisMonth exactly, grouped by tag instead of
+ * merchant — tags have their own detail screen (date range, category
+ * breakdown, full transaction list) but had zero presence on the
+ * dashboard itself, so a trip or event you're actively tracking (the
+ * whole reason tags exist) was invisible unless you specifically went
+ * looking for it under More → Tags. */
+export function topTagsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): TagTotal[] {
+  const thisMonth = transactions.filter((t) => {
+    if (!t.isExpense || t.tags.length === 0 || !isInSamePeriod(new Date(t.date), referenceDate)) return false
+    const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+    return !cat?.isSavingsCategory
+  })
+
+  const map = new Map<string, { amount: number; count: number }>()
+  for (const t of thisMonth) {
+    const amount = netAmount(t, transactions)
+    if (amount <= 0) continue
+    for (const rawTag of t.tags) {
+      const tag = normalizeTag(rawTag)
+      if (!tag) continue
+      const existing = map.get(tag) ?? { amount: 0, count: 0 }
+      existing.amount += amount
+      existing.count += 1
+      map.set(tag, existing)
+    }
+  }
+  return Array.from(map.entries())
+    .map(([tag, v]) => ({ tag, amount: v.amount, count: v.count }))
+    .sort((a, b) => b.amount - a.amount)
+    .slice(0, limit)
+}
+
+export interface OutstandingReimbursement {
+  transaction: Transaction
+  owed: number
+}
+
+/** Expenses that are only PARTIALLY covered so far — fully reimbursed
+ * ones aren't included (nothing left to chase), and this is
+ * deliberately all-time rather than period-scoped: a friend owing you
+ * money from three weeks ago doesn't stop being owed just because the
+ * budget period rolled over, and the whole point is not forgetting
+ * about it. */
+export function outstandingReimbursements(transactions: Transaction[]): OutstandingReimbursement[] {
+  return transactions
+    .filter((t) => t.isExpense)
+    .map((t) => ({ transaction: t, owed: t.amount - totalReimbursed(t, transactions) }))
+    .filter((r) => r.owed > 0.01 && totalReimbursed(r.transaction, transactions) > 0)
+    .sort((a, b) => b.owed - a.owed)
 }
 
 export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = []): string | null {
