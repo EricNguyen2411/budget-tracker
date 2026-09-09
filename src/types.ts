@@ -23,6 +23,21 @@ export interface Transaction {
   categoryId: string | null
   reimbursesExpenseId: string | null
   tags: string[] // free-form, lowercase-normalized on entry; cuts across categories (e.g. "japan 2026", "work trip")
+  accountId: string | null // which real account (bank/credit card/savings) this transaction moved money through — independent of category, since one category can be paid from several accounts
+}
+
+export type AccountType = 'bank' | 'credit_card' | 'savings' | 'cash' | 'other'
+
+export interface Account {
+  id: string
+  name: string
+  icon: string
+  color: string
+  type: AccountType
+  openingBalance: number
+  openingDate: string // ISO date — balance is opening balance as of this date, calculated forward from transactions after it
+  sortOrder: number
+  isArchived: boolean // hidden from pickers/widgets but transactions already linked to it keep working, rather than losing that history on deletion
 }
 
 export type RecurrenceFrequency = 'weekly' | 'monthly' | 'yearly'

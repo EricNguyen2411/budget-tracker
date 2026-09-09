@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, reimbursementNote, repaysNote } from '../calculations'
+import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, repaysNote } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import AnimatedProgressBar from '../components/AnimatedProgressBar'
@@ -150,7 +150,7 @@ export default function CategoryDetail({ category, allCategories, transactions, 
                 </span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                {reimbursementNote(t, transactions, allCategories) && (
+                {netAmount(t, transactions) !== t.amount && (
                   <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                     {formatCurrency(t.amount)}
                   </span>

@@ -6,6 +6,32 @@ export interface PotentialDuplicateGroup {
   hasSharedToken: boolean
 }
 
+// Shared with healthCheck.ts's stale-transit-fare detection — kept in
+// one place after confirming this exact keyword list once already
+// silently failed to match the real-world "Transport NSW (Contactless)"
+// format because it lived in two separate copies that had drifted.
+export const TRANSIT_FARE_KEYWORDS = ['opal', 'transport nsw', 'transportfornsw', 'transport for nsw', 'tfnsw']
+
+/** A flat-fee transit tap (Opal/Transport NSW confirmed as the real
+ * case) legitimately recurs multiple times a DAY — a normal commute is
+ * two taps minimum, more with transfers — and every occurrence carries
+ * the exact same note text, since there's no trip-specific detail in
+ * it. Confirmed directly this makes ordinary same-day commuting look
+ * like duplicate transactions to the matcher below: two genuinely
+ * separate $1.00 taps, hours apart, with identical notes, are
+ * indistinguishable from a true duplicate by amount or by text alone.
+ * Excluded from duplicate detection entirely instead of trying to
+ * out-clever it with a smaller time window, since imported/manual
+ * transactions in this app don't reliably carry a real time-of-day to
+ * split same-day taps apart by anyway. No amount check here — both the
+ * $1.00 pending hold AND whatever the trip's real finalized fare turns
+ * out to be can equally recur several times a day, so restricting this
+ * to only very small amounts would miss the settled-fare case. */
+export function isLikelyTransitFare(note: string): boolean {
+  const lower = note.toLowerCase()
+  return TRANSIT_FARE_KEYWORDS.some((k) => lower.includes(k))
+}
+
 const STOP_WORDS = new Set([
   'eftpos', 'debit', 'credit', 'purchase', 'card', 'payment', 'payments',
   'transaction', 'transfer', 'deposit', 'deposits', 'withdrawal', 'osko',
@@ -59,7 +85,9 @@ export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, 
 
 export function findDuplicates(transactions: Transaction[], windowDays = 3): PotentialDuplicateGroup[] {
   const generic = genericTokens(transactions)
-  const sorted = [...transactions].sort((a, b) => (a.amount !== b.amount ? a.amount - b.amount : a.date.localeCompare(b.date)))
+  const sorted = [...transactions]
+    .filter((t) => !isLikelyTransitFare(t.note))
+    .sort((a, b) => (a.amount !== b.amount ? a.amount - b.amount : a.date.localeCompare(b.date)))
   const used = new Set<string>()
   const groups: { transactions: Transaction[]; hasSharedToken: boolean }[] = []
 

@@ -75,13 +75,30 @@ interface NativeBackupFile {
  * but its objects reference things by name (parentName/categoryName)
  * rather than by id (parentId/categoryId), and its objects have no "id"
  * field at all, which the PWA format always does. */
+/** Distinguishes the native format from the PWA's own — the native one
+ * always has "categories" and "transactions" arrays like the PWA does,
+ * but its objects reference things by name (parentName/categoryName)
+ * rather than by id (parentId/categoryId), and its objects have no "id"
+ * field at all, which the PWA format always does.
+ *
+ * Checked on transactions first, not categories — confirmed via testing
+ * that checking categories alone was a real bug: an empty categories
+ * array (a real, if unusual, state — every category deleted) defaulted
+ * to "assume native," which then discarded this app's own transaction
+ * ids and dropped every reimbursement link on a routine re-import of
+ * its own backup. Transactions are far less likely to be empty than
+ * categories in any backup actually worth importing, and if both arrays
+ * are empty there's nothing meaningful to import as either format
+ * anyway. */
 export function isNativeBackupFormat(data: unknown): data is NativeBackupFile {
   if (!data || typeof data !== 'object') return false
   const obj = data as Record<string, unknown>
   if (!Array.isArray(obj.categories) || !Array.isArray(obj.transactions)) return false
+  const firstTransaction = obj.transactions[0] as Record<string, unknown> | undefined
+  if (firstTransaction) return !('id' in firstTransaction)
   const firstCategory = obj.categories[0] as Record<string, unknown> | undefined
-  if (!firstCategory) return true // empty categories array, ambiguous but assume native if no PWA-only field found
-  return 'colorHex' in firstCategory || 'parentName' in firstCategory
+  if (firstCategory) return 'colorHex' in firstCategory || 'parentName' in firstCategory
+  return false
 }
 
 /** Common SF Symbol names from the native app's default taxonomy, mapped
@@ -199,7 +216,8 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       isExpense: def.isExpense,
       categoryId: resolveCategory(def.categoryName),
       reimbursesExpenseId: null, // resolved below
-      tags: []
+      tags: [],
+      accountId: null
     }
   })
   data.transactions.forEach((def, i) => {

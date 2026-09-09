@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
-import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, Account } from './types'
 import {
   ensureDefaultCategories, getCategories, getTransactions, createTransaction, saveTransaction, deleteTransaction,
-  getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce
+  getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce,
+  getAccounts
 } from './db'
 import { processDueRecurring } from './recurring'
 import { getSettings, isCustomCycle, getCycleConfig, predictedCycleFor, setCycleOverride } from './budgetPeriod'
@@ -30,9 +31,11 @@ import CategoryBreakdownByMonth from './pages/CategoryBreakdownByMonth'
 import MonthlyRecapPage from './pages/MonthlyRecapPage'
 import TagsScreen from './pages/TagsScreen'
 import TagDetail from './pages/TagDetail'
+import AccountsScreen from './pages/AccountsScreen'
+import AccountDetail from './pages/AccountDetail'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -47,9 +50,11 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [loaded, setLoaded] = useState(false)
   const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
   const [viewingTagDetail, setViewingTagDetail] = useState<string | null>(null)
+  const [viewingAccountDetail, setViewingAccountDetail] = useState<Account | null>(null)
   const [statDetail, setStatDetail] = useState<StatKind | null>(null)
   const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string; categoryId?: string } | null>(null)
 
@@ -74,11 +79,12 @@ export default function App() {
   )
 
   const reload = useCallback(async () => {
-    const [cats, txs, rec, lists] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists()])
+    const [cats, txs, rec, lists, accts] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists(), getAccounts()])
     setCategories(cats)
     setTransactions(txs)
     setRecurring(rec)
     setShoppingLists(lists)
+    setAccounts(accts)
   }, [])
 
   useEffect(() => {
@@ -146,7 +152,7 @@ export default function App() {
   if (!loaded) return null
 
   const categoryDetail = categoryDetailId ? categories.find((c) => c.id === categoryDetailId) : null
-  const anyOverlay = categoryDetail || statDetail || dateRangeNav || viewingTagDetail
+  const anyOverlay = categoryDetail || statDetail || dateRangeNav || viewingTagDetail || viewingAccountDetail
 
   return (
     <div className="app-shell">
@@ -159,6 +165,16 @@ export default function App() {
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
           onOpenCategory={(c) => setCategoryDetailId(c.id)}
+          onChanged={reload}
+        />
+      ) : viewingAccountDetail ? (
+        <AccountDetail
+          account={viewingAccountDetail}
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setViewingAccountDetail(null)}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
           onChanged={reload}
         />
       ) : viewingTagDetail ? (
@@ -186,6 +202,7 @@ export default function App() {
           onSave={handleSaveTransaction}
           onDelete={handleDeleteTransaction}
           onChanged={reload}
+          accounts={accounts}
         />
       ) : dateRangeNav ? (
         <PeriodDetail
@@ -227,6 +244,7 @@ export default function App() {
           initialSearch={pendingTransactionsSearch ?? undefined}
           onTransactionCreated={maybeOfferCycleCorrection}
           recurring={recurring}
+          accounts={accounts}
         />
       )}
       {tab === 'budgets' && <Budgets categories={categories} transactions={transactions} onOpenCategory={(id) => setCategoryDetailId(id)} />}
@@ -236,6 +254,7 @@ export default function App() {
           onCategoriesChanged={reload}
           onNavigate={(t) => { setReturnTab('more'); setTab(t as Tab) }}
           transactions={transactions}
+          accounts={accounts}
         />
       )}
       {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} onBack={() => setTab('more')} />}
@@ -253,7 +272,7 @@ export default function App() {
           onBack={() => setTab('more')}
         />
       )}
-      {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} />}
+      {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} accounts={accounts} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
       {tab === 'tags' && (
         <TagsScreen
@@ -262,6 +281,15 @@ export default function App() {
           onBack={() => setTab(returnTab)}
           onOpenTag={(tag) => setViewingTagDetail(tag)}
           onChanged={reload}
+        />
+      )}
+      {tab === 'accounts' && (
+        <AccountsScreen
+          accounts={accounts}
+          transactions={transactions}
+          onBack={() => setTab('more')}
+          onChanged={reload}
+          onOpenAccount={(a) => setViewingAccountDetail(a)}
         />
       )}
       {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
@@ -306,20 +334,20 @@ export default function App() {
       )}
 
       <nav className="tab-bar">
-        <button className={`tab-button ${tab === 'dashboard' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('dashboard') }}>
+        <button className={`tab-button ${tab === 'dashboard' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('dashboard') }}>
           <DashboardIcon active={tab === 'dashboard' && !anyOverlay} />
           Dashboard
         </button>
-        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setPendingTransactionsSearch(null); setTab('transactions') }}>
+        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setPendingTransactionsSearch(null); setTab('transactions') }}>
           <ListIcon active={tab === 'transactions' && !anyOverlay} />
           Transactions
         </button>
-        <button className={`tab-button ${tab === 'budgets' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('budgets') }}>
+        <button className={`tab-button ${tab === 'budgets' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('budgets') }}>
           <TargetIcon active={tab === 'budgets' && !anyOverlay} />
           Budgets
         </button>
-        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay} />
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags', 'accounts'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
-import { isLikelyDuplicate, significantTokens, genericTokens } from '../duplicates'
+import { isLikelyDuplicate, significantTokens, genericTokens, isLikelyTransitFare } from '../duplicates'
 import { formatCurrency } from '../calculations'
+import { normalizeMerchantKey } from '../merchantRules'
 import { createTransaction, saveTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
@@ -75,7 +76,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [importSummary, setImportSummary] = useState<{ count: number } | null>(null)
 
   const importGeneric = useMemo(
-    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null, tags: [] } as Transaction))]),
+    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null, tags: [], accountId: null } as Transaction))]),
     [existingTransactions, results]
   )
 
@@ -87,18 +88,42 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
   // Flagged but still checked by default — worth a second glance, not
   // assumed wrong. Median taken across this batch's expense amounts.
+  //
+  // Excludes an amount that already recurs in existing transaction
+  // history at a similar amount for the same merchant — confirmed via
+  // testing this exact "median of everyday spending vs one big bill"
+  // comparison flags a normal rent payment as suspicious every time it
+  // gets imported, purely because it's bigger than the small purchases
+  // sitting alongside it in the same batch.
   const outlierIds = (() => {
     const amounts = results.filter((r) => r.isExpense).map((r) => r.amount).sort((a, b) => a - b)
     if (amounts.length < 5) return new Set<string>()
     const median = amounts[Math.floor(amounts.length / 2)]
     if (median <= 0) return new Set<string>()
-    return new Set(results.filter((r) => r.isExpense && r.amount > Math.max(median * 10, 300)).map((r) => r.id))
+    return new Set(
+      results
+        .filter((r) => r.isExpense && r.amount > Math.max(median * 10, 300))
+        .filter((r) => {
+          const key = normalizeMerchantKey(r.note)
+          if (!key) return true
+          const recurs = existingTransactions.some((t) =>
+            t.isExpense && normalizeMerchantKey(t.note) === key && Math.abs(t.amount - r.amount) / r.amount < 0.1
+          )
+          return !recurs
+        })
+        .map((r) => r.id)
+    )
   })()
 
-  const transitKeywords = ['opal', 'transportfornsw', 'transport for nsw', 'tfnsw']
+  // Shares isLikelyTransitFare with duplicates.ts and healthCheck.ts —
+  // confirmed this exact list drifted out of sync across THREE separate
+  // copies in this codebase, all missing the real "Transport NSW"
+  // format (no "for"), so this pending-fare badge had never actually
+  // fired for the single most common real-world case during import
+  // review either.
   const pendingFareIds = new Set(
     results
-      .filter((r) => r.isExpense && r.amount <= 2 && transitKeywords.some((k) => r.note.toLowerCase().includes(k)))
+      .filter((r) => r.isExpense && r.amount <= 2 && isLikelyTransitFare(r.note))
       .map((r) => r.id)
   )
 
@@ -258,7 +283,8 @@ export default function StatementImport({ categories, existingTransactions, onBa
         isExpense: r.isExpense,
         categoryId: categoryFor(r),
         reimbursesExpenseId: null,
-        tags: []
+        tags: [],
+        accountId: null
       })
       createdByParsedId.set(r.id, created)
     }

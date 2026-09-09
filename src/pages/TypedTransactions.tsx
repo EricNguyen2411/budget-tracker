@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, repaysNote, excessForReimbursement, netSpentForCategory } from '../calculations'
+import type { Category, Transaction, Account } from '../types'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -16,6 +16,7 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onChanged: () => void
+  accounts?: Account[]
 }
 
 const TITLES: Record<StatKind, string> = {
@@ -25,7 +26,7 @@ const TITLES: Record<StatKind, string> = {
   saved: 'Saved'
 }
 
-export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete, onChanged }: Props) {
+export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete, onChanged, accounts = [] }: Props) {
   useSwipeBack(onBack)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
@@ -150,10 +151,10 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
               <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
               <div className="tx-info">
                 <span className="tx-note">{t.note || cat?.name || 'Uncategorized'}</span>
-                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories) && ` · ${repaysNote(t, transactions, categories)}`}</span>
+                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories, accounts) && ` · ${repaysNote(t, transactions, categories, accounts)}`}</span>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                {!isExcessOnlyRow && reimbursementNote(t, transactions, categories) && (
+                {!isExcessOnlyRow && rowAmount(t) !== t.amount && (
                   <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                     {formatCurrency(t.amount)}
                   </span>

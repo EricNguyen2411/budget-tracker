@@ -1,5 +1,5 @@
 import type { Transaction, RecurringTransaction, Category } from './types'
-import { findDuplicates } from './duplicates'
+import { findDuplicates, isLikelyTransitFare } from './duplicates'
 import { goalProgress, projectedGoalCompletionDate, netSpentForCategory } from './calculations'
 import { detectRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
@@ -49,12 +49,33 @@ export function runHealthCheck(
   if (expenseAmounts.length >= 10) {
     const median = expenseAmounts[Math.floor(expenseAmounts.length / 2)]
     if (median > 0) {
-      const outliers = transactions.filter((t) => t.isExpense && t.amount > Math.max(median * 10, 300))
+      // Confirmed directly that comparing every expense against the
+      // median of ALL of them (typically dominated by everyday spending
+      // — groceries, coffee, small purchases) flags a normal, expected
+      // bill like rent as a "suspicious outlier" every single month
+      // forever, for essentially anyone who pays rent or a mortgage.
+      // That trains people to ignore this warning entirely, which
+      // defeats catching an actual mistake or fraud later. A large
+      // amount that recurs — the same merchant, a similar amount, more
+      // than once — is normal and expected for this person specifically,
+      // not an anomaly, regardless of how it compares to their day-to-day
+      // spending.
+      const outliers = transactions.filter((t) => {
+        if (!t.isExpense || t.amount <= Math.max(median * 10, 300)) return false
+        const key = normalizeMerchantKey(t.note)
+        if (!key) return true
+        const recurs = transactions.some((other) =>
+          other.id !== t.id && other.isExpense &&
+          normalizeMerchantKey(other.note) === key &&
+          Math.abs(other.amount - t.amount) / t.amount < 0.1
+        )
+        return !recurs
+      })
       if (outliers.length > 0) {
         findings.push({
           icon: '🚩',
           title: `${outliers.length} unusually large transaction${outliers.length === 1 ? '' : 's'}`,
-          detail: 'Significantly bigger than your typical spend (over 10x the median) — worth confirming these amounts are correct.',
+          detail: 'Significantly bigger than your typical spend (over 10x the median) and not part of a recurring pattern — worth confirming these amounts are correct.',
           severity: 'warning',
           transactions: outliers
         })
@@ -72,17 +93,14 @@ export function runHealthCheck(
   // after a couple of days is very likely showing the placeholder
   // amount, not what actually got charged.
   //
-  // Confirmed directly that the keyword list here never actually
-  // matched that real format: "transport for nsw" requires the word
-  // "for", which the real note doesn't have ("Transport NSW", no
-  // "for") — so this check could never fire for the single most common
-  // real-world case it exists to catch. Added the exact real pattern
-  // rather than assuming the near-miss keywords already covered it.
-  const transitKeywords = ['opal', 'transport nsw', 'transportfornsw', 'transport for nsw', 'tfnsw']
+  // Shares isLikelyTransitFare's keyword list with duplicates.ts rather
+  // than keeping its own copy — confirmed directly that two separate
+  // copies of this exact list had already drifted apart once (the
+  // duplicate here was missing the real "Transport NSW", no "for",
+  // format entirely), so this check could never fire for the single
+  // most common real-world case it exists to catch.
   const stalePendingFares = transactions.filter((t) => {
-    if (!t.isExpense || t.amount > 2.0) return false
-    const lower = t.note.toLowerCase()
-    if (!transitKeywords.some((k) => lower.includes(k))) return false
+    if (!t.isExpense || t.amount > 2.0 || !isLikelyTransitFare(t.note)) return false
     // Tightened from 7 days: Opal fares confirmed to typically finalize
     // within a day or two, not a week — 7 days left this sitting
     // unflagged for most of a week after the real fare had almost

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Category, RecurringTransaction, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote, reimbursementsFor } from '../calculations'
+import type { Category, RecurringTransaction, Transaction, Account } from '../types'
+import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import { normalizeTag } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
@@ -18,6 +18,7 @@ interface Props {
   onTransactionCreated?: (t: Transaction) => void
   initialSearch?: string
   recurring?: RecurringTransaction[]
+  accounts?: Account[]
 }
 
 function dayLabel(date: Date): string {
@@ -32,7 +33,7 @@ function dayLabel(date: Date): string {
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: sameYear ? undefined : 'numeric' })
 }
 
-export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated, recurring = [] }: Props) {
+export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated, recurring = [], accounts = [] }: Props) {
   const [search, setSearch] = useState(initialSearch ?? '')
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
@@ -157,8 +158,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               const amount = netAmount(t, transactions)
               const reimbursedNote = reimbursementNote(t, transactions, categories)
               const excessNote = excessIncomeNote(t, transactions)
-              const repayNote = repaysNote(t, transactions, categories)
-              const reimbursementCount = t.isExpense ? reimbursementsFor(t, transactions).length : 0
+              const repayNote = repaysNote(t, transactions, categories, accounts)
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
                   <button
@@ -179,9 +179,9 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                         {repayNote && ` · ${repayNote}`}
                         {excessNote && ` · ${excessNote}`}
                       </span>
-                      {reimbursementCount > 0 && (
+                      {reimbursedNote && (
                         <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 500 }}>
-                          Reimbursed by {reimbursementCount} transaction{reimbursementCount === 1 ? '' : 's'}
+                          {reimbursedNote}
                         </span>
                       )}
                       {t.tags.length > 0 && (
@@ -199,7 +199,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
                       )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                      {reimbursedNote && (
+                      {amount !== t.amount && (
                         <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                           {formatCurrency(t.amount)}
                         </span>
@@ -249,6 +249,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           onClose={() => { setEditing(null); setCreating(false) }}
           onChanged={onChanged}
           recurring={recurring}
+          accounts={accounts}
         />
       )}
 

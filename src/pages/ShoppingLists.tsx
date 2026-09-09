@@ -120,7 +120,8 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
       isExpense: true,
       categoryId: list.categoryId,
       reimbursesExpenseId: null,
-      tags: []
+      tags: [],
+      accountId: null
     })
     await saveShoppingList({ ...list, items: list.items.map((i) => ({ ...i, isChecked: false })) })
     onChanged()

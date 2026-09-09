@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import type { Category, Transaction } from '../types'
+import type { Category, Transaction, Account } from '../types'
 import { exportBackup, importBackup, exportCSV, recordManualBackup, daysSinceLastManualBackup } from '../db'
 import { getSettings, updateSettings, isCustomCycle, getCycleOverrides, clearCycleOverride, type CycleMode } from '../budgetPeriod'
 import DashboardSettings from './DashboardSettings'
@@ -14,9 +14,10 @@ interface Props {
   transactions: Transaction[]
   onCategoriesChanged: () => void
   onNavigate: (tab: string) => void
+  accounts?: Account[]
 }
 
-export default function More({ categories, transactions, onCategoriesChanged, onNavigate }: Props) {
+export default function More({ categories, transactions, onCategoriesChanged, onNavigate, accounts = [] }: Props) {
   const [status, setStatus] = useState<string | null>(null)
   const [settings, setSettings] = useState(getSettings())
   const [overrides, setOverrides] = useState(getCycleOverrides())
@@ -37,7 +38,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
   }
 
   function handleExportCSV() {
-    const csv = exportCSV(transactions, categories)
+    const csv = exportCSV(transactions, categories, accounts)
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -111,6 +112,11 @@ export default function More({ categories, transactions, onCategoriesChanged, on
         <button className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => onNavigate('categories')}>
           <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>🗂️</div>
           <div className="tx-info"><span className="tx-note">Categories</span></div>
+          <span className="chevron">›</span>
+        </button>
+        <button className="transaction-row" style={{ borderBottom: '1px solid var(--border)' }} onClick={() => onNavigate('accounts')}>
+          <div className="tx-icon" style={{ background: 'var(--surface-2)' }}>🏦</div>
+          <div className="tx-info"><span className="tx-note">Accounts</span></div>
           <span className="chevron">›</span>
         </button>
         <button className="transaction-row" style={{ borderBottom: isCustomCycle(settings) ? 'none' : '1px solid var(--border)' }} onClick={() => setShowDashboardSettings(true)}>

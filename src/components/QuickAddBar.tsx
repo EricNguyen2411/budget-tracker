@@ -38,6 +38,7 @@ export default function QuickAddBar({ categories, onChanged, onCreated }: Props)
       isExpense: parsed.isExpense,
       categoryId: parsed.categoryId,
       reimbursesExpenseId: null,
+      accountId: null,
       tags: parsed.tags
     })
     onChanged()

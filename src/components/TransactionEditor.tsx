@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import type { Category, RecurringTransaction, Transaction } from '../types'
-import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed, matchingRecurringItem } from '../calculations'
+import type { Category, RecurringTransaction, Transaction, Account } from '../types'
+import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed, matchingRecurringItem, accountBalance, findTransferPair } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
 import { allTagsFrom, dedupeTags, normalizeTag } from '../tags'
-import { createTransaction, deleteTransaction } from '../db'
+import { createTransaction, deleteTransaction, updateTransfer, deleteTransfer } from '../db'
 import { frequencyLabel } from '../recurring'
 import { useModalClose } from '../useModalClose'
 
@@ -16,19 +16,162 @@ interface Props {
   onClose: () => void
   onChanged?: () => void
   recurring?: RecurringTransaction[]
+  accounts?: Account[]
 }
 
-export default function TransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose, onChanged, recurring = [] }: Props) {
+export default function TransactionEditor(props: Props) {
+  const { transaction, allTransactions, accounts = [], onClose, onChanged } = props
+  // A transfer is edited as one thing, not two separately-editable
+  // transactions — checked first, before any of the normal expense/
+  // income state below even initializes, so editing either half of a
+  // transfer always lands on the same combined From/To/Amount form
+  // regardless of which side was tapped.
+  const transferPair = transaction ? findTransferPair(transaction, allTransactions) : null
+  if (transaction && transferPair) {
+    return <TransferEditForm transaction={transaction} pair={transferPair} accounts={accounts} onClose={onClose} onChanged={onChanged} />
+  }
+  return <RegularTransactionEditor {...props} />
+}
+
+function TransferEditForm({ transaction, pair, accounts, onClose, onChanged }: { transaction: Transaction; pair: Transaction; accounts: Account[]; onClose: () => void; onChanged?: () => void }) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const expenseTx = transaction.isExpense ? transaction : pair
+  const incomeTx = transaction.isExpense ? pair : transaction
+  const [fromId, setFromId] = useState(expenseTx.accountId ?? '')
+  const [toId, setToId] = useState(incomeTx.accountId ?? '')
+  const [amount, setAmount] = useState(String(expenseTx.amount))
+  const [date, setDate] = useState(localDateInputValue(new Date(expenseTx.date)))
+  // Both sides share the exact same custom note when one was typed at
+  // creation time (see createTransfer) — if they currently differ,
+  // that's the auto-generated "Transfer to X" / "Transfer from Y" pair,
+  // not something the person deliberately wrote, so the field starts
+  // empty and regenerates fresh defaults (picking up any account rename)
+  // on save rather than persisting stale auto-text as if it were custom.
+  const [note, setNote] = useState(expenseTx.note === incomeTx.note ? expenseTx.note : '')
+  const [showFromPicker, setShowFromPicker] = useState(false)
+  const [showToPicker, setShowToPicker] = useState(false)
+
+  const fromAccount = accounts.find((a) => a.id === fromId)
+  const toAccount = accounts.find((a) => a.id === toId)
+  const parsed = parseFloat(amount)
+  const canSubmit = fromId && toId && fromId !== toId && !isNaN(parsed) && parsed > 0
+
+  async function handleSave() {
+    if (!canSubmit) return
+    const [y, m, d] = date.split('-').map(Number)
+    await updateTransfer(expenseTx.id, incomeTx.id, {
+      fromAccountId: fromId,
+      toAccountId: toId,
+      amount: parsed,
+      date: new Date(y, m - 1, d).toISOString(),
+      note
+    })
+    onChanged?.()
+    onClose()
+  }
+
+  async function handleDelete() {
+    await deleteTransfer(expenseTx.id, incomeTx.id)
+    onChanged?.()
+    onClose()
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
+          <span className="modal-title">Edit Transfer</span>
+          <button onClick={() => requestClose(handleSave)} className="text-button text-button-primary" disabled={!canSubmit} style={!canSubmit ? { color: 'var(--text-faint)' } : undefined}>Save</button>
+        </div>
+        <div className="modal-body">
+          <p className="hint" style={{ marginBottom: 16 }}>Editing either side of a transfer updates both — the amount always matches on both accounts.</p>
+
+          <label className="field-label">Amount</label>
+          <input type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="amount-input" autoFocus />
+
+          <label className="field-label" style={{ marginTop: 16 }}>From</label>
+          <button className="picker-row" onClick={() => setShowFromPicker(true)}>
+            <span>{fromAccount ? `${fromAccount.icon} ${fromAccount.name}` : 'Select account'}</span>
+            <span className="chevron">›</span>
+          </button>
+
+          <label className="field-label" style={{ marginTop: 16 }}>To</label>
+          <button className="picker-row" onClick={() => setShowToPicker(true)}>
+            <span>{toAccount ? `${toAccount.icon} ${toAccount.name}` : 'Select account'}</span>
+            <span className="chevron">›</span>
+          </button>
+          {fromId && toId && fromId === toId && (
+            <p className="hint hint-warning" style={{ marginTop: 6 }}>From and To need to be different accounts.</p>
+          )}
+
+          <label className="field-label" style={{ marginTop: 16 }}>Date</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+
+          <label className="field-label" style={{ marginTop: 16 }}>Note (optional)</label>
+          <input type="text" placeholder={toAccount ? `e.g. Paying off ${toAccount.name}` : 'e.g. Paying off credit card'} value={note} onChange={(e) => setNote(e.target.value)} />
+
+          <button className="danger-button" onClick={() => requestClose(handleDelete)} style={{ marginTop: 24 }}>
+            Delete Transfer
+          </button>
+        </div>
+
+        {showFromPicker && (
+          <div className="modal-backdrop" onClick={() => setShowFromPicker(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">From Account</span>
+                <button onClick={() => setShowFromPicker(false)} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                {accounts.map((a) => (
+                  <button key={a.id} className="picker-row" onClick={() => { setFromId(a.id); setShowFromPicker(false) }}>
+                    <span>{a.icon} {a.name}</span>
+                    {fromId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showToPicker && (
+          <div className="modal-backdrop" onClick={() => setShowToPicker(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">To Account</span>
+                <button onClick={() => setShowToPicker(false)} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                {accounts.map((a) => (
+                  <button key={a.id} className="picker-row" onClick={() => { setToId(a.id); setShowToPicker(false) }}>
+                    <span>{a.icon} {a.name}</span>
+                    {toId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function RegularTransactionEditor({ transaction, categories, allTransactions, onSave, onDelete, onClose, onChanged, recurring = [], accounts = [] }: Props) {
   const { closing, requestClose } = useModalClose(onClose)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
   const [showExpensePicker, setShowExpensePicker] = useState(false)
+  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const categoryPickerClose = useModalClose(() => setShowCategoryPicker(false))
   const expensePickerClose = useModalClose(() => setShowExpensePicker(false))
+  const accountPickerClose = useModalClose(() => setShowAccountPicker(false))
   const [amount, setAmount] = useState(transaction ? String(transaction.amount) : '')
   const [note, setNote] = useState(transaction?.note ?? '')
   const [date, setDate] = useState(transaction ? localDateInputValue(new Date(transaction.date)) : localDateInputValue(new Date()))
   const [isExpense, setIsExpense] = useState(transaction?.isExpense ?? true)
   const [categoryId, setCategoryId] = useState<string | null>(transaction?.categoryId ?? null)
+  const [accountId, setAccountId] = useState<string | null>(transaction?.accountId ?? null)
   const [reimbursesId, setReimbursesId] = useState<string | null>(transaction?.reimbursesExpenseId ?? null)
   const [tags, setTags] = useState<string[]>(transaction?.tags ?? [])
   const [tagInput, setTagInput] = useState('')
@@ -36,6 +179,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
   const existingTags = allTagsFrom(allTransactions)
 
   const selectedCategory = categories.find((c) => c.id === categoryId)
+  const selectedAccount = accounts.find((a) => a.id === accountId)
   // Confirms, directly on the transaction, that this exact charge is
   // recognized as covering an active recurring item — added so that
   // isn't something only checkable by reading the Safe to Spend math.
@@ -113,6 +257,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
       })(),
       isExpense,
       categoryId: effectiveCategoryId,
+      accountId,
       reimbursesExpenseId: isExpense ? null : reimbursesId,
       tags: dedupeTags(tags)
     })
@@ -143,6 +288,7 @@ export default function TransactionEditor({ transaction, categories, allTransact
       isExpense: false,
       categoryId: savingsCategoryId,
       reimbursesExpenseId: transaction.id,
+      accountId: null,
       tags: []
     })
     onChanged?.()
@@ -208,6 +354,16 @@ export default function TransactionEditor({ transaction, categories, allTransact
             <span>{selectedCategory ? `${selectedCategory.icon} ${selectedCategory.name}` : 'None'}</span>
             <span className="chevron">›</span>
           </button>
+
+          {accounts.length > 0 && (
+            <>
+              <label className="field-label">Account</label>
+              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
+                <span>{selectedAccount ? `${selectedAccount.icon} ${selectedAccount.name}` : 'None (optional)'}</span>
+                <span className="chevron">›</span>
+              </button>
+            </>
+          )}
 
           <label className="field-label">Tags</label>
           {tags.length > 0 && (
@@ -382,6 +538,37 @@ export default function TransactionEditor({ transaction, categories, allTransact
                       </button>
                     ))}
                   </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {showAccountPicker && (() => {
+        const { closing: acctClosing, requestClose: requestAcctClose } = accountPickerClose
+        function selectAccount(id: string | null) {
+          requestAcctClose(() => { setAccountId(id); setShowAccountPicker(false) })
+        }
+        return (
+          <div className={`modal-backdrop${acctClosing ? ' modal-closing' : ''}`} onClick={() => requestAcctClose(() => setShowAccountPicker(false))}>
+            <div className={`modal-sheet${acctClosing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Account</span>
+                <button onClick={() => requestAcctClose(() => setShowAccountPicker(false))} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                <button className="picker-row" onClick={() => selectAccount(null)}>
+                  <span>None (optional)</span>
+                </button>
+                {accounts.map((a) => (
+                  <button key={a.id} className="picker-row" onClick={() => selectAccount(a.id)}>
+                    <span>{a.icon} {a.name}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className="amount" style={{ fontSize: 13, color: 'var(--text-dim)' }}>{formatCurrency(accountBalance(a, allTransactions))}</span>
+                      {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                    </span>
+                  </button>
                 ))}
               </div>
             </div>

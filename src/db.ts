@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
-import type { Category, Transaction, RecurringTransaction, ShoppingList } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, Account } from './types'
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
@@ -18,13 +18,14 @@ interface BudgetDB extends DBSchema {
   recurring: { key: string; value: RecurringTransaction }
   shoppingLists: { key: string; value: ShoppingList }
   autoBackups: { key: string; value: AutoBackupEntry }
+  accounts: { key: string; value: Account }
 }
 
 let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 4, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 5, {
       async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -46,6 +47,14 @@ function getDB() {
           // that forgets the guard doesn't silently crash on old data.
           await migrateMissingTags(transaction)
         }
+        if (oldVersion < 5) {
+          db.createObjectStore('accounts', { keyPath: 'id' })
+          // Same reasoning as the tags backfill above — every
+          // transaction saved before accounts existed is missing
+          // accountId entirely at runtime, not just "null" as the type
+          // would suggest.
+          await migrateMissingAccountId(transaction)
+        }
       }
     })
   }
@@ -58,6 +67,18 @@ async function migrateMissingTags(transaction: IDBPTransaction<BudgetDB, StoreNa
   while (cursor) {
     if (!Array.isArray((cursor.value as Transaction).tags)) {
       await cursor.update({ ...cursor.value, tags: [] })
+    }
+    cursor = await cursor.continue()
+  }
+}
+
+async function migrateMissingAccountId(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
+  const store = transaction.objectStore('transactions')
+  let cursor = await store.openCursor()
+  while (cursor) {
+    const raw = cursor.value as unknown as Record<string, unknown>
+    if (!('accountId' in raw)) {
+      await cursor.update({ ...(cursor.value as Transaction), accountId: null })
     }
     cursor = await cursor.continue()
   }
@@ -278,6 +299,177 @@ export async function deleteRecurring(id: string) {
   await db.delete('recurring', id)
 }
 
+export async function getAccounts(): Promise<Account[]> {
+  const db = await getDB()
+  const all = await db.getAll('accounts')
+  return all.filter((a) => !a.isArchived).sort((a, b) => a.sortOrder - b.sortOrder)
+}
+
+export async function getAllAccountsIncludingArchived(): Promise<Account[]> {
+  const db = await getDB()
+  const all = await db.getAll('accounts')
+  return all.sort((a, b) => a.sortOrder - b.sortOrder)
+}
+
+export async function saveAccount(account: Account) {
+  const db = await getDB()
+  await db.put('accounts', account)
+}
+
+export async function createAccount(data: Omit<Account, 'id'>): Promise<Account> {
+  const db = await getDB()
+  const account: Account = { ...data, id: uuid() }
+  await db.put('accounts', account)
+  return account
+}
+
+/** Moving money between two of the person's own tracked accounts —
+ * paying off a credit card from a bank account, moving savings into
+ * everyday spending, etc. Creates both halves as a single atomic write
+ * (one succeeds, both do) rather than two separate createTransaction
+ * calls, so a failure partway through can't leave one side of a
+ * transfer existing without its pair.
+ *
+ * Deliberately reuses reimbursesExpenseId as the link between the two
+ * halves — the exact same mechanism Fund From Savings already uses —
+ * rather than a new field: it means a transfer automatically gets the
+ * same safe-deletion handling (deleteTransaction already clears a
+ * stale reimbursesExpenseId rather than orphaning it) and is already
+ * excluded from the Income stat (computeDashboardTotals's unlinkedIncome
+ * explicitly excludes anything with reimbursesExpenseId set) with zero
+ * new calculation code needed. isAccountTransferLink in calculations.ts
+ * is what later recognizes this pattern to label it "transferred" rather
+ * than the generic "reimbursed" — both sides having a different
+ * accountId is the signal, which is exactly what's set here. */
+export async function createTransfer(params: {
+  fromAccountId: string
+  toAccountId: string
+  amount: number
+  date: string
+  note?: string
+}): Promise<{ expense: Transaction; income: Transaction }> {
+  const { fromAccountId, toAccountId, amount, date, note } = params
+  const db = await getDB()
+  const accounts = await db.getAll('accounts')
+  const fromAccount = accounts.find((a) => a.id === fromAccountId)
+  const toAccount = accounts.find((a) => a.id === toAccountId)
+
+  const expenseId = uuid()
+  const expense: Transaction = {
+    id: expenseId,
+    amount,
+    note: note?.trim() || `Transfer to ${toAccount?.name ?? 'another account'}`,
+    date,
+    isExpense: true,
+    categoryId: null,
+    reimbursesExpenseId: null,
+    tags: [],
+    accountId: fromAccountId
+  }
+  const income: Transaction = {
+    id: uuid(),
+    amount,
+    note: note?.trim() || `Transfer from ${fromAccount?.name ?? 'another account'}`,
+    date,
+    isExpense: false,
+    categoryId: null,
+    reimbursesExpenseId: expenseId,
+    tags: [],
+    accountId: toAccountId
+  }
+
+  const tx = db.transaction('transactions', 'readwrite')
+  await tx.store.put(expense)
+  await tx.store.put(income)
+  await tx.done
+
+  return { expense, income }
+}
+
+/** Updates both halves of an existing transfer together, preserving
+ * their ids and their link to each other — the whole point being that
+ * a transfer is edited as one thing, so a corrected amount (or a
+ * changed From/To account) can't end up applied to only one side while
+ * the other silently keeps the old, now-wrong value. */
+export async function updateTransfer(
+  expenseId: string,
+  incomeId: string,
+  params: { fromAccountId: string; toAccountId: string; amount: number; date: string; note?: string }
+): Promise<{ expense: Transaction; income: Transaction }> {
+  const { fromAccountId, toAccountId, amount, date, note } = params
+  const db = await getDB()
+  const [existingExpense, existingIncome, accounts] = await Promise.all([
+    db.get('transactions', expenseId),
+    db.get('transactions', incomeId),
+    db.getAll('accounts')
+  ])
+  if (!existingExpense || !existingIncome) throw new Error('That transfer could no longer be found.')
+  const fromAccount = accounts.find((a) => a.id === fromAccountId)
+  const toAccount = accounts.find((a) => a.id === toAccountId)
+
+  const expense: Transaction = {
+    ...existingExpense,
+    amount,
+    date,
+    accountId: fromAccountId,
+    note: note?.trim() || `Transfer to ${toAccount?.name ?? 'another account'}`
+  }
+  const income: Transaction = {
+    ...existingIncome,
+    amount,
+    date,
+    accountId: toAccountId,
+    note: note?.trim() || `Transfer from ${fromAccount?.name ?? 'another account'}`
+  }
+
+  const tx = db.transaction('transactions', 'readwrite')
+  await tx.store.put(expense)
+  await tx.store.put(income)
+  await tx.done
+
+  return { expense, income }
+}
+
+/** Deletes both halves of a transfer together — the safe-unlink
+ * behaviour in deleteTransaction handles a single side being removed
+ * without crashing or losing money from view, but a transfer someone
+ * is deliberately removing should disappear from both accounts, not
+ * leave a stray half sitting in one of them looking like a real,
+ * unrelated transaction. */
+export async function deleteTransfer(expenseId: string, incomeId: string) {
+  const db = await getDB()
+  const tx = db.transaction('transactions', 'readwrite')
+  await tx.store.delete(expenseId)
+  await tx.store.delete(incomeId)
+  await tx.done
+}
+
+/** Archives rather than deletes by default — transactions already
+ * linked to this account keep their history and keep contributing to
+ * account-scoped totals elsewhere (Tag Detail-style reports, CSV
+ * export) even after the account itself is hidden from pickers and
+ * widgets. A hard delete is offered separately for a genuine mistake
+ * (an account that was never real), which does clear the link on any
+ * transactions pointing at it — same orphan-safety reasoning as
+ * deleteTransaction and deleteCategory. */
+export async function archiveAccount(id: string) {
+  const db = await getDB()
+  const account = await db.get('accounts', id)
+  if (!account) return
+  await db.put('accounts', { ...account, isArchived: true })
+}
+
+export async function deleteAccountPermanently(id: string) {
+  const db = await getDB()
+  const tx = db.transaction(['accounts', 'transactions'], 'readwrite')
+  await tx.objectStore('accounts').delete(id)
+  const transactions = await tx.objectStore('transactions').getAll()
+  for (const t of transactions) {
+    if (t.accountId === id) await tx.objectStore('transactions').put({ ...t, accountId: null })
+  }
+  await tx.done
+}
+
 export async function getShoppingLists(): Promise<ShoppingList[]> {
   const db = await getDB()
   return db.getAll('shoppingLists')
@@ -337,8 +529,9 @@ export async function exportBackup(): Promise<string> {
   const transactions = await db.getAll('transactions')
   const recurring = await db.getAll('recurring')
   const shoppingLists = await db.getAll('shoppingLists')
+  const accounts = await db.getAll('accounts')
   const localSettings = collectLocalSettings()
-  return JSON.stringify({ formatVersion: 3, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, localSettings }, null, 2)
+  return JSON.stringify({ formatVersion: 4, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, accounts, localSettings }, null, 2)
 }
 
 export async function importBackup(json: string): Promise<{ categoriesCount: number; transactionsCount: number }> {
@@ -353,6 +546,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   let transactions: Transaction[]
   let recurring: RecurringTransaction[] = []
   let shoppingLists: ShoppingList[] = []
+  let accounts: Account[] = []
   let merchantRulesToImport: { key: string; categoryId: string }[] = []
   let localSettings: Record<string, string> = {}
 
@@ -369,6 +563,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
       transactions?: Transaction[]
       recurring?: RecurringTransaction[]
       shoppingLists?: ShoppingList[]
+      accounts?: Account[]
       localSettings?: Record<string, string>
     }
     if (!Array.isArray(data.categories) || !Array.isArray(data.transactions)) {
@@ -378,6 +573,10 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
     transactions = data.transactions
     recurring = data.recurring ?? []
     shoppingLists = data.shoppingLists ?? []
+    // Absent entirely in backups made before accounts existed — nothing
+    // to restore in that case, transactionsToWrite below falls back to
+    // accountId: null for all of them either way.
+    accounts = data.accounts ?? []
     // Absent entirely in backups made before this existed — nothing to
     // restore in that case, which is fine, current settings are simply
     // left as they are rather than being cleared out.
@@ -437,15 +636,42 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
     return idRemap.get(id) ?? id
   }
 
-  const transactionsToWrite = transactions.map((t) => ({ ...t, tags: Array.isArray(t.tags) ? t.tags : [], categoryId: remapCategoryId(t.categoryId) }))
+  // Same by-name reconciliation as categories above, and for the same
+  // reason — an imported account's id is always freshly generated, so
+  // matching by id would create a duplicate "Everyday Account" every
+  // single time the same backup (or an auto-backup) gets restored.
+  const existingAccounts = await db.getAll('accounts')
+  const existingAccountsByName = new Map(existingAccounts.map((a) => [a.name.toLowerCase(), a]))
+  const accountIdRemap = new Map<string, string>()
+  const accountsToWrite: Account[] = []
+  for (const a of accounts) {
+    const existing = existingAccountsByName.get(a.name.toLowerCase())
+    if (existing) {
+      accountIdRemap.set(a.id, existing.id)
+    } else {
+      accountsToWrite.push(a)
+    }
+  }
+  function remapAccountId(id: string | null): string | null {
+    if (!id) return null
+    return accountIdRemap.get(id) ?? id
+  }
+
+  const transactionsToWrite = transactions.map((t) => ({
+    ...t,
+    tags: Array.isArray(t.tags) ? t.tags : [],
+    categoryId: remapCategoryId(t.categoryId),
+    accountId: remapAccountId((t as Transaction).accountId ?? null)
+  }))
   const recurringToWrite = recurring.map((r) => ({ ...r, categoryId: remapCategoryId(r.categoryId) }))
   const shoppingListsToWrite = shoppingLists.map((s) => ({ ...s, categoryId: remapCategoryId(s.categoryId) }))
 
-  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'accounts'], 'readwrite')
   for (const c of categoriesToWrite) await tx.objectStore('categories').put(c)
   for (const t of transactionsToWrite) await tx.objectStore('transactions').put(t)
   for (const r of recurringToWrite) await tx.objectStore('recurring').put(r)
   for (const s of shoppingListsToWrite) await tx.objectStore('shoppingLists').put(s)
+  for (const a of accountsToWrite) await tx.objectStore('accounts').put(a)
   await tx.done
 
   for (const rule of merchantRulesToImport) {
@@ -594,10 +820,11 @@ export async function syncReimbursementCategoriesOnce(): Promise<number> {
   return updated
 }
 
-export function exportCSV(transactions: Transaction[], categories: Category[]): string {
+export function exportCSV(transactions: Transaction[], categories: Category[], accounts: Account[] = []): string {
   const catById = new Map(categories.map((c) => [c.id, c.name]))
+  const acctById = new Map(accounts.map((a) => [a.id, a.name]))
   const txById = new Map(transactions.map((t) => [t.id, t]))
-  const header = 'Date,Note,Category,Type,Amount,Tags,Reimburses\n'
+  const header = 'Date,Note,Category,Account,Type,Amount,Tags,Reimburses\n'
   const rows = transactions.map((t) => {
     // Same UTC-shift issue documented elsewhere in this app:
     // .toISOString() converts to UTC first, which silently shows the
@@ -608,11 +835,12 @@ export function exportCSV(transactions: Transaction[], categories: Category[]): 
     const date = localDateInputValue(new Date(t.date))
     const note = `"${t.note.replace(/"/g, '""')}"`
     const category = catById.get(t.categoryId ?? '') ?? 'Uncategorized'
+    const account = acctById.get(t.accountId ?? '') ?? ''
     const type = t.isExpense ? 'Expense' : 'Income'
     const tags = `"${(t.tags ?? []).join(', ').replace(/"/g, '""')}"`
     const reimbursedExpense = t.reimbursesExpenseId ? txById.get(t.reimbursesExpenseId) : null
     const reimburses = `"${(reimbursedExpense?.note ?? '').replace(/"/g, '""')}"`
-    return `${date},${note},${category},${type},${t.amount.toFixed(2)},${tags},${reimburses}`
+    return `${date},${note},${category},${account},${type},${t.amount.toFixed(2)},${tags},${reimburses}`
   })
   return header + rows.join('\n')
 }

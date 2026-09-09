@@ -1,4 +1,4 @@
-import type { Category, Transaction, RecurringTransaction } from './types'
+import type { Category, Transaction, RecurringTransaction, Account } from './types'
 import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
 import { normalizeTag } from './tags'
@@ -23,7 +23,21 @@ export function totalReimbursed(expense: Transaction, all: Transaction[]): numbe
 /** What an expense actually cost after linked reimbursements — floored at 0. */
 export function netAmount(transaction: Transaction, all: Transaction[]): number {
   if (!transaction.isExpense) return transaction.amount
-  const reimbursed = totalReimbursed(transaction, all)
+  // A transfer's own "reimbursement" (its linked income landing in
+  // another of the person's own tracked accounts) is deliberately NOT
+  // netted out here — confirmed via a real screenshot this was showing
+  // a transfer's outbound side as "-$0.00" on the transaction list,
+  // which reads as if the expense cost nothing. It didn't cost nothing;
+  // the money genuinely moved, just to somewhere this person still owns
+  // and tracks. Netting to zero only makes sense for a genuine
+  // reimbursement or a Fund From Savings draw-down, where the whole
+  // point IS that it didn't cost anything extra. Safe to exclude here
+  // specifically: a transfer always has categoryId null, so this
+  // change can't affect any category's spend or Safe to Spend either
+  // way — it only fixes what the transaction's own row displays.
+  const reimbursed = reimbursementsFor(transaction, all)
+    .filter((t) => !isAccountTransferLink(t, transaction))
+    .reduce((sum, t) => sum + t.amount, 0)
   if (reimbursed === 0) return transaction.amount
   return Math.max(transaction.amount - reimbursed, 0)
 }
@@ -458,7 +472,40 @@ export function outstandingReimbursements(transactions: Transaction[]): Outstand
     .sort((a, b) => b.owed - a.owed)
 }
 
-export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = []): string | null {
+/** A transfer between two of the person's own tracked accounts uses the
+ * exact same linking mechanism as a reimbursement (an income
+ * transaction pointing at the expense it offsets) — deliberately, so it
+ * inherits the same safe-deletion handling and the same automatic
+ * exclusion from the Income stat, without a new field or new
+ * calculation path to keep in sync. Identified here by both sides
+ * having a DIFFERENT account set — the one signal a genuine friend
+ * reimbursement essentially never has, since the normal "Reimburses"
+ * picker doesn't prompt for an account on either side. */
+export function isAccountTransferLink(reimbursingTx: Transaction, expenseTx: Transaction): boolean {
+  return !!reimbursingTx.accountId && !!expenseTx.accountId && reimbursingTx.accountId !== expenseTx.accountId
+}
+
+/** Given either half of a transfer, finds the other half — used to edit
+ * or delete a transfer as one thing instead of two separately-editable
+ * transactions that could drift out of sync (a corrected amount on one
+ * side without the matching correction on the other would leave the
+ * two account balances reflecting different transfer amounts, silently
+ * wrong on whichever side didn't get updated). Returns null for an
+ * ordinary transaction, or for a genuine reimbursement/Fund From
+ * Savings link — only an actual account-to-account transfer pairs up
+ * here. */
+export function findTransferPair(transaction: Transaction, all: Transaction[]): Transaction | null {
+  if (transaction.isExpense) {
+    const income = all.find((t) => t.reimbursesExpenseId === transaction.id && isAccountTransferLink(t, transaction))
+    return income ?? null
+  }
+  if (!transaction.reimbursesExpenseId) return null
+  const expense = all.find((t) => t.id === transaction.reimbursesExpenseId)
+  if (!expense || !isAccountTransferLink(transaction, expense)) return null
+  return expense
+}
+
+export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = [], accounts: Account[] = []): string | null {
   if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
   if (!expense) return null
@@ -469,6 +516,10 @@ export function repaysNote(transaction: Transaction, all: Transaction[], categor
   // both the same way just because they share one field.
   const ownCategory = transaction.categoryId ? categories.find((c) => c.id === transaction.categoryId) : null
   if (ownCategory?.isSavingsCategory) return `funded from ${ownCategory.name}`
+  if (isAccountTransferLink(transaction, expense)) {
+    const fromAccount = accounts.find((a) => a.id === expense.accountId)
+    return `transferred from ${fromAccount?.name ?? 'another account'}`
+  }
   return `repays ${expense.note || 'transaction'}`
 }
 
@@ -514,7 +565,8 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[], 
     const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
     return cat?.isSavingsCategory ?? false
   })
-  const verb = allFromSavings ? 'funded from savings' : 'reimbursed'
+  const allTransfers = linkedTransactions.length > 0 && linkedTransactions.every((t) => isAccountTransferLink(t, transaction))
+  const verb = allFromSavings ? 'funded from savings' : allTransfers ? 'transferred out' : 'reimbursed'
   return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} ${verb}`
 }
 
@@ -559,3 +611,65 @@ export function projectedGoalCompletionDate(category: Category, transactions: Tr
   const monthsRemaining = remaining / monthlyPace
   return new Date(referenceDate.getTime() + monthsRemaining * 30.44 * 24 * 60 * 60 * 1000)
 }
+
+/** An account's balance is raw cash flow through it, deliberately NOT
+ * netted against reimbursements the way category spending is. A $100
+ * dinner paid from this account and a $60 refund into it later are both
+ * real movements of money through the account — netting them the way
+ * netSpentForCategory does for "what did this actually cost me" would
+ * be wrong here, since the account's balance needs to reflect what
+ * literally happened to the money, not the net cost after being paid
+ * back.
+ *
+ * Credit cards are inverted on purpose: a real credit card's "balance"
+ * means what you OWE, so an expense on it (borrowing) increases that
+ * number and a payment/refund (income) decreases it — the opposite
+ * sign convention from every other account type, where an expense
+ * reduces what you have and income adds to it. */
+export function accountBalance(account: Account, transactions: Transaction[]): number {
+  // Both sides normalized to local midnight before comparing — confirmed
+  // via a real screenshot this matters: a freshly created account's
+  // openingDate captures the exact moment it was created (including
+  // time of day), while a transaction dated "today" is normalized to
+  // midnight. Without this, the single most common first action —
+  // creating an account and immediately logging today's spending —
+  // silently excluded that transaction from the balance, since
+  // midnight-today falls before later-today when the account was made.
+  const openingMidnight = new Date(account.openingDate)
+  openingMidnight.setHours(0, 0, 0, 0)
+  const relevant = transactions.filter((t) => {
+    if (t.accountId !== account.id) return false
+    const txMidnight = new Date(t.date)
+    txMidnight.setHours(0, 0, 0, 0)
+    return txMidnight >= openingMidnight
+  })
+  const netFlow = relevant.reduce((sum, t) => sum + (t.isExpense ? -t.amount : t.amount), 0)
+  const signedFlow = account.type === 'credit_card' ? -netFlow : netFlow
+  return account.openingBalance + signedFlow
+}
+
+/** The single adjustment transaction needed to make accountBalance
+ * match a real-world figure the person just read off their bank app —
+ * the "reconcile" half of the hybrid approach: automatic day to day,
+ * with an easy correction whenever it drifts (a bank fee, interest, a
+ * transaction that never made it into the app).
+ *
+ * Returns the actual expense/income split to create, not just a raw
+ * signed number — a credit card's inverted sign convention means "the
+ * real balance came in higher than calculated" is an EXPENSE for a
+ * credit card (more debt than expected, e.g. an unrecorded fee) but
+ * INCOME for every other account type (more money than expected, e.g.
+ * interest). Deriving that here once, rather than leaving the caller to
+ * re-apply the same inversion rule accountBalance already encodes, is
+ * exactly the kind of logic that's already drifted apart into silently
+ * wrong duplicates elsewhere in this codebase when left to more than
+ * one place. Null return means already matches, nothing to create. */
+export function accountReconciliationDelta(account: Account, transactions: Transaction[], realBalance: number): { amount: number; isExpense: boolean } | null {
+  const calculated = accountBalance(account, transactions)
+  const delta = realBalance - calculated
+  if (Math.abs(delta) < 0.005) return null
+  const higherThanExpected = delta > 0
+  const isExpense = account.type === 'credit_card' ? higherThanExpected : !higherThanExpected
+  return { amount: Math.abs(delta), isExpense }
+}
+

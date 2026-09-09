@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, repaysNote, excessForReimbursement, localDateInputValue } from '../calculations'
+import type { Category, Transaction, Account } from '../types'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, localDateInputValue } from '../calculations'
 import { periodOffsetBy, getCycleConfig, getSettings, isCustomCycle } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -13,9 +13,10 @@ interface Props {
   initialStart?: string
   initialEnd?: string
   onChanged: () => void
+  accounts?: Account[]
 }
 
-export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd, onChanged }: Props) {
+export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd, onChanged, accounts = [] }: Props) {
   useSwipeBack(onBack)
   const now = new Date()
   const [start, setStart] = useState(initialStart ?? localDateInputValue(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
@@ -186,10 +187,10 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
           <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
             <div className="tx-info">
               <span className="tx-note">{t.note || 'Uncategorized'}</span>
-              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories) && ` · ${repaysNote(t, transactions, categories)}`}</span>
+              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories, accounts) && ` · ${repaysNote(t, transactions, categories, accounts)}`}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-              {reimbursementNote(t, transactions, categories) && (
+              {netAmount(t, transactions) !== t.amount && (
                 <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
                   {formatCurrency(t.amount)}
                 </span>
