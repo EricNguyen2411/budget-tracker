@@ -157,7 +157,14 @@ export function detectFormat(items: TextItem[]): DetectedFormat {
 // ---------- App transaction list parser (banking app screenshots) ----------
 
 function parseSignedAmount(text: string): { amount: number; isExpense: boolean } | null {
-  const match = text.match(/([+-]?)\s?\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
+  // "§" accepted alongside "$" — confirmed via real OCR testing against
+  // an actual NAB screenshot that Tesseract sometimes misreads the
+  // dollar sign as a section-sign glyph (the two share enough visual
+  // structure to be confused), and without this, the whole transaction
+  // silently vanished from the import rather than just losing a
+  // cosmetic character — parseSignedAmount returning null here skips
+  // the row entirely further up the pipeline.
+  const match = text.match(/([+-]?)\s?[$§]\s?(\d{1,3}(?:,\d{3})*\.\d{2})/)
   if (!match) return null
   const amount = parseFloat(match[2].replace(/,/g, ''))
   const isExpense = match[1] !== '+'
@@ -165,7 +172,7 @@ function parseSignedAmount(text: string): { amount: number; isExpense: boolean }
 }
 
 function parseBalance(anchorText: string): number | null {
-  const match = anchorText.match(/bal\s*\$\s?(\d{1,3}(?:,\d{3})*\.\d{2})/i)
+  const match = anchorText.match(/bal\s*[$§]\s?(\d{1,3}(?:,\d{3})*\.\d{2})/i)
   return match ? parseFloat(match[1].replace(/,/g, '')) : null
 }
 
@@ -336,8 +343,8 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
       // order leaves a dangling, orphaned "bal" behind: once the plain
       // amount pattern has already consumed the "$X" half, "bal $X" has
       // nothing left to match against.
-      .replace(/bal\s*\$\d{1,3}(,\d{3})*\.\d{2}/gi, ' ')
-      .replace(/[+-]?\s?\$\s?\d{1,3}(?:,\d{3})*\.\d{2}/g, ' ')
+      .replace(/bal\s*[$§]\d{1,3}(,\d{3})*\.\d{2}/gi, ' ')
+      .replace(/[+-]?\s?[$§]\s?\d{1,3}(?:,\d{3})*\.\d{2}/g, ' ')
       .replace(/card ending \d+/gi, ' ')
       .replace(/[>›]/g, ' ') // trailing disclosure chevron, present on every row in some formats
       // Confirmed via testing against a real Westpac screenshot: a
@@ -388,6 +395,21 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
       .replace(/^[^\w\s]{1,3}\s+/, '')
       .replace(/\s+/g, ' ')
       .trim()
+    // Confirmed directly via real OCR testing against an actual NAB
+    // screenshot (not a guess): when "Transport" in "Transport NSW
+    // (Contactless)" is shown highlighted — the app's own search-results
+    // view highlights the searched term — Tesseract reads the
+    // white-on-colour highlighted word as a bare "A" and drops the rest
+    // of "Transport" entirely, leaving "A NSW (Contactless)". This is
+    // narrow and specific enough (exact "A NSW" + a known Transport NSW
+    // transaction-type suffix) to safely correct without the general
+    // risk the leading-character strip above deliberately avoids taking
+    // on: a merchant genuinely named "A" followed by unrelated text
+    // wouldn't also happen to end in exactly "(Contactless)" or
+    // "(E-Toll)".
+    if (/^A\s+NSW\s*\((Contactless|E-Toll)\)$/i.test(note)) {
+      note = note.replace(/^A\s+NSW/i, 'Transport NSW')
+    }
     // A note left with nothing but a stray digit or two (the leftover
     // of an OCR-misread icon badge, confirmed via testing against a
     // real Westpac screenshot — every row's "$" icon badge sometimes
