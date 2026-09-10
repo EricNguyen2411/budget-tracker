@@ -5,6 +5,7 @@ import { createShoppingList, saveShoppingList, deleteShoppingList, createTransac
 import { useSwipeBack } from '../useSwipeBack'
 import SwipeableRow from '../components/SwipeableRow'
 import { useModalClose } from '../useModalClose'
+import { getSettings } from '../budgetPeriod'
 
 interface Props {
   lists: ShoppingList[]
@@ -121,7 +122,7 @@ function ShoppingListDetail({ list, categories, transactions, onBack, onChanged 
       categoryId: list.categoryId,
       reimbursesExpenseId: null,
       tags: [],
-      accountId: null
+      accountId: getSettings().defaultAccountId
     })
     await saveShoppingList({ ...list, items: list.items.map((i) => ({ ...i, isChecked: false })) })
     onChanged()

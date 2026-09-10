@@ -4,6 +4,8 @@ import { createAccount, saveAccount, archiveAccount, createTransfer } from '../d
 import { accountBalance, formatCurrency, localDateInputValue } from '../calculations'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
+import { getImportAccountMapping, saveImportAccountMapping, IMPORT_SOURCE_LABELS, type ImportSource } from '../importSettings'
+import { getSettings, updateSettings } from '../budgetPeriod'
 
 interface Props {
   accounts: Account[]
@@ -33,6 +35,10 @@ export default function AccountsScreen({ accounts, transactions, onBack, onChang
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Account | 'new' | null>(null)
   const [showTransfer, setShowTransfer] = useState(false)
+  const [showImportDefaults, setShowImportDefaults] = useState(false)
+  const [showDefaultAccount, setShowDefaultAccount] = useState(false)
+  const [defaultAccountId, setDefaultAccountId] = useState(getSettings().defaultAccountId)
+  const defaultAccount = accounts.find((a) => a.id === defaultAccountId)
 
   const totalNetWorth = accounts
     .filter((a) => a.type !== 'credit_card')
@@ -101,6 +107,28 @@ export default function AccountsScreen({ accounts, transactions, onBack, onChang
         </div>
       )}
 
+      {accounts.length > 0 && (
+        <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={() => setShowImportDefaults(true)}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>📥 Import Defaults</span>
+            <span className="chevron">›</span>
+          </div>
+          <p className="hint" style={{ marginTop: 4 }}>Which account NAB, Westpac, and Beem imports go to automatically.</p>
+        </button>
+      )}
+
+      {accounts.length > 0 && (
+        <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={() => setShowDefaultAccount(true)}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>⚡ Default Account</span>
+            <span className="chevron">›</span>
+          </div>
+          <p className="hint" style={{ marginTop: 4 }}>
+            {defaultAccount ? `${defaultAccount.icon} ${defaultAccount.name}` : 'None'} — used for Quick Add and completed shopping trips.
+          </p>
+        </button>
+      )}
+
       {editing && (
         <AccountEditorModal
           account={editing === 'new' ? null : editing}
@@ -117,6 +145,122 @@ export default function AccountsScreen({ accounts, transactions, onBack, onChang
           onDone={() => { setShowTransfer(false); onChanged() }}
         />
       )}
+
+      {showImportDefaults && (
+        <ImportDefaultsModal accounts={accounts} onClose={() => setShowImportDefaults(false)} />
+      )}
+
+      {showDefaultAccount && (
+        <DefaultAccountModal
+          accounts={accounts}
+          current={defaultAccountId}
+          onClose={() => setShowDefaultAccount(false)}
+          onSaved={(id) => { setDefaultAccountId(id); setShowDefaultAccount(false) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function DefaultAccountModal({ accounts, current, onClose, onSaved }: { accounts: Account[]; current: string | null; onClose: () => void; onSaved: (id: string | null) => void }) {
+  const { closing, requestClose } = useModalClose(onClose)
+
+  function pick(id: string | null) {
+    updateSettings({ defaultAccountId: id })
+    onSaved(id)
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span style={{ width: 60 }} />
+          <span className="modal-title">Default Account</span>
+          <button onClick={() => requestClose()} className="text-button text-button-primary">Done</button>
+        </div>
+        <div className="modal-body">
+          <p className="hint" style={{ marginBottom: 16 }}>
+            Quick Add and completed shopping trips don't show an account picker in the moment — this is what they'll use instead. You can always change it afterward on the transaction itself.
+          </p>
+          <button className="picker-row" onClick={() => requestClose(() => pick(null))}>
+            <span>None</span>
+            {!current && <span style={{ color: 'var(--blue)' }}>✓</span>}
+          </button>
+          {accounts.map((a) => (
+            <button key={a.id} className="picker-row" onClick={() => requestClose(() => pick(a.id))}>
+              <span>{a.icon} {a.name}</span>
+              {current === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ImportDefaultsModal({ accounts, onClose }: { accounts: Account[]; onClose: () => void }) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const [mapping, setMapping] = useState(getImportAccountMapping())
+  const [pickerFor, setPickerFor] = useState<ImportSource | null>(null)
+
+  function setSource(source: ImportSource, accountId: string | null) {
+    const next = { ...mapping, [source]: accountId }
+    setMapping(next)
+    saveImportAccountMapping(next)
+    setPickerFor(null)
+  }
+
+  const sources: ImportSource[] = ['nab', 'westpac', 'beem']
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span style={{ width: 60 }} />
+          <span className="modal-title">Import Defaults</span>
+          <button onClick={() => requestClose()} className="text-button text-button-primary">Done</button>
+        </div>
+        <div className="modal-body">
+          <p className="hint" style={{ marginBottom: 16 }}>
+            When you import a screenshot, transactions from each source are automatically assigned to the account you pick here — you can still change it per import.
+          </p>
+          {sources.map((source) => {
+            const account = accounts.find((a) => a.id === mapping[source])
+            return (
+              <div key={source} style={{ marginBottom: 16 }}>
+                <label className="field-label">{IMPORT_SOURCE_LABELS[source]}</label>
+                <button className="picker-row" onClick={() => setPickerFor(source)}>
+                  <span>{account ? `${account.icon} ${account.name}` : 'None'}</span>
+                  <span className="chevron">›</span>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {pickerFor && (
+          <div className="modal-backdrop" onClick={() => setPickerFor(null)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">{IMPORT_SOURCE_LABELS[pickerFor]} Imports Go To</span>
+                <button onClick={() => setPickerFor(null)} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                <button className="picker-row" onClick={() => setSource(pickerFor, null)}>
+                  <span>None</span>
+                  {!mapping[pickerFor] && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                </button>
+                {accounts.map((a) => (
+                  <button key={a.id} className="picker-row" onClick={() => setSource(pickerFor, a.id)}>
+                    <span>{a.icon} {a.name}</span>
+                    {mapping[pickerFor] === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -233,13 +377,16 @@ function AccountEditorModal({ account, onClose, onSaved }: { account: Account | 
   const [name, setName] = useState(account?.name ?? '')
   const [type, setType] = useState<AccountType>(account?.type ?? 'bank')
   const [openingBalance, setOpeningBalance] = useState(account ? String(account.openingBalance) : '')
+  const [interestRate, setInterestRate] = useState(account?.interestRate ? String(account.interestRate) : '')
   const [showTypePicker, setShowTypePicker] = useState(false)
 
   async function handleSave() {
     const parsed = parseFloat(openingBalance) || 0
+    const parsedRate = parseFloat(interestRate)
+    const rate = interestRate.trim() && !isNaN(parsedRate) ? parsedRate : null
     if (!name.trim()) return
     if (account) {
-      await saveAccount({ ...account, name: name.trim(), type })
+      await saveAccount({ ...account, name: name.trim(), type, interestRate: rate })
     } else {
       await createAccount({
         name: name.trim(),
@@ -249,7 +396,8 @@ function AccountEditorModal({ account, onClose, onSaved }: { account: Account | 
         openingBalance: parsed,
         openingDate: new Date().toISOString(),
         sortOrder: 999,
-        isArchived: false
+        isArchived: false,
+        interestRate: rate
       })
     }
     onSaved()
@@ -287,6 +435,16 @@ function AccountEditorModal({ account, onClose, onSaved }: { account: Account | 
               <input type="number" inputMode="decimal" placeholder="0.00" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} className="amount-input" />
               <p className="hint" style={{ marginTop: 6 }}>
                 What your bank app shows right now — everything is calculated forward from this starting point.
+              </p>
+            </>
+          )}
+
+          {type !== 'credit_card' && (
+            <>
+              <label className="field-label" style={{ marginTop: 16 }}>Interest Rate (% p.a., optional)</label>
+              <input type="number" inputMode="decimal" placeholder="e.g. 4.50" value={interestRate} onChange={(e) => setInterestRate(e.target.value)} />
+              <p className="hint" style={{ marginTop: 6 }}>
+                If this account earns interest, set the annual rate here — you'll get a button to calculate and add each month's interest based on your actual daily balance.
               </p>
             </>
           )}

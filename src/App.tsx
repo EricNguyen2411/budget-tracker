@@ -232,6 +232,8 @@ export default function App() {
           onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
           onOpenRecurring={() => setTab('recurring')}
           onOpenTags={() => { setReturnTab('dashboard'); setTab('tags') }}
+          accounts={accounts}
+          onOpenAccounts={() => { setReturnTab('dashboard'); setTab('accounts') }}
         />
       )}
       {tab === 'transactions' && (
@@ -257,7 +259,7 @@ export default function App() {
           accounts={accounts}
         />
       )}
-      {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} onBack={() => setTab('more')} />}
+      {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} onBack={() => setTab('more')} accounts={accounts} />}
       {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
       {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} onBack={() => setTab(returnTab)} />}
       {tab === 'health' && (
@@ -270,6 +272,7 @@ export default function App() {
           onOpenDuplicateCheck={() => { setReturnTab('health'); setTab('duplicates') }}
           onCategoriesChanged={reload}
           onBack={() => setTab('more')}
+          accounts={accounts}
         />
       )}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} accounts={accounts} />}
@@ -300,6 +303,7 @@ export default function App() {
           onBack={() => { setPendingImportFiles(null); setTab(returnTab) }}
           onImported={reload}
           initialFiles={pendingImportFiles}
+          accounts={accounts}
         />
       )}
       {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} transactions={transactions} onBack={() => setTab('more')} onChanged={reload} />}

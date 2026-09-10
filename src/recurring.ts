@@ -11,6 +11,7 @@ export interface RecurringSuggestion {
   lastDate: Date
   suggestedNextDueDate: Date
   categoryId: string | null
+  accountId: string | null
 }
 
 function merchantKey(note: string): string {
@@ -29,10 +30,18 @@ function classifyFrequency(averageGapDays: number, gaps: number[]): RecurrenceFr
 }
 
 function mostCommonCategoryId(transactions: Transaction[]): string | null {
+  return mostCommonValue(transactions.map((t) => t.categoryId))
+}
+
+function mostCommonAccountId(transactions: Transaction[]): string | null {
+  return mostCommonValue(transactions.map((t) => t.accountId))
+}
+
+function mostCommonValue(values: (string | null)[]): string | null {
   const counts = new Map<string, number>()
-  for (const t of transactions) {
-    if (!t.categoryId) continue
-    counts.set(t.categoryId, (counts.get(t.categoryId) ?? 0) + 1)
+  for (const v of values) {
+    if (!v) continue
+    counts.set(v, (counts.get(v) ?? 0) + 1)
   }
   let best: string | null = null
   let bestCount = 0
@@ -109,7 +118,8 @@ export function detectRecurring(
       occurrenceCount: sorted.length,
       lastDate,
       suggestedNextDueDate: addInterval(lastDate, frequency),
-      categoryId: mostCommonCategoryId(sorted)
+      categoryId: mostCommonCategoryId(sorted),
+      accountId: mostCommonAccountId(sorted)
     })
   }
 
@@ -137,7 +147,7 @@ export function processDueRecurring(
         categoryId: item.categoryId,
         reimbursesExpenseId: null,
         tags: [],
-        accountId: null
+        accountId: item.accountId ?? null
       })
       nextDue = addInterval(nextDue, item.frequency)
       guardCount++

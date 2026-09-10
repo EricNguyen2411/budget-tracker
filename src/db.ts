@@ -511,7 +511,8 @@ const BACKED_UP_LOCAL_STORAGE_KEYS = [
   'budget-tracker-cycle-overrides', // confirmed per-cycle payday corrections
   'budget-tracker-merchant-rules', // learned + manually pinned category suggestions
   'budget-tracker-dashboard-widgets', // hidden dashboard widgets
-  'budget-tracker-dashboard-widget-order' // dashboard widget ordering
+  'budget-tracker-dashboard-widget-order', // dashboard widget ordering
+  'budget-tracker-import-account-mapping' // which account NAB/Westpac/Beem imports default to
 ]
 
 function collectLocalSettings(): Record<string, string> {

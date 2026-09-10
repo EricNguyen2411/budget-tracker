@@ -7,13 +7,15 @@ export interface StoredSettings {
   budgetCycleStartDay: number // meaningful only when budgetCycleMode is 'fixedDay'
   dismissedRecurringSuggestions: string[]
   nudgeEnabled: boolean
+  defaultAccountId: string | null // applied to Quick Add and completed shopping trips — the two places a transaction gets created without ever seeing an account picker
 }
 
 const DEFAULT_SETTINGS: StoredSettings = {
   budgetCycleMode: 'fixedDay',
   budgetCycleStartDay: 1,
   dismissedRecurringSuggestions: [],
-  nudgeEnabled: false
+  nudgeEnabled: false,
+  defaultAccountId: null
 }
 
 export function getSettings(): StoredSettings {

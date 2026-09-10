@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Account, Transaction, Category } from '../types'
-import { accountBalance, accountReconciliationDelta, formatCurrency } from '../calculations'
+import { accountBalance, accountReconciliationDelta, calculateInterestEarned, formatCurrency, localDateInputValue } from '../calculations'
 import { createTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
@@ -20,6 +20,7 @@ export default function AccountDetail({ account, categories, transactions, onBac
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [showReconcile, setShowReconcile] = useState(false)
+  const [showInterest, setShowInterest] = useState(false)
 
   const balance = accountBalance(account, transactions)
   const isDebt = account.type === 'credit_card'
@@ -58,6 +59,11 @@ export default function AccountDetail({ account, categories, transactions, onBac
         <button onClick={() => setShowReconcile(true)} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 8 }}>
           Doesn't match your bank? Fix it
         </button>
+        {!!account.interestRate && (
+          <button onClick={() => setShowInterest(true)} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 4, display: 'block' }}>
+            Add interest earned
+          </button>
+        )}
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -91,6 +97,87 @@ export default function AccountDetail({ account, categories, transactions, onBac
           onDone={() => { setShowReconcile(false); onChanged() }}
         />
       )}
+
+      {showInterest && (
+        <InterestModal
+          account={account}
+          transactions={transactions}
+          onClose={() => setShowInterest(false)}
+          onDone={() => { setShowInterest(false); onChanged() }}
+        />
+      )}
+    </div>
+  )
+}
+
+function InterestModal({ account, transactions, onClose, onDone }: { account: Account; transactions: Transaction[]; onClose: () => void; onDone: () => void }) {
+  const { closing, requestClose } = useModalClose(onClose)
+  // Defaults to the last COMPLETE calendar month — the normal case for
+  // a monthly-credited savings account, and safely in the past so the
+  // preview isn't immediately truncated by the "can't accrue interest
+  // for days that haven't happened yet" cap in calculateInterestEarned.
+  const today = new Date()
+  const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0)
+  const lastMonthStart = new Date(lastMonthEnd.getFullYear(), lastMonthEnd.getMonth(), 1)
+  const [fromDate, setFromDate] = useState(localDateInputValue(lastMonthStart))
+  const [toDate, setToDate] = useState(localDateInputValue(lastMonthEnd))
+
+  const [y1, m1, d1] = fromDate.split('-').map(Number)
+  const [y2, m2, d2] = toDate.split('-').map(Number)
+  const periodStart = new Date(y1, m1 - 1, d1)
+  const periodEnd = new Date(y2, m2 - 1, d2)
+  const validRange = periodEnd >= periodStart
+  const interestAmount = validRange ? calculateInterestEarned(account, transactions, periodStart, periodEnd) : 0
+
+  async function handleConfirm() {
+    if (interestAmount <= 0) return
+    await createTransaction({
+      amount: interestAmount,
+      note: 'Interest earned',
+      date: periodEnd.toISOString(),
+      isExpense: false,
+      categoryId: null,
+      reimbursesExpenseId: null,
+      tags: [],
+      accountId: account.id
+    })
+    onDone()
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
+          <span className="modal-title">Add Interest</span>
+          <span style={{ width: 60 }} />
+        </div>
+        <div className="modal-body">
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 12 }}>
+            Calculated from your actual daily balance each day in this period, at {account.interestRate}% p.a. — not just today's balance, so a deposit or withdrawal partway through is already accounted for correctly.
+          </p>
+          <label className="field-label">From</label>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+          <label className="field-label" style={{ marginTop: 12 }}>To</label>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+
+          <div className="card hero-card" style={{ marginTop: 20 }}>
+            <span className="hero-label">Interest Earned</span>
+            <span className="hero-amount amount" style={{ fontSize: 28, color: 'var(--green)' }}>{formatCurrency(interestAmount)}</span>
+          </div>
+          {!validRange && (
+            <p className="hint hint-warning" style={{ marginTop: 12 }}>The "To" date needs to be on or after the "From" date.</p>
+          )}
+
+          <button
+            onClick={() => requestClose(handleConfirm)}
+            disabled={interestAmount <= 0}
+            style={{ width: '100%', textAlign: 'center', background: interestAmount > 0 ? 'var(--blue)' : 'var(--surface-2)', color: interestAmount > 0 ? '#FFFFFF' : 'var(--text-faint)', borderRadius: 10, padding: 12, fontWeight: 600, marginTop: 20 }}
+          >
+            Add {formatCurrency(interestAmount)} as Income
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,6 +1,6 @@
-import type { Transaction, RecurringTransaction, Category } from './types'
+import type { Transaction, RecurringTransaction, Category, Account } from './types'
 import { findDuplicates, isLikelyTransitFare } from './duplicates'
-import { goalProgress, projectedGoalCompletionDate, netSpentForCategory } from './calculations'
+import { goalProgress, projectedGoalCompletionDate, netSpentForCategory, findTransferPair } from './calculations'
 import { detectRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
@@ -18,7 +18,8 @@ export function runHealthCheck(
   transactions: Transaction[],
   recurring: RecurringTransaction[],
   categories: Category[],
-  referenceDate: Date = new Date()
+  referenceDate: Date = new Date(),
+  accounts: Account[] = []
 ): HealthFinding[] {
   const findings: HealthFinding[] = []
 
@@ -45,6 +46,35 @@ export function runHealthCheck(
     })
   }
 
+  // Interest is deliberately a manual "calculate and add" action rather
+  // than something that happens on its own in the background — every
+  // other money-creating action in this app works the same way, always
+  // shown and confirmed rather than silent. The trade-off is that
+  // nothing reminds a person to actually come back and do it, so an
+  // interest-earning account can easily go months without its balance
+  // reflecting interest it's genuinely already earned. Flagged at 45
+  // days specifically because monthly is the normal real-world credit
+  // cadence, and 45 gives real slack before nagging about something
+  // that's merely a few days into a new month.
+  const accountsNeedingInterest = accounts.filter((a) => {
+    if (!a.interestRate || a.isArchived || a.type === 'credit_card') return false
+    const ownInterestTx = transactions.filter((t) => t.accountId === a.id && !t.isExpense && t.note === 'Interest earned')
+    const lastDate = ownInterestTx.length > 0
+      ? new Date(Math.max(...ownInterestTx.map((t) => new Date(t.date).getTime())))
+      : new Date(a.openingDate)
+    const daysSince = (referenceDate.getTime() - lastDate.getTime()) / (24 * 60 * 60 * 1000)
+    return daysSince > 45
+  })
+  if (accountsNeedingInterest.length > 0) {
+    findings.push({
+      icon: '💰',
+      title: `${accountsNeedingInterest.length} account${accountsNeedingInterest.length === 1 ? '' : 's'} may be missing recent interest`,
+      detail: `${accountsNeedingInterest.map((a) => a.name).join(', ')} — has a rate set but hasn't had interest added in over 45 days. Add it from the account's own screen.`,
+      severity: 'info',
+      transactions: []
+    })
+  }
+
   const expenseAmounts = transactions.filter((t) => t.isExpense).map((t) => t.amount).sort((a, b) => a - b)
   if (expenseAmounts.length >= 10) {
     const median = expenseAmounts[Math.floor(expenseAmounts.length / 2)]
@@ -62,6 +92,14 @@ export function runHealthCheck(
       // spending.
       const outliers = transactions.filter((t) => {
         if (!t.isExpense || t.amount <= Math.max(median * 10, 300)) return false
+        // A transfer is a deliberate, self-typed amount — created by
+        // entering a number directly into the Transfer form, not parsed
+        // from an OCR'd screenshot or an imported statement — so it
+        // doesn't carry the same "could be a misread/typo" risk this
+        // check exists to catch. A large one-off transfer (paying off a
+        // big credit card bill) is a normal, explicable reason to be
+        // large, the same way a recurring bill is.
+        if (findTransferPair(t, transactions)) return false
         const key = normalizeMerchantKey(t.note)
         if (!key) return true
         const recurs = transactions.some((other) =>

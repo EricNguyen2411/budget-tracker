@@ -4,6 +4,7 @@ import { parseQuickAdd, type QuickAddResult } from '../quickAdd'
 import { learnMerchant } from '../merchantRules'
 import { createTransaction, deleteTransaction } from '../db'
 import { formatCurrency } from '../calculations'
+import { getSettings } from '../budgetPeriod'
 
 interface Props {
   categories: Category[]
@@ -38,7 +39,7 @@ export default function QuickAddBar({ categories, onChanged, onCreated }: Props)
       isExpense: parsed.isExpense,
       categoryId: parsed.categoryId,
       reimbursesExpenseId: null,
-      accountId: null,
+      accountId: getSettings().defaultAccountId,
       tags: parsed.tags
     })
     onChanged()

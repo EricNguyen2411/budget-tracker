@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Category, RecurringTransaction, Transaction, Account } from '../types'
-import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed, matchingRecurringItem, accountBalance, findTransferPair } from '../calculations'
+import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed, matchingRecurringItem, accountBalance, findTransferPair, findFundedExpense } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
 import { allTagsFrom, dedupeTags, normalizeTag } from '../tags'
 import { createTransaction, deleteTransaction, updateTransfer, deleteTransfer } from '../db'
@@ -20,7 +20,7 @@ interface Props {
 }
 
 export default function TransactionEditor(props: Props) {
-  const { transaction, allTransactions, accounts = [], onClose, onChanged } = props
+  const { transaction, categories, allTransactions, accounts = [], onClose, onChanged } = props
   // A transfer is edited as one thing, not two separately-editable
   // transactions — checked first, before any of the normal expense/
   // income state below even initializes, so editing either half of a
@@ -30,7 +30,51 @@ export default function TransactionEditor(props: Props) {
   if (transaction && transferPair) {
     return <TransferEditForm transaction={transaction} pair={transferPair} accounts={accounts} onClose={onClose} onChanged={onChanged} />
   }
+  // A Fund From Savings withdrawal is a thin link record, not a
+  // transaction with independent meaning of its own — the expense it
+  // funds keeps its full normal editor (category, tags, date all still
+  // matter there), but tapping this side specifically shows a compact
+  // view instead of a mostly-irrelevant category picker and Reimburses
+  // field.
+  const fundedExpense = transaction ? findFundedExpense(transaction, allTransactions, categories) : null
+  if (transaction && fundedExpense) {
+    return <FundingLinkView transaction={transaction} fundedExpense={fundedExpense} categories={categories} onClose={onClose} onChanged={onChanged} />
+  }
   return <RegularTransactionEditor {...props} />
+}
+
+function FundingLinkView({ transaction, fundedExpense, categories, onClose, onChanged }: { transaction: Transaction; fundedExpense: Transaction; categories: Category[]; onClose: () => void; onChanged?: () => void }) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const savingsCategory = transaction.categoryId ? categories.find((c) => c.id === transaction.categoryId) : null
+
+  async function handleRemove() {
+    await deleteTransaction(transaction.id)
+    onChanged?.()
+    onClose()
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
+          <span className="modal-title">Savings Funding</span>
+          <span style={{ width: 60 }} />
+        </div>
+        <div className="modal-body">
+          <div className="card" style={{ marginBottom: 16 }}>
+            <p style={{ fontSize: 15, lineHeight: 1.6 }}>
+              This covers <span className="amount" style={{ fontWeight: 700 }}>{formatCurrency(transaction.amount)}</span> of "{fundedExpense.note || 'that expense'}" from {savingsCategory ? `${savingsCategory.icon} ${savingsCategory.name}` : 'savings'}.
+            </p>
+          </div>
+          <p className="hint" style={{ marginBottom: 20 }}>
+            To change the amount, category, or date of "{fundedExpense.note || 'the expense'}" itself, open it directly from the transactions list — this record is just the funding link between the two.
+          </p>
+          <button className="danger-button" onClick={handleRemove}>Remove Funding</button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function TransferEditForm({ transaction, pair, accounts, onClose, onChanged }: { transaction: Transaction; pair: Transaction; accounts: Account[]; onClose: () => void; onChanged?: () => void }) {

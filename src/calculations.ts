@@ -505,6 +505,26 @@ export function findTransferPair(transaction: Transaction, all: Transaction[]): 
   return expense
 }
 
+/** Given a Fund From Savings withdrawal (an income transaction that
+ * covers part or all of a real expense), finds the expense it funds —
+ * used to show a compact, focused view instead of the full transaction
+ * editor when someone taps this specific record. Unlike a transfer, the
+ * expense side here still has real, independent meaning (a category, a
+ * date, tags, whether it matches a recurring bill) that needs full
+ * editing of its own — only this thin link record benefits from a
+ * simpler view, so this deliberately doesn't merge the two the way
+ * findTransferPair does. Returns null for an ordinary transaction, a
+ * genuine friend reimbursement, or a transfer. */
+export function findFundedExpense(transaction: Transaction, all: Transaction[], categories: Category[]): Transaction | null {
+  if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
+  const expense = all.find((t) => t.id === transaction.reimbursesExpenseId)
+  if (!expense) return null
+  if (isAccountTransferLink(transaction, expense)) return null
+  const ownCategory = transaction.categoryId ? categories.find((c) => c.id === transaction.categoryId) : null
+  if (!ownCategory?.isSavingsCategory) return null
+  return expense
+}
+
 export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = [], accounts: Account[] = []): string | null {
   if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
@@ -646,6 +666,80 @@ export function accountBalance(account: Account, transactions: Transaction[]): n
   const netFlow = relevant.reduce((sum, t) => sum + (t.isExpense ? -t.amount : t.amount), 0)
   const signedFlow = account.type === 'credit_card' ? -netFlow : netFlow
   return account.openingBalance + signedFlow
+}
+
+/** The account's balance as it stood at the end of a specific day —
+ * used for interest calculation, which needs the actual daily closing
+ * balance for every day in a period, not just the current balance.
+ * Deliberately a separate function from accountBalance rather than
+ * generalizing accountBalance to take an optional cutoff: accountBalance
+ * is used everywhere else in the app and is already well-tested with no
+ * upper date bound (it includes a future-dated transaction the moment
+ * it's entered, which is arguably correct for "what does this account
+ * currently show"); changing its semantics to cap at "today" to reuse
+ * it here would be a behavior change to something that already works,
+ * for the benefit of a feature that doesn't need that function touched
+ * at all. Same underlying logic, applied with an inclusive upper bound
+ * instead of none. */
+export function accountBalanceAsOf(account: Account, transactions: Transaction[], asOfDate: Date): number {
+  const openingMidnight = new Date(account.openingDate)
+  openingMidnight.setHours(0, 0, 0, 0)
+  const cutoffEndOfDay = new Date(asOfDate)
+  cutoffEndOfDay.setHours(23, 59, 59, 999)
+  const relevant = transactions.filter((t) => {
+    if (t.accountId !== account.id) return false
+    const txMidnight = new Date(t.date)
+    txMidnight.setHours(0, 0, 0, 0)
+    return txMidnight >= openingMidnight && txMidnight <= cutoffEndOfDay
+  })
+  const netFlow = relevant.reduce((sum, t) => sum + (t.isExpense ? -t.amount : t.amount), 0)
+  const signedFlow = account.type === 'credit_card' ? -netFlow : netFlow
+  return account.openingBalance + signedFlow
+}
+
+/** Interest earned over a period, calculated the way real savings
+ * accounts actually do it: a daily rate (annual rate ÷ 365) applied to
+ * the account's actual closing balance on EACH day in the period, then
+ * summed — not a flat rate applied to the opening or average balance,
+ * which would misstate it for any account whose balance changed
+ * partway through the period (a deposit or withdrawal mid-month is
+ * exactly the normal case, not an edge case, for a real savings
+ * account). Confirmed the user's own understanding matches this: "the
+ * interest is calculated daily."
+ *
+ * Rounds only the final total, not each day's contribution — real
+ * banks accrue fractional cents internally through the month and only
+ * round at the point of crediting it, and rounding every day first
+ * would introduce a small but real cumulative error against that.
+ * periodEnd is capped at "yesterday" if it would otherwise land in the
+ * future — interest can't have accrued for days that haven't happened
+ * yet, even if the person is calculating mid-month. */
+export function calculateInterestEarned(account: Account, transactions: Transaction[], periodStart: Date, periodEnd: Date): number {
+  const rate = account.interestRate
+  if (!rate) return 0
+  const dailyRate = rate / 100 / 365
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const yesterday = new Date(today)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const cappedEnd = periodEnd > yesterday ? yesterday : periodEnd
+
+  let total = 0
+  const cursor = new Date(periodStart)
+  cursor.setHours(0, 0, 0, 0)
+  const end = new Date(cappedEnd)
+  end.setHours(0, 0, 0, 0)
+  while (cursor <= end) {
+    const dayBalance = accountBalanceAsOf(account, transactions, cursor)
+    // Interest accrues on a positive balance; a credit card's "balance"
+    // here represents debt owed, not savings, so it never earns
+    // interest through this calculation regardless of a rate being set.
+    if (dayBalance > 0 && account.type !== 'credit_card') {
+      total += dayBalance * dailyRate
+    }
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return Math.round(total * 100) / 100
 }
 
 /** The single adjustment transaction needed to make accountBalance

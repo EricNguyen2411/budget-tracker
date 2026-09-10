@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Category, RecurringTransaction, Transaction } from '../types'
+import type { Category, RecurringTransaction, Transaction, Account } from '../types'
 import { runHealthCheck, type HealthFinding } from '../healthCheck'
 import { formatCurrency, netAmount } from '../calculations'
 import { renewRecurringGoal } from '../db'
@@ -16,9 +16,10 @@ interface Props {
   onOpenDuplicateCheck: () => void
   onCategoriesChanged: () => void
   onBack: () => void
+  accounts?: Account[]
 }
 
-export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onCategoriesChanged, onBack }: Props) {
+export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onCategoriesChanged, onBack, accounts = [] }: Props) {
   useSwipeBack(onBack)
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
@@ -27,7 +28,7 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
   const catById = new Map(categories.map((c) => [c.id, c]))
 
   function run() {
-    setFindings(runHealthCheck(transactions, recurring, categories))
+    setFindings(runHealthCheck(transactions, recurring, categories, new Date(), accounts))
   }
 
   async function handleFindingTap(f: HealthFinding) {
@@ -47,7 +48,7 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
         if (cat) await renewRecurringGoal(cat)
       }
       onCategoriesChanged()
-      setFindings(runHealthCheck(transactions, recurring, categories))
+      setFindings(runHealthCheck(transactions, recurring, categories, new Date(), accounts))
       return
     }
 
@@ -135,14 +136,14 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
             // a manual re-run — and keep the open drill-down modal (if
             // any) in sync too, since it otherwise holds a stale
             // snapshot from before the fix.
-            const refreshed = runHealthCheck(transactions.map((t) => t.id === editing.id ? { ...t, ...data } : t), recurring, categories)
+            const refreshed = runHealthCheck(transactions.map((t) => t.id === editing.id ? { ...t, ...data } : t), recurring, categories, new Date(), accounts)
             setFindings(refreshed)
             if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
           }}
           onDelete={() => {
             onDelete(editing.id)
             setEditing(null)
-            const refreshed = runHealthCheck(transactions.filter((t) => t.id !== editing.id), recurring, categories)
+            const refreshed = runHealthCheck(transactions.filter((t) => t.id !== editing.id), recurring, categories, new Date(), accounts)
             setFindings(refreshed)
             if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
           }}

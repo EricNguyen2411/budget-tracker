@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Category, Transaction, RecurringTransaction } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements } from '../calculations'
+import type { Category, Transaction, RecurringTransaction, Account } from '../types'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements, accountBalance } from '../calculations'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
 import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { generateInsights } from '../insights'
@@ -24,6 +24,8 @@ interface Props {
   onOpenImport: (files: FileList) => void
   onOpenRecurring: () => void
   onOpenTags: () => void
+  accounts?: Account[]
+  onOpenAccounts?: () => void
 }
 
 /** Compares the last two COMPLETE periods, deliberately excluding the
@@ -66,7 +68,7 @@ function trendSummary(periods: { periodStart: Date; amount: number }[], noun: st
   )
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags, accounts = [], onOpenAccounts }: Props) {
   const now = new Date()
   const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
   const days = daysRemainingInMonth(now)
@@ -638,6 +640,37 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 </div>
               ))}
             </div>
+          ),
+
+          accounts: accounts.length > 0 && (
+            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenAccounts}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Accounts</span>
+                <span className="chevron">›</span>
+              </div>
+              {accounts.map((a) => {
+                const balance = accountBalance(a, transactions)
+                const isDebt = a.type === 'credit_card'
+                return (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0' }}>
+                    <span style={{ fontSize: 14 }}>{a.icon} {a.name}</span>
+                    <span style={{ flex: 1 }} />
+                    <span className="amount" style={{ fontSize: 14, color: isDebt && balance > 0 ? 'var(--red)' : 'var(--text)' }}>
+                      {isDebt && balance > 0 ? `Owing ${formatCurrency(balance)}` : formatCurrency(balance)}
+                    </span>
+                  </div>
+                )
+              })}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Net Worth</span>
+                <span className="amount" style={{ fontSize: 14, fontWeight: 700 }}>
+                  {formatCurrency(
+                    accounts.filter((a) => a.type !== 'credit_card').reduce((sum, a) => sum + accountBalance(a, transactions), 0)
+                    - accounts.filter((a) => a.type === 'credit_card').reduce((sum, a) => sum + accountBalance(a, transactions), 0)
+                  )}
+                </span>
+              </div>
+            </button>
           )
         }
 

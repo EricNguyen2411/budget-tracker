@@ -38,6 +38,7 @@ export interface Account {
   openingDate: string // ISO date — balance is opening balance as of this date, calculated forward from transactions after it
   sortOrder: number
   isArchived: boolean // hidden from pickers/widgets but transactions already linked to it keep working, rather than losing that history on deletion
+  interestRate?: number | null // annual percentage rate (e.g. 4.5 for 4.5% p.a.), used to calculate interest earned — optional, most accounts don't earn interest
 }
 
 export type RecurrenceFrequency = 'weekly' | 'monthly' | 'yearly'
@@ -51,6 +52,7 @@ export interface RecurringTransaction {
   nextDueDate: string
   categoryId: string | null
   isActive: boolean
+  accountId?: string | null // optional rather than a full migration like Transaction's — records saved before this existed just read as "no account", same real-world effect
 }
 
 export interface ShoppingListItem {
