@@ -32,6 +32,48 @@ export function isLikelyTransitFare(note: string): boolean {
   return TRANSIT_FARE_KEYWORDS.some((k) => lower.includes(k))
 }
 
+/** Finds an existing stale $1.00 pending fare (see isLikelyTransitFare)
+ * that a newly-imported transit charge with its REAL, settled amount
+ * should update in place, rather than being imported as a brand new,
+ * separate transaction sitting alongside a now-permanently-stale
+ * placeholder.
+ *
+ * This is a genuinely different problem from ordinary duplicate
+ * detection, which matches on similar amounts — a $1.00 hold and a
+ * $10.54 settled fare are, by design, nothing alike in amount, so the
+ * general matcher can never connect them. Confirmed directly against
+ * real NAB screenshots that the settled amount can also post under a
+ * DIFFERENT calendar date than the original pending hold (a charge
+ * tapped on the 7th showing as pending-posted on the 8th is a real,
+ * observed pattern, not a rare edge case) — so this matches by a
+ * multi-day window and transit-fare identity, not an exact date.
+ *
+ * excludeIds lets the caller prevent two different real fares in the
+ * same import batch from both claiming the same stale placeholder. */
+export function findPendingFareMatch(
+  incoming: { note: string; amount: number; date: string; isExpense: boolean },
+  existingTransactions: Transaction[],
+  excludeIds: Set<string> = new Set()
+): Transaction | null {
+  if (!incoming.isExpense || !isLikelyTransitFare(incoming.note)) return null
+  // Re-importing the exact same $1.00 pending state isn't "resolving"
+  // anything — that's an ordinary possible-duplicate case, already
+  // handled correctly by the general same-amount-same-day matcher.
+  if (Math.abs(incoming.amount - 1) < 0.01) return null
+
+  const incomingTime = new Date(incoming.date).getTime()
+  const candidates = existingTransactions.filter((t) => {
+    if (excludeIds.has(t.id)) return false
+    if (!t.isExpense || Math.abs(t.amount - 1) > 0.01) return false
+    if (!isLikelyTransitFare(t.note)) return false
+    const daysApart = Math.abs(new Date(t.date).getTime() - incomingTime) / (24 * 60 * 60 * 1000)
+    return daysApart <= 3
+  })
+  if (candidates.length === 0) return null
+  candidates.sort((a, b) => Math.abs(new Date(a.date).getTime() - incomingTime) - Math.abs(new Date(b.date).getTime() - incomingTime))
+  return candidates[0]
+}
+
 const STOP_WORDS = new Set([
   'eftpos', 'debit', 'credit', 'purchase', 'card', 'payment', 'payments',
   'transaction', 'transfer', 'deposit', 'deposits', 'withdrawal', 'osko',

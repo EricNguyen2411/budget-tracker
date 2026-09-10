@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
-import { isLikelyDuplicate, significantTokens, genericTokens, isLikelyTransitFare } from '../duplicates'
+import { isLikelyDuplicate, significantTokens, genericTokens, isLikelyTransitFare, findPendingFareMatch } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { normalizeMerchantKey } from '../merchantRules'
 import { createTransaction, saveTransaction } from '../db'
@@ -89,6 +89,25 @@ export default function StatementImport({ categories, existingTransactions, onBa
   }
 
   const duplicateIds = new Set(results.filter((r) => matchingExisting(r).length > 0).map((r) => r.id))
+
+  // Maps an incoming row to the existing stale $1.00 placeholder it
+  // should update instead of being imported as a new transaction —
+  // processed in date order and excluding ids already claimed, so two
+  // real fares in the same batch can't both grab the same placeholder.
+  const pendingFareResolutions = useMemo(() => {
+    const map = new Map<string, Transaction>()
+    const claimed = new Set<string>()
+    const sorted = [...results].sort((a, b) => a.date.localeCompare(b.date))
+    for (const r of sorted) {
+      const match = findPendingFareMatch(r, existingTransactions, claimed)
+      if (match) {
+        map.set(r.id, match)
+        claimed.add(match.id)
+      }
+    }
+    return map
+  }, [results, existingTransactions])
+  const [skippedResolutions, setSkippedResolutions] = useState<Set<string>>(new Set())
 
   // Flagged but still checked by default — worth a second glance, not
   // assumed wrong. Median taken across this batch's expense amounts.
@@ -290,8 +309,23 @@ export default function StatementImport({ categories, existingTransactions, onBa
     // imported in this same batch (e.g. a split's income share linked to
     // its expense from a separate bank screenshot in the same scan) has
     // a real database id to point at.
+    //
+    // A row that resolves a stale $1.00 pending fare (see
+    // pendingFareResolutions) updates that existing transaction in place
+    // instead — amount and date replaced with the fresh, settled values
+    // from this import, since those are more accurate than the
+    // placeholder's original pending-time guess, but everything else
+    // (category, tags, account) stays exactly as the person already had
+    // it, rather than being reset.
     const createdByParsedId = new Map<string, Transaction>()
     for (const r of toImport) {
+      const resolveMatch = pendingFareResolutions.get(r.id)
+      if (resolveMatch && !skippedResolutions.has(r.id)) {
+        const updated: Transaction = { ...resolveMatch, amount: r.amount, note: r.note, date: r.date }
+        await saveTransaction(updated)
+        createdByParsedId.set(r.id, updated)
+        continue
+      }
       const created = await createTransaction({
         amount: r.amount,
         note: r.note,
@@ -421,6 +455,16 @@ export default function StatementImport({ categories, existingTransactions, onBa
             </button>
           )}
 
+          {(() => {
+            const activeResolutions = [...pendingFareResolutions.keys()].filter((id) => !skippedResolutions.has(id))
+            return activeResolutions.length > 0 && (
+              <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--blue)' }}>
+                <span style={{ fontSize: 13, color: 'var(--blue)', fontWeight: 600 }}>🚎 {activeResolutions.length} pending fare{activeResolutions.length === 1 ? '' : 's'} will be updated with the real amount</span>
+                <p className="hint" style={{ marginTop: 6 }}>Instead of creating new transactions, these replace the matching stale $1.00 placeholder already in your history — tap any of them below if you'd rather import it as new.</p>
+              </div>
+            )
+          })()}
+
           {skippedRows.length > 0 && (
             <div className="card" style={{ marginBottom: 12, borderLeft: '3px solid var(--red)' }}>
               <span style={{ fontSize: 13, color: 'var(--red)', fontWeight: 600 }}>{skippedRows.length} row{skippedRows.length === 1 ? '' : 's'} couldn't be read cleanly</span>
@@ -500,6 +544,25 @@ export default function StatementImport({ categories, existingTransactions, onBa
                     {duplicateIds.has(r.id) && (
                       <button onClick={() => setViewingDuplicateFor(r)} style={{ fontSize: 12, color: 'var(--amber)', textAlign: 'left' }}>
                         ⚠️ Possible duplicate — tap to compare
+                      </button>
+                    )}
+                    {pendingFareResolutions.has(r.id) && !skippedResolutions.has(r.id) && (() => {
+                      const match = pendingFareResolutions.get(r.id)!
+                      return (
+                        <button
+                          onClick={() => setSkippedResolutions((prev) => new Set(prev).add(r.id))}
+                          style={{ fontSize: 12, color: 'var(--blue)', textAlign: 'left' }}
+                        >
+                          🚎 Updates pending {formatCurrency(match.amount)} fare from {new Date(match.date).toLocaleDateString('en-AU')} — tap to import as new instead
+                        </button>
+                      )
+                    })()}
+                    {pendingFareResolutions.has(r.id) && skippedResolutions.has(r.id) && (
+                      <button
+                        onClick={() => setSkippedResolutions((prev) => { const next = new Set(prev); next.delete(r.id); return next })}
+                        style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'left' }}
+                      >
+                        Will import as new — tap to update the pending fare instead
                       </button>
                     )}
                   </div>
