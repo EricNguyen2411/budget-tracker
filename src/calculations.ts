@@ -573,21 +573,33 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[], 
   if (!transaction.isExpense) return null
   const reimbursed = totalReimbursed(transaction, all)
   if (reimbursed <= 0) return null
-  // Same distinction as repaysNote, from the expense's side this time —
-  // if every linked transaction covering this expense was funded from a
-  // savings category (not necessarily the same one, though that's the
-  // common case), say so plainly rather than the generic "reimbursed"
-  // wording, which reads as if a friend paid it back. A genuinely mixed
-  // source (part savings, part an actual friend) falls back to the
-  // neutral wording rather than guessing which framing fits better.
+  // Distinguishes "funded from savings" / "transferred out" from a
+  // genuine friend reimbursement — and, since paying on a card for a
+  // shared cost you also part-fund from your own savings is a real,
+  // normal combination (your own share from savings, everyone else's
+  // share paying you back separately), specifically calls out the
+  // savings portion when the two are genuinely mixed on the same
+  // expense, rather than collapsing to the generic "reimbursed" wording
+  // that would otherwise hide it entirely.
   const linkedTransactions = all.filter((t) => t.reimbursesExpenseId === transaction.id)
-  const allFromSavings = linkedTransactions.length > 0 && linkedTransactions.every((t) => {
+  const savingsLinked = linkedTransactions.filter((t) => {
     const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
     return cat?.isSavingsCategory ?? false
   })
-  const allTransfers = linkedTransactions.length > 0 && linkedTransactions.every((t) => isAccountTransferLink(t, transaction))
-  const verb = allFromSavings ? 'funded from savings' : allTransfers ? 'transferred out' : 'reimbursed'
-  return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} ${verb}`
+  const transferLinked = linkedTransactions.filter((t) => isAccountTransferLink(t, transaction))
+  const otherLinked = linkedTransactions.filter((t) => !savingsLinked.includes(t) && !transferLinked.includes(t))
+
+  if (savingsLinked.length === linkedTransactions.length) {
+    return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} funded from savings`
+  }
+  if (transferLinked.length === linkedTransactions.length) {
+    return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} transferred out`
+  }
+  if (savingsLinked.length > 0 && otherLinked.length > 0) {
+    const savingsAmount = savingsLinked.reduce((sum, t) => sum + t.amount, 0)
+    return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed (incl. ${formatCurrency(savingsAmount)} from savings)`
+  }
+  return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed`
 }
 
 export function isGoal(category: Category): boolean {

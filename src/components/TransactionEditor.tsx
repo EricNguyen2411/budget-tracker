@@ -243,7 +243,23 @@ function RegularTransactionEditor({ transaction, categories, allTransactions, on
   const [showFundPicker, setShowFundPicker] = useState(false)
   const fundPickerClose = useModalClose(() => setShowFundPicker(false))
   const [fundAmount, setFundAmount] = useState('')
-  const fundingLinks = transaction ? allTransactions.filter((t) => t.reimbursesExpenseId === transaction.id) : []
+  // Filtered to only actually savings-linked income — confirmed this
+  // was a real bug: without the categoryId check, a genuine friend
+  // reimbursement sitting on the same expense (someone paying you back
+  // their share of a shared purchase you also part-funded from savings)
+  // showed up in this list too, mislabeled as "Savings" once its own
+  // (non-savings) category came back null here. totalFunded/
+  // remainingToFund deliberately still sum every linked reimbursement
+  // regardless of source — that part is correct as-is, since a friend's
+  // payment genuinely does count toward "how much of this is already
+  // covered" for the purpose of how much MORE could still be funded.
+  const fundingLinks = transaction
+    ? allTransactions.filter((t) => {
+        if (t.reimbursesExpenseId !== transaction.id) return false
+        const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+        return cat?.isSavingsCategory ?? false
+      })
+    : []
   const totalFunded = transaction ? totalReimbursed(transaction, allTransactions) : 0
   const remainingToFund = transaction ? Math.max(0, transaction.amount - totalFunded) : 0
   const savingsCategories = categories.filter((c) => !c.parentId && c.isSavingsCategory)
