@@ -6,7 +6,7 @@ import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 import { DonutChart } from '../components/Charts'
 import TransactionEditor from '../components/TransactionEditor'
-import { createTransaction } from '../db'
+import { createTransaction, deleteTransaction } from '../db'
 
 interface Props {
   tag: string
@@ -339,42 +339,65 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accou
   const [amount, setAmount] = useState('')
   const [accountId, setAccountId] = useState<string | null>(null)
   const [showAccountPicker, setShowAccountPicker] = useState(false)
+  const [showExistingPicker, setShowExistingPicker] = useState(false)
+  const [existingTxId, setExistingTxId] = useState<string | null>(null)
   const account = accounts.find((a) => a.id === accountId)
+  const existingTx = transactions.find((t) => t.id === existingTxId)
+
+  // Real income already sitting in the ledger — a bank transfer someone
+  // sent you, imported or entered separately from this tag — that
+  // hasn't been linked to anything yet. Deliberately excludes anything
+  // that's already tagged with THIS tag, since that's almost always the
+  // income side of a link this exact flow already created, not a fresh
+  // payment waiting to be applied.
+  const candidateTransactions = transactions
+    .filter((t) => !t.isExpense && !t.reimbursesExpenseId && !t.tags.some((tg) => tg === tagLabel))
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 20)
 
   const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
-  const parsed = parseFloat(amount)
+  const parsed = existingTx ? existingTx.amount : parseFloat(amount)
   const { allocations, leftover } = !isNaN(parsed) && parsed > 0
     ? splitBulkReimbursement(outstandingExpenses, transactions, parsed)
     : { allocations: [] as { expenseId: string; amount: number }[], leftover: 0 }
 
   async function handleConfirm() {
     if (allocations.length === 0) return
-    const today = new Date().toISOString()
+    // Reuses the existing transaction's own date and account when
+    // applying one already received, rather than "today" and whatever
+    // account happens to be picked here — the payment already happened
+    // on its own real date, through its own real account.
+    const date = existingTx ? existingTx.date : new Date().toISOString()
+    const linkAccountId = existingTx ? existingTx.accountId : accountId
     for (const a of allocations) {
       const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
       await createTransaction({
         amount: a.amount,
         note: `Re: ${expense?.note || 'expense'}`,
-        date: today,
+        date,
         isExpense: false,
         categoryId: null,
         reimbursesExpenseId: a.expenseId,
         tags: [],
-        accountId
+        accountId: linkAccountId
       })
     }
     if (leftover > 0.01) {
       await createTransaction({
         amount: leftover,
         note: `${tagLabel} reimbursement (extra)`,
-        date: today,
+        date,
         isExpense: false,
         categoryId: null,
         reimbursesExpenseId: null,
         tags: [tagLabel],
-        accountId
+        accountId: linkAccountId
       })
     }
+    // The original transaction's amount has now been fully accounted
+    // for by the split allocations above — keeping it around too would
+    // double-count the same money as income twice.
+    if (existingTx) await deleteTransaction(existingTx.id)
     onDone()
   }
 
@@ -391,9 +414,22 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accou
             {formatCurrency(totalOwed)} is still owed across {outstandingExpenses.length} expense{outstandingExpenses.length === 1 ? '' : 's'} tagged "{tagLabel}". Enter what actually came in as one payment — it'll be split across them automatically, oldest first.
           </p>
           <label className="field-label">Amount Received</label>
-          <input type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="amount-input" autoFocus />
+          {existingTx ? (
+            <button className="picker-row" onClick={() => setExistingTxId(null)}>
+              <span>{existingTx.note || 'Income'} — {formatCurrency(existingTx.amount)} · tap to use a different amount instead</span>
+            </button>
+          ) : (
+            <>
+              <input type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="amount-input" autoFocus />
+              {candidateTransactions.length > 0 && (
+                <button onClick={() => setShowExistingPicker(true)} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 8 }}>
+                  Already received this? Use an existing transaction instead
+                </button>
+              )}
+            </>
+          )}
 
-          {accounts.length > 0 && (
+          {accounts.length > 0 && !existingTx && (
             <>
               <label className="field-label" style={{ marginTop: 16 }}>Account</label>
               <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
@@ -429,9 +465,29 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accou
             disabled={allocations.length === 0}
             style={{ width: '100%', textAlign: 'center', background: allocations.length > 0 ? 'var(--blue)' : 'var(--surface-2)', color: allocations.length > 0 ? '#FFFFFF' : 'var(--text-faint)', borderRadius: 10, padding: 12, fontWeight: 600, marginTop: 20 }}
           >
-            Record Payment
+            {existingTx ? 'Apply to This Tag' : 'Record Payment'}
           </button>
         </div>
+
+        {showExistingPicker && (
+          <div className="modal-backdrop" onClick={() => setShowExistingPicker(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Use Existing Transaction</span>
+                <button onClick={() => setShowExistingPicker(false)} className="text-button text-button-primary">Cancel</button>
+              </div>
+              <div className="modal-body">
+                <p className="hint" style={{ marginBottom: 12 }}>Its own date and account carry over — it'll be replaced with the split amounts below rather than counted twice.</p>
+                {candidateTransactions.map((t) => (
+                  <button key={t.id} className="picker-row" onClick={() => { setExistingTxId(t.id); setShowExistingPicker(false) }}>
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>{t.note || 'Income'} · {new Date(t.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                    <span className="amount" style={{ color: 'var(--green)' }}>+{formatCurrency(t.amount)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {showAccountPicker && (
           <div className="modal-backdrop" onClick={() => setShowAccountPicker(false)}>
