@@ -202,7 +202,7 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
   }
 
   const dateHeaders: { y: number; date: Date | null }[] = []
-  const rowAnchors: { index: number; y: number }[] = []
+  const rowAnchors: { index: number; y: number; isCardEndingAnchor: boolean }[] = []
   // Confirmed via testing against a real Westpac screenshot: "Transfers"
   // (and similar) only gets treated as an anchor at all when nothing
   // stronger exists anywhere in the screenshot — see isWeakRowAnchor.
@@ -213,7 +213,7 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
   merged.forEach((item, index) => {
     const text = item.text.trim()
     if (isAnyDateHeader(text)) dateHeaders.push({ y: item.box.y0, date: resolvedDateForHeader(text) })
-    if (isRowAnchorMarker(text)) rowAnchors.push({ index, y: item.box.y0 })
+    if (isRowAnchorMarker(text)) rowAnchors.push({ index, y: item.box.y0, isCardEndingAnchor: /card ending \d+/i.test(text) })
   })
 
   if (rowAnchors.length === 0) return { transactions: [], skipped: [] }
@@ -272,19 +272,36 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
     if (closestIndex !== null) excludedIndices.add(closestIndex)
   }
 
-  // Assign every remaining text block to its nearest row anchor —
-  // confirmed via testing against a real Westpac screenshot that
-  // "nearest at-or-below only" is wrong whenever a row's anchor (its
-  // "bal $X" line) isn't the LAST line of that row's content, which
-  // happens routinely once a description wraps to 3+ lines: the anchor
-  // ends up glued to the middle line, and anything below it (a trailing
-  // reference fragment, the bank's own category tag) has no anchor
-  // at-or-below IT specifically, so it was falling through to the NEXT
-  // transaction's anchor instead — contaminating that transaction's note
-  // with this one's leftovers. Absolute distance fixes this directly:
-  // content is always going to be closer to its OWN row's anchor than
-  // to a neighboring row's, regardless of which line within the row the
-  // anchor happens to sit on.
+  // Assign every remaining text block to its nearest row anchor.
+  //
+  // Two real, different bank layouts pull this in opposite directions,
+  // confirmed directly against real screenshots from each:
+  //
+  // Westpac's "bal $X" anchor isn't always the LAST line of its row —
+  // once a description wraps to 3+ lines the anchor can end up glued to
+  // a middle line, so trailing content (a reference fragment, the
+  // bank's own category tag) has no anchor at-or-below IT specifically
+  // and was falling through to the NEXT transaction's anchor instead,
+  // contaminating that transaction's note with this one's leftovers.
+  // Absolute distance (in either direction) fixes this: content is
+  // always closer to its own row's anchor than a neighbor's, regardless
+  // of which line within the row the anchor sits on.
+  //
+  // NAB's "Card ending" anchor is the opposite case — it's ALWAYS the
+  // last line of its own row, never mid-row — and for this anchor type
+  // absolute-nearest actively breaks on a 3+ line merchant name: the
+  // wrap pushes this row's own anchor down far enough that the row's
+  // FIRST line (carrying the actual amount) ends up numerically closer
+  // to the PREVIOUS row's anchor, silently merging two transactions and
+  // losing this one's amount entirely rather than just its note text.
+  // Confirmed exactly this against a real NAB screenshot: "Department
+  // of Natural" (a government department whose name wraps to 3 lines)
+  // got glued onto the previous merchant, and its own $49.15 vanished
+  // rather than being reported as skipped.
+  //
+  // Since a screenshot is structurally one bank's layout or the other,
+  // not a mix, this is decided once per screenshot rather than per item.
+  const usesCardEndingAnchors = rowAnchors.some((a) => a.isCardEndingAnchor)
   const textByAnchor = new Map<number, string[]>()
   merged.forEach((item, index) => {
     const text = item.text.trim()
@@ -293,9 +310,15 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
 
     let bestAnchor: number | null = null
     let bestDist = Infinity
-    for (const anchor of rowAnchors) {
-      const dist = Math.abs(anchor.y - item.box.y0)
-      if (dist < bestDist) { bestDist = dist; bestAnchor = anchor.index }
+    if (usesCardEndingAnchors) {
+      const atOrBelow = rowAnchors.filter((a) => a.y >= item.box.y0 - 0.001).sort((a, b) => a.y - b.y)[0]
+      if (atOrBelow) { bestAnchor = atOrBelow.index; bestDist = atOrBelow.y - item.box.y0 }
+    }
+    if (bestAnchor === null) {
+      for (const anchor of rowAnchors) {
+        const dist = Math.abs(anchor.y - item.box.y0)
+        if (dist < bestDist) { bestDist = dist; bestAnchor = anchor.index }
+      }
     }
     if (bestAnchor === null) return
     if (!textByAnchor.has(bestAnchor)) textByAnchor.set(bestAnchor, [])

@@ -24,6 +24,7 @@ export interface Transaction {
   reimbursesExpenseId: string | null
   tags: string[] // free-form, lowercase-normalized on entry; cuts across categories (e.g. "japan 2026", "work trip")
   accountId: string | null // which real account (bank/credit card/savings) this transaction moved money through — independent of category, since one category can be paid from several accounts
+  installmentPlanId?: string | null // links a generated payment back to its InstallmentPlan — optional rather than a full migration, since it's only read in a few grouping/progress-display spots, not the widespread per-transaction comparisons accountId needed
 }
 
 export type AccountType = 'bank' | 'credit_card' | 'savings' | 'cash' | 'other'
@@ -42,6 +43,22 @@ export interface Account {
 }
 
 export type RecurrenceFrequency = 'weekly' | 'monthly' | 'yearly'
+
+export type InstallmentFrequency = 'weekly' | 'fortnightly' | 'monthly'
+
+export interface InstallmentPlan {
+  id: string
+  note: string // what was bought, e.g. "New Laptop"
+  provider: string // free text — "Afterpay", "Zip", "PayPal Pay in 4", etc.
+  totalAmount: number
+  numberOfInstallments: number
+  frequency: InstallmentFrequency
+  firstDueDate: string // ISO date — when installment 1 is/was due
+  categoryId: string | null
+  accountId: string | null
+  isActive: boolean // false once cancelled early or fully paid off and dismissed
+  nextInstallmentIndex?: number // how many installments have EVER been auto-generated (0-based next index) — advances independently of whether those transactions still exist, the same way RecurringTransaction.nextDueDate does, so deleting a generated payment doesn't cause it to silently regenerate. Optional for the same reason accountId is on RecurringTransaction: a plan saved before this existed just reads as 0, which is what it would have been anyway.
+}
 
 export interface RecurringTransaction {
   id: string

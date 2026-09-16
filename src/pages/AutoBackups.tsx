@@ -4,7 +4,7 @@ import { useSwipeBack } from '../useSwipeBack'
 
 interface Props {
   onBack: () => void
-  onRestored: () => void
+  onRestored: () => void | Promise<void>
 }
 
 export default function AutoBackups({ onBack, onRestored }: Props) {
@@ -21,7 +21,10 @@ export default function AutoBackups({ onBack, onRestored }: Props) {
     try {
       const result = await restoreAutoBackup(id)
       setStatus(`Restored ${result.categoriesCount} categories and ${result.transactionsCount} transactions.`)
-      onRestored()
+      // Catches up any recurring bills or installment payments in the
+      // restored snapshot that are now overdue — same reasoning as the
+      // manual backup-file restore path.
+      await onRestored()
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Restore failed.')
     }

@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { Category, RecurringTransaction, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote } from '../calculations'
+import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote, findTransferPair } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
-import { normalizeTag } from '../tags'
+import { normalizeTag, dedupeTags, allTagsFrom } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
 import SwipeableRow from '../components/SwipeableRow'
 import QuickAddBar from '../components/QuickAddBar'
@@ -45,6 +45,9 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkCategoryPicker, setShowBulkCategoryPicker] = useState(false)
   const bulkPickerClose = useModalClose(() => setShowBulkCategoryPicker(false))
+  const [showBulkTagPicker, setShowBulkTagPicker] = useState(false)
+  const bulkTagPickerClose = useModalClose(() => setShowBulkTagPicker(false))
+  const [bulkTagInput, setBulkTagInput] = useState('')
 
   const categoryById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories])
 
@@ -98,8 +101,23 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
   }
 
   async function bulkDelete() {
-    if (!confirm(`Delete ${selectedIds.size} transaction${selectedIds.size === 1 ? '' : 's'}? This can't be undone.`)) return
-    for (const id of selectedIds) await onDelete(id)
+    // Expands the selection to include the OTHER half of any transfer
+    // caught up in it — confirmed directly that deleting just one side
+    // through bulk-select leaves the other behind looking like a plain,
+    // unrelated income transaction (and incorrectly counting toward the
+    // Income stat, since its link to the deleted expense is gone too).
+    // The dedicated transfer editor already treats a transfer as one
+    // thing for deletion; this keeps bulk-select consistent with that
+    // rather than being a second, less careful way to delete one.
+    const expanded = new Set(selectedIds)
+    for (const id of selectedIds) {
+      const t = transactions.find((tx) => tx.id === id)
+      if (!t) continue
+      const pair = findTransferPair(t, transactions)
+      if (pair) expanded.add(pair.id)
+    }
+    if (!confirm(`Delete ${expanded.size} transaction${expanded.size === 1 ? '' : 's'}? This can't be undone.`)) return
+    for (const id of expanded) await onDelete(id)
     exitSelectMode()
   }
 
@@ -107,6 +125,35 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
     const targets = transactions.filter((t) => selectedIds.has(t.id))
     for (const t of targets) await onSave({ ...t, categoryId }, t.id)
     setShowBulkCategoryPicker(false)
+    exitSelectMode()
+  }
+
+  // Merges into each transaction's EXISTING tags rather than replacing
+  // them — bulk-tagging a trip's expenses with "#tasmania" shouldn't
+  // silently wipe out a tag one of them already had for something else.
+  async function bulkAddTag(rawTag: string) {
+    const tag = normalizeTag(rawTag)
+    if (!tag) return
+    const targets = transactions.filter((t) => selectedIds.has(t.id))
+    for (const t of targets) {
+      if (t.tags.includes(tag)) continue
+      await onSave({ ...t, tags: dedupeTags([...t.tags, tag]) }, t.id)
+    }
+    setShowBulkTagPicker(false)
+    setBulkTagInput('')
+    exitSelectMode()
+  }
+
+  // Counterpart to bulkAddTag — only touches transactions that actually
+  // have the tag, so it's safe to run across a selection where some
+  // transactions have it and some don't.
+  async function bulkRemoveTag(tag: string) {
+    const targets = transactions.filter((t) => selectedIds.has(t.id) && t.tags.includes(tag))
+    for (const t of targets) {
+      await onSave({ ...t, tags: t.tags.filter((existing) => existing !== tag) }, t.id)
+    }
+    setShowBulkTagPicker(false)
+    setBulkTagInput('')
     exitSelectMode()
   }
 
@@ -222,6 +269,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
             <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>{selectedIds.size} selected</span>
             <div style={{ display: 'flex', gap: 16 }}>
               <button style={{ color: 'var(--blue)', fontSize: 13, fontWeight: 600 }} onClick={() => setShowBulkCategoryPicker(true)}>Category</button>
+              <button style={{ color: 'var(--purple)', fontSize: 13, fontWeight: 600 }} onClick={() => setShowBulkTagPicker(true)}>Tag</button>
               <button style={{ color: 'var(--red)', fontSize: 13, fontWeight: 600 }} onClick={bulkDelete}>Delete</button>
             </div>
           </div>
@@ -306,6 +354,77 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           </div>
         </div>
       )}
+
+      {showBulkTagPicker && (() => {
+        const existingTags = allTagsFrom(transactions)
+        const query = normalizeTag(bulkTagInput)
+        const suggestions = existingTags.filter((t) => t.includes(query)).slice(0, 8)
+        const selectedTransactions = transactions.filter((t) => selectedIds.has(t.id))
+        const tagsOnSelection = [...new Set(selectedTransactions.flatMap((t) => t.tags))].sort()
+        return (
+          <div className={`modal-backdrop${bulkTagPickerClose.closing ? ' modal-closing' : ''}`} onClick={() => bulkTagPickerClose.requestClose()}>
+            <div className={`modal-sheet${bulkTagPickerClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Tag {selectedIds.size} transaction{selectedIds.size === 1 ? '' : 's'}</span>
+                <button className="text-button" onClick={() => bulkTagPickerClose.requestClose()}>Cancel</button>
+              </div>
+              <div className="modal-body">
+                {tagsOnSelection.length > 0 && (
+                  <>
+                    <label className="field-label">On This Selection — tap to remove</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6, marginBottom: 16 }}>
+                      {tagsOnSelection.map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => bulkTagPickerClose.requestClose(() => bulkRemoveTag(t))}
+                          style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 5 }}
+                        >
+                          {t} <span style={{ color: 'var(--red)' }}>×</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <label className="field-label">Add a Tag</label>
+                <p className="hint" style={{ marginBottom: 12 }}>Added alongside whatever tags each transaction already has — nothing gets removed.</p>
+                <input
+                  type="text"
+                  placeholder="e.g. work trip"
+                  value={bulkTagInput}
+                  onChange={(e) => setBulkTagInput(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      bulkTagPickerClose.requestClose(() => bulkAddTag(bulkTagInput))
+                    }
+                  }}
+                />
+                {suggestions.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                    {suggestions.map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => bulkTagPickerClose.requestClose(() => bulkAddTag(t))}
+                        style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--purple)' }}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  style={{ width: '100%', textAlign: 'center', background: query ? 'var(--blue)' : 'var(--surface-2)', color: query ? '#FFFFFF' : 'var(--text-faint)', borderRadius: 10, padding: 12, fontWeight: 600, marginTop: 16 }}
+                  disabled={!query}
+                  onClick={() => bulkTagPickerClose.requestClose(() => bulkAddTag(bulkTagInput))}
+                >
+                  Add Tag
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

@@ -53,6 +53,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)
   const pickingCategoryClose = useModalClose(() => setPickingCategoryFor(null))
   const [similarPrompt, setSimilarPrompt] = useState<{ categoryId: string | null; matchIds: string[] } | null>(null)
+  const [similarPromptSelected, setSimilarPromptSelected] = useState<Set<string>>(new Set())
   const similarBatchClose = useModalClose(() => setSimilarPrompt(null))
   const [hideDuplicates, setHideDuplicates] = useState(false)
 
@@ -289,6 +290,11 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
     if (matches.length > 0) {
       setSimilarPrompt({ categoryId, matchIds: matches.map((m) => m.id) })
+      // Defaults to every match checked — preserves "apply to all" as
+      // the one-tap default for the common case, while still letting
+      // individual rows be unchecked before confirming, rather than the
+      // previous all-or-nothing choice between every match and none.
+      setSimilarPromptSelected(new Set(matches.map((m) => m.id)))
     }
   }
 
@@ -296,7 +302,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
     if (!similarPrompt) return
     setCategoryOverrides((m) => {
       const next = new Map(m)
-      for (const id of similarPrompt.matchIds) next.set(id, similarPrompt.categoryId)
+      for (const id of similarPromptSelected) next.set(id, similarPrompt.categoryId)
       return next
     })
     setSimilarPrompt(null)
@@ -678,19 +684,41 @@ export default function StatementImport({ categories, existingTransactions, onBa
               </div>
               <div className="modal-body">
                 <p style={{ fontSize: 14, marginBottom: 12 }}>
-                  {matches.length} other transaction{matches.length === 1 ? '' : 's'} in this batch look{matches.length === 1 ? 's' : ''} similar — set {cat ? `${cat.icon} ${cat.name}` : 'the same category'} for these too?
+                  {matches.length} other transaction{matches.length === 1 ? '' : 's'} in this batch look{matches.length === 1 ? 's' : ''} similar — set {cat ? `${cat.icon} ${cat.name}` : 'the same category'} for these too? Uncheck any that don't belong.
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-                  {matches.map((m) => (
-                    <div className="card" key={m.id} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ fontSize: 13 }}>{m.note}</span>
-                      <span className="amount" style={{ fontSize: 13 }}>{m.isExpense ? '-' : '+'}{formatCurrency(m.amount)}</span>
-                    </div>
-                  ))}
+                  {matches.map((m) => {
+                    const checked = similarPromptSelected.has(m.id)
+                    return (
+                      <button
+                        key={m.id}
+                        className="card"
+                        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', textAlign: 'left', opacity: checked ? 1 : 0.5 }}
+                        onClick={() => setSimilarPromptSelected((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(m.id)) next.delete(m.id); else next.add(m.id)
+                          return next
+                        })}
+                      >
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <input type="checkbox" checked={checked} readOnly style={{ width: 18, height: 18 }} />
+                          <span style={{ fontSize: 13 }}>{m.note}</span>
+                        </span>
+                        <span className="amount" style={{ fontSize: 13 }}>{m.isExpense ? '-' : '+'}{formatCurrency(m.amount)}</span>
+                      </button>
+                    )
+                  })}
                 </div>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button className="list-button" style={{ flex: 1, textAlign: 'center', color: 'var(--text-dim)' }} onClick={() => similarBatchClose.requestClose()}>Not now</button>
-                  <button className="list-button" style={{ flex: 1, textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, fontWeight: 600 }} onClick={() => similarBatchClose.requestClose(confirmSimilarPrompt)}>Apply to All</button>
+                  <button
+                    className="list-button"
+                    style={{ flex: 1, textAlign: 'center', background: similarPromptSelected.size > 0 ? 'var(--blue)' : 'var(--surface-2)', color: similarPromptSelected.size > 0 ? '#fff' : 'var(--text-faint)', borderRadius: 10, fontWeight: 600 }}
+                    disabled={similarPromptSelected.size === 0}
+                    onClick={() => similarBatchClose.requestClose(confirmSimilarPrompt)}
+                  >
+                    Apply to {similarPromptSelected.size}
+                  </button>
                 </div>
               </div>
             </div>

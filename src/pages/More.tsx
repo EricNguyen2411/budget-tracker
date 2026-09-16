@@ -15,9 +15,10 @@ interface Props {
   onCategoriesChanged: () => void
   onNavigate: (tab: string) => void
   accounts?: Account[]
+  onRestored?: () => void | Promise<void>
 }
 
-export default function More({ categories, transactions, onCategoriesChanged, onNavigate, accounts = [] }: Props) {
+export default function More({ categories, transactions, onCategoriesChanged, onNavigate, accounts = [], onRestored }: Props) {
   const [status, setStatus] = useState<string | null>(null)
   const [settings, setSettings] = useState(getSettings())
   const [overrides, setOverrides] = useState(getCycleOverrides())
@@ -87,6 +88,12 @@ export default function More({ categories, transactions, onCategoriesChanged, on
     try {
       const text = await file.text()
       const result = await importBackup(text)
+      // Catches up any recurring bills or installment payments in the
+      // restored data that are now overdue — otherwise they'd sit
+      // uncaught-up until the next full page reload happened to trigger
+      // it, which isn't something a person restoring a backup would
+      // think to do or even know mattered here.
+      await onRestored?.()
       onCategoriesChanged()
       setStatus(`Restored ${result.categoriesCount} categories and ${result.transactionsCount} transactions.`)
     } catch (err) {
@@ -189,6 +196,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           { tab: 'categorybreakdown', icon: '🥧', label: 'Spending by Category (by Month)' },
           { tab: 'tags', icon: '🏷️', label: 'Tags' },
           { tab: 'recurring', icon: '🔁', label: 'Recurring' },
+          { tab: 'installments', icon: '🛍️', label: 'Installment Plans' },
           { tab: 'shopping', icon: '🛒', label: 'Shopping Lists' },
           { tab: 'report', icon: '📆', label: 'Custom Date Range Report' },
           { tab: 'duplicates', icon: '📑', label: 'Duplicate Check' },

@@ -16,11 +16,6 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return result === 'granted'
 }
 
-export function notificationPermissionStatus(): NotificationPermission | 'unsupported' {
-  if (!('Notification' in window)) return 'unsupported'
-  return Notification.permission
-}
-
 /** Call once per app open. If enabled, permitted, and it's been long enough
  * since the most recent transaction, shows an immediate notification. */
 export function checkInAppNudge(mostRecentTransactionDate: Date | null, enabled: boolean, thresholdDays: number) {

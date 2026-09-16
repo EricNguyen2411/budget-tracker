@@ -3,14 +3,6 @@ import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetP
 import { normalizeMerchantKey } from './merchantRules'
 import { normalizeTag } from './tags'
 
-export function startOfMonth(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), 1)
-}
-
-export function isSameMonth(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
-}
-
 /** Reimbursements linked to a given expense. */
 export function reimbursementsFor(expense: Transaction, all: Transaction[]): Transaction[] {
   return all.filter((t) => t.reimbursesExpenseId === expense.id)
@@ -600,6 +592,48 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[], 
     return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed (incl. ${formatCurrency(savingsAmount)} from savings)`
   }
   return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed`
+}
+
+export interface BulkReimbursementAllocation {
+  expenseId: string
+  amount: number
+}
+
+/** Splits ONE lump-sum payment across several different, already-owed
+ * expenses — the case a trip's cost being paid back all at once in a
+ * single transfer, rather than the person who owes you settling each
+ * expense separately, genuinely doesn't fit the existing one-income-
+ * links-one-expense reimbursement flow. Deliberately still creates that
+ * same familiar per-expense link underneath (one linked income
+ * transaction per expense) rather than a new kind of link the rest of
+ * the app doesn't know how to net, display, or exclude from Safe to
+ * Spend — this only decides how much of the ONE payment each expense's
+ * share is.
+ *
+ * Only ever allocates up to what's still actually owed on each expense
+ * — one that's already been reimbursed some other way keeps whatever
+ * headroom is left and no more. Allocates in the given order (typically
+ * oldest first) and stops once the payment runs out, so a lump sum
+ * smaller than the true total correctly covers the earliest expenses in
+ * full rather than smearing a token amount across all of them — day to
+ * day a shared trip is usually settled against what's ACTUALLY still
+ * outstanding at the time, not a proportional shave off everything.
+ * leftover is whatever's left of the payment once every expense is
+ * fully covered (a lump sum larger than the true total), for the caller
+ * to record separately as its own income rather than force onto an
+ * expense that doesn't need it. */
+export function splitBulkReimbursement(expenses: Transaction[], all: Transaction[], bulkAmount: number): { allocations: BulkReimbursementAllocation[]; leftover: number } {
+  const allocations: BulkReimbursementAllocation[] = []
+  let remaining = Math.round(bulkAmount * 100) / 100
+  for (const expense of expenses) {
+    if (remaining <= 0) break
+    const owed = Math.round((expense.amount - totalReimbursed(expense, all)) * 100) / 100
+    if (owed <= 0) continue
+    const allocated = Math.min(owed, remaining)
+    allocations.push({ expenseId: expense.id, amount: allocated })
+    remaining = Math.round((remaining - allocated) * 100) / 100
+  }
+  return { allocations, leftover: Math.max(0, remaining) }
 }
 
 export function isGoal(category: Category): boolean {

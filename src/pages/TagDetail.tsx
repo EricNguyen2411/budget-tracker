@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount } from '../calculations'
+import type { Category, Transaction, Account } from '../types'
+import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress } from '../calculations'
 import { normalizeTag } from '../tags'
 import { useSwipeBack } from '../useSwipeBack'
+import { useModalClose } from '../useModalClose'
 import { DonutChart } from '../components/Charts'
 import TransactionEditor from '../components/TransactionEditor'
+import { createTransaction } from '../db'
 
 interface Props {
   tag: string
@@ -15,11 +17,14 @@ interface Props {
   onDelete: (id: string) => void
   onViewInTransactions: () => void
   onChanged: () => void
+  accounts?: Account[]
 }
 
-export default function TagDetail({ tag, categories, transactions, onBack, onSave, onDelete, onViewInTransactions, onChanged }: Props) {
+export default function TagDetail({ tag, categories, transactions, onBack, onSave, onDelete, onViewInTransactions, onChanged, accounts = [] }: Props) {
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Transaction | null>(null)
+  const [showBulkReimburse, setShowBulkReimburse] = useState(false)
+  const [showBulkFund, setShowBulkFund] = useState(false)
   const normalized = normalizeTag(tag)
 
   const tagged = useMemo(
@@ -29,6 +34,23 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
 
   const expenseTotal = tagged.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
   const incomeTotal = tagged.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+
+  // Every tagged expense that isn't yet fully paid back — sorted oldest
+  // first, matching splitBulkReimbursement's own allocation order, so
+  // the preview shown while entering an amount lines up with what
+  // confirming it will actually do.
+  const outstandingExpenses = useMemo(
+    () => tagged.filter((t) => t.isExpense && t.amount - totalReimbursed(t, transactions) > 0.01).sort((a, b) => a.date.localeCompare(b.date)),
+    [tagged, transactions]
+  )
+  const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
+
+  // Savings categories with an actual balance to draw from — a category
+  // sitting at $0 isn't a useful funding source to offer.
+  const availableSavingsCategories = useMemo(
+    () => categories.filter((c) => c.isSavingsCategory && !c.parentId && goalProgress(c, transactions) > 0.01),
+    [categories, transactions]
+  )
 
   // Deliberately all-time / not period-scoped, unlike category
   // breakdowns elsewhere — a tag like a holiday or a trip doesn't care
@@ -92,6 +114,16 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
             {' · '}{tagged.length} transaction{tagged.length === 1 ? '' : 's'}
           </span>
         )}
+        {totalOwed > 0.01 && (
+          <button onClick={() => setShowBulkReimburse(true)} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 8, display: 'block' }}>
+            {formatCurrency(totalOwed)} still owed — record one payment for it
+          </button>
+        )}
+        {availableSavingsCategories.length > 0 && outstandingExpenses.length > 0 && (
+          <button onClick={() => setShowBulkFund(true)} className="text-button" style={{ fontSize: 13, color: 'var(--green)', marginTop: 4, display: 'block' }}>
+            Fund as much of this as possible from savings
+          </button>
+        )}
       </div>
 
       {categoryBreakdown.length > 1 && (
@@ -141,6 +173,288 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
             </button>
           )
         })}
+      </div>
+
+      {showBulkReimburse && (
+        <BulkReimburseModal
+          tagLabel={normalized}
+          outstandingExpenses={outstandingExpenses}
+          transactions={transactions}
+          accounts={accounts}
+          onClose={() => setShowBulkReimburse(false)}
+          onDone={() => { setShowBulkReimburse(false); onChanged() }}
+        />
+      )}
+
+      {showBulkFund && (
+        <BulkFundModal
+          tagLabel={normalized}
+          outstandingExpenses={outstandingExpenses}
+          transactions={transactions}
+          savingsCategories={availableSavingsCategories}
+          onClose={() => setShowBulkFund(false)}
+          onDone={() => { setShowBulkFund(false); onChanged() }}
+        />
+      )}
+    </div>
+  )
+}
+
+function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCategories, onClose, onDone }: {
+  tagLabel: string
+  outstandingExpenses: Transaction[]
+  transactions: Transaction[]
+  savingsCategories: Category[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const [categoryId, setCategoryId] = useState(savingsCategories[0]?.id ?? null)
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false)
+  const category = savingsCategories.find((c) => c.id === categoryId)
+
+  const available = category ? goalProgress(category, transactions) : 0
+  const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
+  const amountToUse = Math.min(available, totalOwed)
+  const { allocations } = amountToUse > 0
+    ? splitBulkReimbursement(outstandingExpenses, transactions, amountToUse)
+    : { allocations: [] as { expenseId: string; amount: number }[] }
+  const remainingAfter = Math.max(0, totalOwed - amountToUse)
+
+  async function handleConfirm() {
+    if (allocations.length === 0 || !categoryId) return
+    const today = new Date().toISOString()
+    for (const a of allocations) {
+      const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
+      await createTransaction({
+        amount: a.amount,
+        note: `Re: ${expense?.note || 'expense'}`,
+        date: today,
+        isExpense: false,
+        categoryId,
+        reimbursesExpenseId: a.expenseId,
+        tags: [],
+        accountId: null
+      })
+    }
+    onDone()
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
+          <span className="modal-title">Fund from Savings</span>
+          <span style={{ width: 60 }} />
+        </div>
+        <div className="modal-body">
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 12 }}>
+            Covers as much of "{tagLabel}" as {category ? `${category.icon} ${category.name}` : 'this category'}'s balance allows, oldest expense first — whatever's left over stays as genuine spending from wherever you actually paid.
+          </p>
+
+          {savingsCategories.length > 1 && (
+            <>
+              <label className="field-label">From</label>
+              <button className="picker-row" onClick={() => setShowCategoryPicker(true)}>
+                <span>{category ? `${category.icon} ${category.name}` : 'Choose a category'}</span>
+                <span className="chevron">›</span>
+              </button>
+            </>
+          )}
+
+          <div className="card" style={{ marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}>
+              <span style={{ color: 'var(--text-dim)' }}>Available in {category?.name ?? 'savings'}</span>
+              <span className="amount">{formatCurrency(available)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '3px 0' }}>
+              <span style={{ color: 'var(--text-dim)' }}>Total still owed on "{tagLabel}"</span>
+              <span className="amount">{formatCurrency(totalOwed)}</span>
+            </div>
+          </div>
+
+          {allocations.length > 0 && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <span className="section-heading" style={{ margin: '0 0 8px' }}>Will Be Funded</span>
+              {allocations.map((a) => {
+                const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
+                return (
+                  <div key={a.expenseId} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{expense?.note || 'Expense'}</span>
+                    <span className="amount">{formatCurrency(a.amount)}</span>
+                  </div>
+                )
+              })}
+              {remainingAfter > 0.01 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, marginTop: 4, borderTop: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Still genuinely owed after this (savings ran out)</span>
+                  <span className="amount">{formatCurrency(remainingAfter)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={() => requestClose(handleConfirm)}
+            disabled={allocations.length === 0}
+            style={{ width: '100%', textAlign: 'center', background: allocations.length > 0 ? 'var(--green)' : 'var(--surface-2)', color: allocations.length > 0 ? '#FFFFFF' : 'var(--text-faint)', borderRadius: 10, padding: 12, fontWeight: 600, marginTop: 20 }}
+          >
+            Fund {formatCurrency(amountToUse)} from Savings
+          </button>
+        </div>
+
+        {showCategoryPicker && (
+          <div className="modal-backdrop" onClick={() => setShowCategoryPicker(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Fund From</span>
+                <button onClick={() => setShowCategoryPicker(false)} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                {savingsCategories.map((c) => (
+                  <button key={c.id} className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
+                    <span>{c.icon} {c.name}</span>
+                    {categoryId === c.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accounts, onClose, onDone }: {
+  tagLabel: string
+  outstandingExpenses: Transaction[]
+  transactions: Transaction[]
+  accounts: Account[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const [amount, setAmount] = useState('')
+  const [accountId, setAccountId] = useState<string | null>(null)
+  const [showAccountPicker, setShowAccountPicker] = useState(false)
+  const account = accounts.find((a) => a.id === accountId)
+
+  const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
+  const parsed = parseFloat(amount)
+  const { allocations, leftover } = !isNaN(parsed) && parsed > 0
+    ? splitBulkReimbursement(outstandingExpenses, transactions, parsed)
+    : { allocations: [] as { expenseId: string; amount: number }[], leftover: 0 }
+
+  async function handleConfirm() {
+    if (allocations.length === 0) return
+    const today = new Date().toISOString()
+    for (const a of allocations) {
+      const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
+      await createTransaction({
+        amount: a.amount,
+        note: `Re: ${expense?.note || 'expense'}`,
+        date: today,
+        isExpense: false,
+        categoryId: null,
+        reimbursesExpenseId: a.expenseId,
+        tags: [],
+        accountId
+      })
+    }
+    if (leftover > 0.01) {
+      await createTransaction({
+        amount: leftover,
+        note: `${tagLabel} reimbursement (extra)`,
+        date: today,
+        isExpense: false,
+        categoryId: null,
+        reimbursesExpenseId: null,
+        tags: [tagLabel],
+        accountId
+      })
+    }
+    onDone()
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
+          <span className="modal-title">Record Payment</span>
+          <span style={{ width: 60 }} />
+        </div>
+        <div className="modal-body">
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 12 }}>
+            {formatCurrency(totalOwed)} is still owed across {outstandingExpenses.length} expense{outstandingExpenses.length === 1 ? '' : 's'} tagged "{tagLabel}". Enter what actually came in as one payment — it'll be split across them automatically, oldest first.
+          </p>
+          <label className="field-label">Amount Received</label>
+          <input type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="amount-input" autoFocus />
+
+          {accounts.length > 0 && (
+            <>
+              <label className="field-label" style={{ marginTop: 16 }}>Account</label>
+              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
+                <span>{account ? `${account.icon} ${account.name}` : 'None (optional)'}</span>
+                <span className="chevron">›</span>
+              </button>
+            </>
+          )}
+
+          {allocations.length > 0 && (
+            <div className="card" style={{ marginTop: 20 }}>
+              <span className="section-heading" style={{ margin: '0 0 8px' }}>Applied To</span>
+              {allocations.map((a) => {
+                const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
+                return (
+                  <div key={a.expenseId} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
+                    <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{expense?.note || 'Expense'}</span>
+                    <span className="amount">{formatCurrency(a.amount)}</span>
+                  </div>
+                )
+              })}
+              {leftover > 0.01 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, marginTop: 4, borderTop: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>Extra (more than was owed)</span>
+                  <span className="amount">{formatCurrency(leftover)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={() => requestClose(handleConfirm)}
+            disabled={allocations.length === 0}
+            style={{ width: '100%', textAlign: 'center', background: allocations.length > 0 ? 'var(--blue)' : 'var(--surface-2)', color: allocations.length > 0 ? '#FFFFFF' : 'var(--text-faint)', borderRadius: 10, padding: 12, fontWeight: 600, marginTop: 20 }}
+          >
+            Record Payment
+          </button>
+        </div>
+
+        {showAccountPicker && (
+          <div className="modal-backdrop" onClick={() => setShowAccountPicker(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Account</span>
+                <button onClick={() => setShowAccountPicker(false)} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                <button className="picker-row" onClick={() => { setAccountId(null); setShowAccountPicker(false) }}>
+                  <span>None (optional)</span>
+                  {!accountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                </button>
+                {accounts.map((a) => (
+                  <button key={a.id} className="picker-row" onClick={() => { setAccountId(a.id); setShowAccountPicker(false) }}>
+                    <span>{a.icon} {a.name}</span>
+                    {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
-import type { Category, Transaction, RecurringTransaction, ShoppingList, Account } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, Account, InstallmentPlan } from './types'
 import {
   ensureDefaultCategories, getCategories, getTransactions, createTransaction, saveTransaction, deleteTransaction,
   getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce,
-  getAccounts
+  getAccounts, getInstallmentPlans, saveInstallmentPlan
 } from './db'
 import { processDueRecurring } from './recurring'
+import { processDueInstallments } from './installments'
 import { getSettings, isCustomCycle, getCycleConfig, predictedCycleFor, setCycleOverride } from './budgetPeriod'
 import { localDateInputValue } from './calculations'
 import { checkInAppNudge } from './notifications'
@@ -15,6 +16,7 @@ import TransactionsPage from './pages/Transactions'
 import Budgets from './pages/Budgets'
 import More from './pages/More'
 import RecurringPage from './pages/Recurring'
+import InstallmentPlansPage from './pages/InstallmentPlansPage'
 import ShoppingLists from './pages/ShoppingLists'
 import DuplicateCheck from './pages/DuplicateCheck'
 import HealthCheck from './pages/HealthCheck'
@@ -35,7 +37,7 @@ import AccountsScreen from './pages/AccountsScreen'
 import AccountDetail from './pages/AccountDetail'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts' | 'installments'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -51,6 +53,7 @@ export default function App() {
   const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
   const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlan[]>([])
   const [loaded, setLoaded] = useState(false)
   const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
   const [viewingTagDetail, setViewingTagDetail] = useState<string | null>(null)
@@ -79,22 +82,41 @@ export default function App() {
   )
 
   const reload = useCallback(async () => {
-    const [cats, txs, rec, lists, accts] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists(), getAccounts()])
+    const [cats, txs, rec, lists, accts, plans] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists(), getAccounts(), getInstallmentPlans()])
     setCategories(cats)
     setTransactions(txs)
     setRecurring(rec)
     setShoppingLists(lists)
     setAccounts(accts)
+    setInstallmentPlans(plans)
+  }, [])
+
+  // Shared between initial app load and restoring a backup — a backup
+  // brought in from another device can easily contain recurring bills
+  // or installment plans with payments that are now overdue, and
+  // without this also running right after a restore, they'd just sit
+  // there uncaught-up until the next full page reload happened to
+  // trigger the init effect below, which is neither obvious nor
+  // something a person restoring a backup would think to do themselves.
+  const catchUpDueItems = useCallback(async () => {
+    const rec = await getRecurring()
+    const { newTransactions, updatedRecurring } = processDueRecurring(rec)
+    for (const t of newTransactions) await createTransaction(t)
+    for (const r of updatedRecurring) await saveRecurring(r)
+
+    const plans = await getInstallmentPlans()
+    const existingTx = await getTransactions()
+    const { newTransactions: dueInstallments, updatedPlans } = processDueInstallments(plans, existingTx)
+    for (const t of dueInstallments) await createTransaction(t)
+    for (const p of updatedPlans) await saveInstallmentPlan(p)
   }, [])
 
   useEffect(() => {
     async function init() {
       await ensureDefaultCategories()
       await syncReimbursementCategoriesOnce()
-      const rec = await getRecurring()
-      const { newTransactions, updatedRecurring } = processDueRecurring(rec)
-      for (const t of newTransactions) await createTransaction(t)
-      for (const r of updatedRecurring) await saveRecurring(r)
+      await catchUpDueItems()
+
       await reload()
       setLoaded(true)
       performAutoBackupIfNeeded()
@@ -105,7 +127,7 @@ export default function App() {
       checkInAppNudge(mostRecent, settings.nudgeEnabled ?? false, 3)
     }
     init()
-  }, [reload])
+  }, [reload, catchUpDueItems])
 
   async function handleSaveTransaction(data: Omit<Transaction, 'id'>, existingId: string | null) {
     if (existingId) {
@@ -192,6 +214,7 @@ export default function App() {
             setTab('transactions')
           }}
           onChanged={reload}
+          accounts={accounts}
         />
       ) : statDetail ? (
         <TypedTransactions
@@ -234,6 +257,8 @@ export default function App() {
           onOpenTags={() => { setReturnTab('dashboard'); setTab('tags') }}
           accounts={accounts}
           onOpenAccounts={() => { setReturnTab('dashboard'); setTab('accounts') }}
+          installmentPlans={installmentPlans}
+          onOpenInstallments={() => { setReturnTab('dashboard'); setTab('installments') }}
         />
       )}
       {tab === 'transactions' && (
@@ -257,9 +282,11 @@ export default function App() {
           onNavigate={(t) => { setReturnTab('more'); setTab(t as Tab) }}
           transactions={transactions}
           accounts={accounts}
+          onRestored={catchUpDueItems}
         />
       )}
       {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} onBack={() => setTab('more')} accounts={accounts} />}
+      {tab === 'installments' && <InstallmentPlansPage categories={categories} transactions={transactions} installmentPlans={installmentPlans} onChanged={reload} onBack={() => setTab('more')} accounts={accounts} />}
       {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
       {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} onBack={() => setTab(returnTab)} />}
       {tab === 'health' && (
@@ -307,7 +334,7 @@ export default function App() {
         />
       )}
       {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} transactions={transactions} onBack={() => setTab('more')} onChanged={reload} />}
-      {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={reload} />}
+      {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={async () => { await catchUpDueItems(); await reload() }} />}
       {tab === 'categorybreakdown' && (
         <CategoryBreakdownByMonth
           categories={categories}
@@ -351,7 +378,7 @@ export default function App() {
           Budgets
         </button>
         <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags', 'accounts'].includes(tab) && !anyOverlay} />
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags', 'accounts', 'installments'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

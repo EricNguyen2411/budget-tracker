@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Category, Transaction, RecurringTransaction, Account } from '../types'
+import type { Category, Transaction, RecurringTransaction, Account, InstallmentPlan } from '../types'
 import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements, accountBalance } from '../calculations'
+import { installmentProgress } from '../installments'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
 import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { generateInsights } from '../insights'
@@ -26,6 +27,8 @@ interface Props {
   onOpenTags: () => void
   accounts?: Account[]
   onOpenAccounts?: () => void
+  installmentPlans?: InstallmentPlan[]
+  onOpenInstallments?: () => void
 }
 
 /** Compares the last two COMPLETE periods, deliberately excluding the
@@ -68,7 +71,7 @@ function trendSummary(periods: { periodStart: Date; amount: number }[], noun: st
   )
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags, accounts = [], onOpenAccounts }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags, accounts = [], onOpenAccounts, installmentPlans = [], onOpenInstallments }: Props) {
   const now = new Date()
   const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
   const days = daysRemainingInMonth(now)
@@ -145,6 +148,21 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
       return dueStart >= todayStart && dueStart <= upcomingCutoff
     })
     .sort((a, b) => a.nextDueDate.localeCompare(b.nextDueDate))
+    .slice(0, 5)
+
+  // Mirrors upcomingBills above, but sourced from each plan's actual
+  // next-due installment (via installmentProgress) rather than a single
+  // stored date field, since a plan doesn't track "next due" directly —
+  // it's derived from how many payments have already been generated.
+  const upcomingInstallments = installmentPlans
+    .filter((p) => p.isActive)
+    .map((p) => ({ plan: p, progress: installmentProgress(p, transactions) }))
+    .filter(({ progress }) => {
+      if (!progress.nextDueDate) return false
+      const dueStart = new Date(progress.nextDueDate.getFullYear(), progress.nextDueDate.getMonth(), progress.nextDueDate.getDate())
+      return dueStart >= todayStart && dueStart <= upcomingCutoff
+    })
+    .sort((a, b) => (a.progress.nextDueDate!.getTime() - b.progress.nextDueDate!.getTime()))
     .slice(0, 5)
 
   const insights = useMemo(() => generateInsights(categories, transactions, now), [categories, transactions, now.toDateString()])
@@ -517,6 +535,32 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                       <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{whenLabel}</div>
                     </div>
                     <span className="amount" style={{ fontSize: 13 }}>{formatCurrency(r.amount)}</span>
+                  </div>
+                )
+              })}
+            </button>
+          ),
+
+          upcomingInstallments: upcomingInstallments.length > 0 && onOpenInstallments && (
+            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenInstallments}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span className="section-heading" style={{ margin: 0 }}>Upcoming Installments</span>
+                <span className="chevron">›</span>
+              </div>
+              {upcomingInstallments.map(({ plan, progress }) => {
+                const cat = plan.categoryId ? categories.find((c) => c.id === plan.categoryId) : null
+                const dueDay = new Date(progress.nextDueDate!.getFullYear(), progress.nextDueDate!.getMonth(), progress.nextDueDate!.getDate())
+                const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+                const daysUntil = Math.round((dueDay.getTime() - nowDay.getTime()) / (24 * 60 * 60 * 1000))
+                const whenLabel = daysUntil === 0 ? 'Today' : daysUntil === 1 ? 'Tomorrow' : `in ${daysUntil} days`
+                return (
+                  <div key={plan.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                    <div className="tx-icon" style={{ width: 30, height: 30, background: (cat?.color ?? '#5C6167') + '33', flexShrink: 0 }}>{cat?.icon ?? '🛍️'}</div>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{plan.provider}: {plan.note}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{whenLabel} · payment {progress.paidCount + 1} of {progress.totalCount}</div>
+                    </div>
+                    <span className="amount" style={{ fontSize: 13 }}>{formatCurrency(progress.nextDueAmount ?? 0)}</span>
                   </div>
                 )
               })}

@@ -1,8 +1,10 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
-import type { Category, Transaction, RecurringTransaction, ShoppingList, Account } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, Account, InstallmentPlan } from './types'
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
+import { getSettings, updateSettings } from './budgetPeriod'
+import { getImportAccountMapping, saveImportAccountMapping } from './importSettings'
 import { normalizeTag, dedupeTags } from './tags'
 import { localDateInputValue } from './calculations'
 
@@ -19,13 +21,14 @@ interface BudgetDB extends DBSchema {
   shoppingLists: { key: string; value: ShoppingList }
   autoBackups: { key: string; value: AutoBackupEntry }
   accounts: { key: string; value: Account }
+  installmentPlans: { key: string; value: InstallmentPlan }
 }
 
 let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 5, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 6, {
       async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -54,6 +57,13 @@ function getDB() {
           // accountId entirely at runtime, not just "null" as the type
           // would suggest.
           await migrateMissingAccountId(transaction)
+        }
+        if (oldVersion < 6) {
+          db.createObjectStore('installmentPlans', { keyPath: 'id' })
+          // installmentPlanId is optional on Transaction (unlike
+          // accountId), so no backfill migration needed here — a
+          // missing field and an explicit null read identically
+          // everywhere this gets checked.
         }
       }
     })
@@ -139,7 +149,7 @@ export async function createCategory(data: Omit<Category, 'id'>): Promise<Catego
 
 export async function deleteCategory(id: string) {
   const db = await getDB()
-  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'installmentPlans'], 'readwrite')
 
   await tx.objectStore('categories').delete(id)
 
@@ -160,6 +170,10 @@ export async function deleteCategory(id: string) {
   for (const s of shoppingLists) {
     if (s.categoryId === id) await tx.objectStore('shoppingLists').put({ ...s, categoryId: null })
   }
+  const plans = await tx.objectStore('installmentPlans').getAll()
+  for (const p of plans) {
+    if (p.categoryId === id) await tx.objectStore('installmentPlans').put({ ...p, categoryId: null })
+  }
 
   await tx.done
   removeCategoryFromMerchantRules(id)
@@ -172,7 +186,7 @@ export async function deleteCategory(id: string) {
  * entirely the way a plain delete does. */
 export async function mergeCategoryInto(sourceId: string, targetId: string): Promise<{ movedCount: number }> {
   const db = await getDB()
-  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists'], 'readwrite')
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'installmentPlans'], 'readwrite')
 
   let movedCount = 0
   const transactions = await tx.objectStore('transactions').getAll()
@@ -189,6 +203,10 @@ export async function mergeCategoryInto(sourceId: string, targetId: string): Pro
   const shoppingLists = await tx.objectStore('shoppingLists').getAll()
   for (const s of shoppingLists) {
     if (s.categoryId === sourceId) await tx.objectStore('shoppingLists').put({ ...s, categoryId: targetId })
+  }
+  const plans = await tx.objectStore('installmentPlans').getAll()
+  for (const p of plans) {
+    if (p.categoryId === sourceId) await tx.objectStore('installmentPlans').put({ ...p, categoryId: targetId })
   }
 
   await tx.objectStore('categories').delete(sourceId)
@@ -439,6 +457,16 @@ export async function updateTransfer(
 export async function deleteTransfer(expenseId: string, incomeId: string) {
   const db = await getDB()
   const tx = db.transaction('transactions', 'readwrite')
+  // Same orphan-safety as deleteTransaction — if anything else somehow
+  // ended up linked to either half (an edge case, but not an impossible
+  // one), that link is cleared rather than left pointing at a
+  // transaction that's about to stop existing.
+  const all = await tx.store.getAll()
+  for (const t of all) {
+    if (t.reimbursesExpenseId === expenseId || t.reimbursesExpenseId === incomeId) {
+      await tx.store.put({ ...t, reimbursesExpenseId: null })
+    }
+  }
   await tx.store.delete(expenseId)
   await tx.store.delete(incomeId)
   await tx.done
@@ -459,13 +487,82 @@ export async function archiveAccount(id: string) {
   await db.put('accounts', { ...account, isArchived: true })
 }
 
+/** Deleting an account leaves stale accountId references all over the
+ * app otherwise — not just on plain transactions (already handled
+ * below), but anywhere else an account can be picked: the Default
+ * Account used for Quick Add and completed shopping trips, the NAB/
+ * Westpac/Beem Import Defaults mapping, every recurring bill pointed at
+ * it, and every installment plan pointed at it. Left alone, each of
+ * these would keep silently creating new transactions tagged with an
+ * account id that no longer resolves to anything — not a crash, just
+ * money quietly falling out of every account balance calculation
+ * without any visible sign why. Cleared to null/None here rather than
+ * left dangling, matching the same orphan-safety pattern already used
+ * for transfers and reimbursements elsewhere in this file. */
 export async function deleteAccountPermanently(id: string) {
   const db = await getDB()
-  const tx = db.transaction(['accounts', 'transactions'], 'readwrite')
+  const tx = db.transaction(['accounts', 'transactions', 'recurring', 'installmentPlans'], 'readwrite')
   await tx.objectStore('accounts').delete(id)
+
   const transactions = await tx.objectStore('transactions').getAll()
   for (const t of transactions) {
     if (t.accountId === id) await tx.objectStore('transactions').put({ ...t, accountId: null })
+  }
+
+  const recurringItems = await tx.objectStore('recurring').getAll()
+  for (const r of recurringItems) {
+    if (r.accountId === id) await tx.objectStore('recurring').put({ ...r, accountId: null })
+  }
+
+  const plans = await tx.objectStore('installmentPlans').getAll()
+  for (const p of plans) {
+    if (p.accountId === id) await tx.objectStore('installmentPlans').put({ ...p, accountId: null })
+  }
+
+  await tx.done
+
+  const settings = getSettings()
+  if (settings.defaultAccountId === id) updateSettings({ defaultAccountId: null })
+
+  const importMapping = getImportAccountMapping()
+  const nextMapping = { ...importMapping }
+  let importMappingChanged = false
+  for (const source of ['nab', 'westpac', 'beem'] as const) {
+    if (nextMapping[source] === id) { nextMapping[source] = null; importMappingChanged = true }
+  }
+  if (importMappingChanged) saveImportAccountMapping(nextMapping)
+}
+
+export async function getInstallmentPlans(): Promise<InstallmentPlan[]> {
+  const db = await getDB()
+  return db.getAll('installmentPlans')
+}
+
+export async function saveInstallmentPlan(plan: InstallmentPlan) {
+  const db = await getDB()
+  await db.put('installmentPlans', plan)
+}
+
+export async function createInstallmentPlan(data: Omit<InstallmentPlan, 'id'>): Promise<InstallmentPlan> {
+  const db = await getDB()
+  const plan: InstallmentPlan = { ...data, id: uuid() }
+  await db.put('installmentPlans', plan)
+  return plan
+}
+
+/** Deleting a plan leaves any payments already generated from it
+ * exactly as they are — they're real transactions that really
+ * happened, and losing that history because the plan itself got
+ * removed (paid off and cleared away, or cancelled) would be actively
+ * wrong. Only the link back to the plan is cleared, matching the same
+ * orphan-safety pattern used for deleting an account or a category. */
+export async function deleteInstallmentPlan(id: string) {
+  const db = await getDB()
+  const tx = db.transaction(['installmentPlans', 'transactions'], 'readwrite')
+  await tx.objectStore('installmentPlans').delete(id)
+  const transactions = await tx.objectStore('transactions').getAll()
+  for (const t of transactions) {
+    if (t.installmentPlanId === id) await tx.objectStore('transactions').put({ ...t, installmentPlanId: null })
   }
   await tx.done
 }
@@ -531,8 +628,9 @@ export async function exportBackup(): Promise<string> {
   const recurring = await db.getAll('recurring')
   const shoppingLists = await db.getAll('shoppingLists')
   const accounts = await db.getAll('accounts')
+  const installmentPlans = await db.getAll('installmentPlans')
   const localSettings = collectLocalSettings()
-  return JSON.stringify({ formatVersion: 4, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, accounts, localSettings }, null, 2)
+  return JSON.stringify({ formatVersion: 4, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, accounts, installmentPlans, localSettings }, null, 2)
 }
 
 export async function importBackup(json: string): Promise<{ categoriesCount: number; transactionsCount: number }> {
@@ -550,6 +648,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   let accounts: Account[] = []
   let merchantRulesToImport: { key: string; categoryId: string }[] = []
   let localSettings: Record<string, string> = {}
+  let installmentPlans: InstallmentPlan[] = []
 
   if (isNativeBackupFormat(parsed)) {
     const translated = translateNativeBackup(parsed)
@@ -565,6 +664,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
       recurring?: RecurringTransaction[]
       shoppingLists?: ShoppingList[]
       accounts?: Account[]
+      installmentPlans?: InstallmentPlan[]
       localSettings?: Record<string, string>
     }
     if (!Array.isArray(data.categories) || !Array.isArray(data.transactions)) {
@@ -578,6 +678,13 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
     // to restore in that case, transactionsToWrite below falls back to
     // accountId: null for all of them either way.
     accounts = data.accounts ?? []
+    // Written back by their own stable id, not reconciled by name the
+    // way accounts/categories are — a plan doesn't have a name
+    // guaranteed unique the way "Everyday Account" effectively is (two
+    // genuinely different purchases could both be named "Laptop"), so
+    // matching by id and letting a repeat import of the same backup
+    // simply overwrite the same record is the safer default here.
+    installmentPlans = data.installmentPlans ?? []
     // Absent entirely in backups made before this existed — nothing to
     // restore in that case, which is fine, current settings are simply
     // left as they are rather than being cleared out.
@@ -666,13 +773,15 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   }))
   const recurringToWrite = recurring.map((r) => ({ ...r, categoryId: remapCategoryId(r.categoryId) }))
   const shoppingListsToWrite = shoppingLists.map((s) => ({ ...s, categoryId: remapCategoryId(s.categoryId) }))
+  const installmentPlansToWrite = installmentPlans.map((p) => ({ ...p, categoryId: remapCategoryId(p.categoryId), accountId: remapAccountId(p.accountId) }))
 
-  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'accounts'], 'readwrite')
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'accounts', 'installmentPlans'], 'readwrite')
   for (const c of categoriesToWrite) await tx.objectStore('categories').put(c)
   for (const t of transactionsToWrite) await tx.objectStore('transactions').put(t)
   for (const r of recurringToWrite) await tx.objectStore('recurring').put(r)
   for (const s of shoppingListsToWrite) await tx.objectStore('shoppingLists').put(s)
   for (const a of accountsToWrite) await tx.objectStore('accounts').put(a)
+  for (const p of installmentPlansToWrite) await tx.objectStore('installmentPlans').put(p)
   await tx.done
 
   for (const rule of merchantRulesToImport) {
