@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress } from '../calculations'
+import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress, reimbursementBreakdown } from '../calculations'
 import { normalizeTag } from '../tags'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
@@ -33,6 +33,16 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
   )
 
   const expenseTotal = tagged.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
+
+  // Only worth its own section once there's actually something to
+  // break down — a tag with no savings-funding or reimbursement at all
+  // would just show three near-identical lines all equal to the total,
+  // which explains nothing a person doesn't already see above.
+  const breakdown = useMemo(
+    () => reimbursementBreakdown(tagged.filter((t) => t.isExpense), transactions, categories),
+    [tagged, transactions, categories]
+  )
+  const showBreakdown = breakdown.fundedFromSavings > 0.01 || breakdown.reimbursedByOthers > 0.01
   const incomeTotal = tagged.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
 
   // Every tagged expense that isn't yet fully paid back — sorted oldest
@@ -125,6 +135,32 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
           </button>
         )}
       </div>
+
+      {showBreakdown && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <span className="section-heading">Where the Money Came From</span>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14 }}>
+            <span style={{ color: 'var(--text-dim)' }}>Total cost</span>
+            <span className="amount">{formatCurrency(breakdown.totalCost)}</span>
+          </div>
+          {breakdown.fundedFromSavings > 0.01 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderTop: '1px solid var(--border)' }}>
+              <span style={{ color: 'var(--text-dim)' }}>✈️ Funded from savings</span>
+              <span className="amount" style={{ color: 'var(--blue)' }}>−{formatCurrency(breakdown.fundedFromSavings)}</span>
+            </div>
+          )}
+          {breakdown.reimbursedByOthers > 0.01 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderTop: '1px solid var(--border)' }}>
+              <span style={{ color: 'var(--text-dim)' }}>Reimbursed by others</span>
+              <span className="amount" style={{ color: 'var(--green)' }}>−{formatCurrency(breakdown.reimbursedByOthers)}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 15, fontWeight: 700, borderTop: '1px solid var(--border)', marginTop: 4 }}>
+            <span>Actually out of pocket</span>
+            <span className="amount">{formatCurrency(breakdown.outOfPocket)}</span>
+          </div>
+        </div>
+      )}
 
       {categoryBreakdown.length > 1 && (
         <div className="card" style={{ marginBottom: 16 }}>

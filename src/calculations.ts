@@ -251,6 +251,47 @@ export function fundedFromSavingsThisPeriod(categories: Category[], transactions
     }, 0)
 }
 
+export interface ReimbursementBreakdown {
+  totalCost: number
+  fundedFromSavings: number
+  reimbursedByOthers: number
+  outOfPocket: number
+}
+
+/** Splits a set of expenses' total cost into where the money to cover
+ * them actually came from — savings you'd already set aside, someone
+ * else genuinely paying you back, or still truly out of your own
+ * pocket. Built for a tag's "trip" or "event" view (where the person
+ * wants to see the whole picture at once: what did this cost in total,
+ * how much of that did I cover from savings, how much did others pay
+ * back, and what's actually still mine to have paid), but takes a plain
+ * list of expenses rather than being tag-specific, so it works for any
+ * grouped set. Mirrors fundedFromSavingsThisPeriod's own per-expense
+ * "how much of THIS SPECIFIC reimbursement actually got applied, in
+ * order" logic, just generalized to accept any expense list instead of
+ * a period filter, and further split into savings vs everything else
+ * rather than only isolating savings. */
+export function reimbursementBreakdown(expenses: Transaction[], all: Transaction[], categories: Category[]): ReimbursementBreakdown {
+  const totalCost = expenses.reduce((sum, e) => sum + e.amount, 0)
+  let fundedFromSavings = 0
+  let reimbursedByOthers = 0
+
+  for (const expense of expenses) {
+    const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
+    let remaining = expense.amount
+    for (const r of reimbursements) {
+      const applied = Math.min(r.amount, Math.max(0, remaining))
+      const ownCategory = r.categoryId ? categories.find((c) => c.id === r.categoryId) : null
+      if (ownCategory?.isSavingsCategory) fundedFromSavings += applied
+      else reimbursedByOthers += applied
+      remaining -= applied
+    }
+  }
+
+  const outOfPocket = Math.max(0, totalCost - fundedFromSavings - reimbursedByOthers)
+  return { totalCost, fundedFromSavings, reimbursedByOthers, outOfPocket }
+}
+
 export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD' }).format(amount)
 }
