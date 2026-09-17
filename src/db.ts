@@ -5,6 +5,7 @@ import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
 import { getSettings, updateSettings } from './budgetPeriod'
 import { getImportAccountMapping, saveImportAccountMapping } from './importSettings'
+import { goalProgress } from './calculations'
 import { normalizeTag, dedupeTags } from './tags'
 import { localDateInputValue } from './calculations'
 
@@ -338,6 +339,52 @@ export async function createAccount(data: Omit<Account, 'id'>): Promise<Account>
   const db = await getDB()
   const account: Account = { ...data, id: uuid() }
   await db.put('accounts', account)
+  return account
+}
+
+/** Moves a savings category's tracking over to a real account, rather
+ * than trying to replay every historical contribution and withdrawal
+ * as account transfers — which would require knowing which real
+ * account each one actually came from, information that was never
+ * recorded and can't be honestly reconstructed now. Instead takes an
+ * honest snapshot: the category's current balance (contributions minus
+ * what's already been drawn down) becomes the new account's opening
+ * balance, so the account starts at exactly the right number without
+ * fabricating a transaction history that didn't happen.
+ *
+ * The category itself is never deleted or have its history touched —
+ * every past transaction, and everything already shown on tag
+ * breakdowns and category detail screens, stays exactly as it was.
+ * Only isSavingsCategory is turned off, so Fund From Savings and the
+ * dashboard's savings widget stop offering it as an active source going
+ * forward — the person is expected to use the new account for that
+ * from here on. */
+export async function migrateCategoryToAccount(categoryId: string, accountData: Omit<Account, 'id' | 'openingBalance' | 'openingDate'>): Promise<Account> {
+  const db = await getDB()
+  const tx = db.transaction(['categories', 'accounts', 'transactions'], 'readwrite')
+
+  const category = await tx.objectStore('categories').get(categoryId)
+  if (!category) throw new Error('Category not found')
+  const allTransactions = await tx.objectStore('transactions').getAll()
+  const currentBalance = goalProgress(category, allTransactions)
+
+  const account: Account = {
+    ...accountData,
+    id: uuid(),
+    openingBalance: Math.round(currentBalance * 100) / 100,
+    openingDate: new Date().toISOString()
+  }
+  await tx.objectStore('accounts').put(account)
+  // needWantType defaults to 'want' here too — once isSavingsCategory
+  // turns off, this category looks like any other regular spending
+  // category to the rest of the app, and one with no Need/Want set
+  // shows an "⚠️ Not set" warning on the categories list. Not
+  // technically wrong (the field genuinely is unset), but confusing
+  // for a category that isn't actually a spending category needing
+  // that classification — it's just dormant now, not incomplete.
+  await tx.objectStore('categories').put({ ...category, isSavingsCategory: false, needWantType: category.needWantType ?? 'want' })
+
+  await tx.done
   return account
 }
 

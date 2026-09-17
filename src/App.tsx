@@ -188,6 +188,7 @@ export default function App() {
           onDelete={handleDeleteTransaction}
           onOpenCategory={(c) => setCategoryDetailId(c.id)}
           onChanged={reload}
+          onOpenAccount={(a) => { setCategoryDetailId(null); setViewingAccountDetail(a) }}
         />
       ) : viewingAccountDetail ? (
         <AccountDetail

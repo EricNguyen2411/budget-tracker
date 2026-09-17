@@ -43,6 +43,15 @@ export function useSwipeBack(onBack: () => void, enabled = true) {
 
     function handleStart(e: PointerEvent) {
       if (e.clientX > EDGE_ZONE_PX) { tracking.current = false; return }
+      // Never starts tracking while any modal/sheet is open — the
+      // underlying page isn't meant to respond to gestures while
+      // obscured, and without this check a touch that begins near the
+      // screen's left edge (easy to do inside a full-width picker list)
+      // could get misread as a swipe-back attempt on the page behind
+      // the modal, dragging it and then snapping back once released —
+      // which looks exactly like the modal's own scroll "letting go and
+      // jumping back," even though it's the PAGE moving, not the list.
+      if (document.querySelector('.modal-backdrop')) { tracking.current = false; return }
       startX.current = e.clientX
       startY.current = e.clientY
       startTime.current = performance.now()

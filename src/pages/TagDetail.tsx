@@ -253,6 +253,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
           outstandingExpenses={outstandingExpenses}
           transactions={transactions}
           savingsCategories={availableSavingsCategories}
+          accounts={accounts}
           onClose={() => setShowBulkFund(false)}
           onDone={() => { setShowBulkFund(false); onChanged() }}
         />
@@ -262,6 +263,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
         <BreakdownSourceModal
           source={viewingBreakdownSource}
           entries={viewingBreakdownSource === 'savings' ? breakdown.savingsTransactions : breakdown.otherTransactions}
+          accounts={accounts}
           onClose={() => setViewingBreakdownSource(null)}
           onOpenTransaction={(t) => { setViewingBreakdownSource(null); setEditing(t) }}
         />
@@ -270,9 +272,10 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
   )
 }
 
-function BreakdownSourceModal({ source, entries, onClose, onOpenTransaction }: {
+function BreakdownSourceModal({ source, entries, accounts, onClose, onOpenTransaction }: {
   source: 'savings' | 'others'
   entries: { transaction: Transaction; expense: Transaction; applied: number }[]
+  accounts: Account[]
   onClose: () => void
   onOpenTransaction: (t: Transaction) => void
 }) {
@@ -287,40 +290,48 @@ function BreakdownSourceModal({ source, entries, onClose, onOpenTransaction }: {
         </div>
         <div className="modal-body">
           <p className="hint" style={{ marginBottom: 12 }}>Tap any of these to open it directly.</p>
-          {entries.map((entry, i) => (
-            <button
-              key={entry.transaction.id + i}
-              className="card"
-              style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 8 }}
-              onClick={() => requestClose(() => onOpenTransaction(entry.transaction))}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>{entry.transaction.note || 'Income'}</span>
-                <span className="amount" style={{ color: 'var(--green)' }}>+{formatCurrency(entry.applied)}</span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>
-                {new Date(entry.transaction.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })} · covers {entry.expense.note || 'expense'}
-              </div>
-            </button>
-          ))}
+          {entries.map((entry, i) => {
+            const account = entry.transaction.accountId ? accounts.find((a) => a.id === entry.transaction.accountId) : null
+            return (
+              <button
+                key={entry.transaction.id + i}
+                className="card"
+                style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 8 }}
+                onClick={() => requestClose(() => onOpenTransaction(entry.transaction))}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{entry.transaction.note || 'Income'}</span>
+                  <span className="amount" style={{ color: 'var(--green)' }}>+{formatCurrency(entry.applied)}</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {new Date(entry.transaction.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })} · covers {entry.expense.note || 'expense'}
+                  {account && <> · {account.icon} {account.name}</>}
+                </div>
+              </button>
+            )
+          })}
         </div>
       </div>
     </div>
   )
 }
 
-function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCategories, onClose, onDone }: {
+function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCategories, accounts, onClose, onDone }: {
   tagLabel: string
   outstandingExpenses: Transaction[]
   transactions: Transaction[]
   savingsCategories: Category[]
+  accounts: Account[]
   onClose: () => void
   onDone: () => void
 }) {
   const { closing, requestClose } = useModalClose(onClose)
   const [categoryId, setCategoryId] = useState(savingsCategories[0]?.id ?? null)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
+  const [accountId, setAccountId] = useState<string | null>(null)
+  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const category = savingsCategories.find((c) => c.id === categoryId)
+  const account = accounts.find((a) => a.id === accountId)
 
   const available = category ? goalProgress(category, transactions) : 0
   const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
@@ -343,7 +354,7 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
         categoryId,
         reimbursesExpenseId: a.expenseId,
         tags: [],
-        accountId: null
+        accountId
       })
     }
     onDone()
@@ -367,6 +378,16 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
               <label className="field-label">From</label>
               <button className="picker-row" onClick={() => setShowCategoryPicker(true)}>
                 <span>{category ? `${category.icon} ${category.name}` : 'Choose a category'}</span>
+                <span className="chevron">›</span>
+              </button>
+            </>
+          )}
+
+          {accounts.length > 0 && (
+            <>
+              <label className="field-label" style={{ marginTop: savingsCategories.length > 1 ? 16 : 0 }}>Which Account</label>
+              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
+                <span>{account ? `${account.icon} ${account.name}` : 'None (optional)'}</span>
                 <span className="chevron">›</span>
               </button>
             </>
@@ -425,6 +446,29 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
                   <button key={c.id} className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
                     <span>{c.icon} {c.name}</span>
                     {categoryId === c.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showAccountPicker && (
+          <div className="modal-backdrop" onClick={() => setShowAccountPicker(false)}>
+            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Which Account</span>
+                <button onClick={() => setShowAccountPicker(false)} className="text-button text-button-primary">Done</button>
+              </div>
+              <div className="modal-body">
+                <button className="picker-row" onClick={() => { setAccountId(null); setShowAccountPicker(false) }}>
+                  <span>None (optional)</span>
+                  {!accountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
+                </button>
+                {accounts.map((a) => (
+                  <button key={a.id} className="picker-row" onClick={() => { setAccountId(a.id); setShowAccountPicker(false) }}>
+                    <span>{a.icon} {a.name}</span>
+                    {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
                   </button>
                 ))}
               </div>
@@ -570,7 +614,7 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
             <>
               <input type="number" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value)} className="amount-input" autoFocus />
               {candidateTransactions.length > 0 && (
-                <button onClick={() => setShowExistingPicker(true)} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 8 }}>
+                <button onClick={() => { (document.activeElement as HTMLElement | null)?.blur(); setShowExistingPicker(true) }} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 8 }}>
                   Already received this? Use an existing transaction instead
                 </button>
               )}

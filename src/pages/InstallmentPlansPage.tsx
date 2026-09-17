@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Category, InstallmentPlan, InstallmentFrequency, Transaction, Account } from '../types'
 import { installmentProgress, installmentAmounts, installmentDueDates } from '../installments'
 import { formatCurrency, localDateInputValue } from '../calculations'
-import { createInstallmentPlan, saveInstallmentPlan, deleteInstallmentPlan } from '../db'
+import { createInstallmentPlan, saveInstallmentPlan, deleteInstallmentPlan, saveTransaction } from '../db'
 import SwipeableRow from '../components/SwipeableRow'
 import { useModalClose } from '../useModalClose'
 import { useSwipeBack } from '../useSwipeBack'
@@ -102,12 +102,13 @@ export default function InstallmentPlansPage({ categories, transactions, install
           plan={editingPlan}
           categories={categories}
           accounts={accounts}
+          transactions={transactions}
           hasPayments={editingPlan ? transactions.some((t) => t.installmentPlanId === editingPlan.id) : false}
-          onSave={async (data) => {
+          onSave={async (data, linkedFirstPaymentId) => {
             if (editingPlan) {
               await saveInstallmentPlan({ ...editingPlan, ...data })
             } else {
-              await createInstallmentPlan({
+              const newPlan = await createInstallmentPlan({
                 note: data.note ?? '',
                 provider: data.provider ?? 'Afterpay',
                 totalAmount: data.totalAmount ?? 0,
@@ -119,6 +120,16 @@ export default function InstallmentPlansPage({ categories, transactions, install
                 isActive: true,
                 nextInstallmentIndex: 0
               })
+              // Links the already-charged transaction as installment #1
+              // instead of leaving it to generate a duplicate — advances
+              // the plan's own counter to match, the same way it would
+              // have advanced had this payment been auto-generated
+              // normally.
+              if (linkedFirstPaymentId) {
+                const picked = transactions.find((t) => t.id === linkedFirstPaymentId)
+                if (picked) await saveTransaction({ ...picked, installmentPlanId: newPlan.id })
+                await saveInstallmentPlan({ ...newPlan, nextInstallmentIndex: 1 })
+              }
             }
             onChanged()
           }}
@@ -129,12 +140,13 @@ export default function InstallmentPlansPage({ categories, transactions, install
   )
 }
 
-function InstallmentPlanEditor({ plan, categories, accounts, hasPayments, onSave, onClose }: {
+function InstallmentPlanEditor({ plan, categories, accounts, transactions, hasPayments, onSave, onClose }: {
   plan: InstallmentPlan | null
   categories: Category[]
   accounts: Account[]
+  transactions: Transaction[]
   hasPayments: boolean
-  onSave: (data: Partial<InstallmentPlan>) => void
+  onSave: (data: Partial<InstallmentPlan>, linkedFirstPaymentId: string | null) => void
   onClose: () => void
 }) {
   const { closing, requestClose } = useModalClose(onClose)
@@ -148,11 +160,15 @@ function InstallmentPlanEditor({ plan, categories, accounts, hasPayments, onSave
   const [accountId, setAccountId] = useState<string | null>(plan?.accountId ?? null)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
   const [showAccountPicker, setShowAccountPicker] = useState(false)
+  const [linkedFirstPaymentId, setLinkedFirstPaymentId] = useState<string | null>(null)
+  const [showFirstPaymentPicker, setShowFirstPaymentPicker] = useState(false)
   const categoryPickerClose = useModalClose(() => setShowCategoryPicker(false))
   const accountPickerClose = useModalClose(() => setShowAccountPicker(false))
+  const firstPaymentPickerClose = useModalClose(() => setShowFirstPaymentPicker(false))
 
   const category = categories.find((c) => c.id === categoryId)
   const account = accounts.find((a) => a.id === accountId)
+  const linkedTransaction = transactions.find((t) => t.id === linkedFirstPaymentId)
 
   const parsedTotal = parseFloat(totalAmount)
   const parsedCount = parseInt(numberOfInstallments, 10)
@@ -168,6 +184,19 @@ function InstallmentPlanEditor({ plan, categories, accounts, hasPayments, onSave
     ? installmentDueDates({ firstDueDate: new Date(firstDueDate).toISOString(), frequency, numberOfInstallments: parsedCount } as InstallmentPlan)
     : []
 
+  // Afterpay and similar providers routinely charge the first
+  // installment immediately at purchase, before this plan even gets
+  // set up here — without a way to point at that transaction, the
+  // first auto-generated payment would duplicate money already sitting
+  // in the ledger. Only offered when creating a NEW plan; an existing
+  // plan already has its own real payment history to work from.
+  const candidateFirstPayments = !plan
+    ? transactions
+        .filter((t) => t.isExpense && !t.installmentPlanId && !t.reimbursesExpenseId)
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 20)
+    : []
+
   function handleSave() {
     if (!canSave) return
     const [y, m, d] = firstDueDate.split('-').map(Number)
@@ -180,7 +209,7 @@ function InstallmentPlanEditor({ plan, categories, accounts, hasPayments, onSave
       firstDueDate: new Date(y, m - 1, d).toISOString(),
       categoryId,
       accountId
-    })
+    }, linkedFirstPaymentId)
     requestClose()
   }
 
@@ -255,10 +284,58 @@ function InstallmentPlanEditor({ plan, categories, accounts, hasPayments, onSave
             </div>
           )}
 
+          {!plan && (
+            <>
+              <label className="field-label" style={{ marginTop: 16 }}>Already Charged?</label>
+              <p className="hint" style={{ marginBottom: 8 }}>Afterpay and similar often charge the first payment immediately at purchase. Link it here instead of letting a duplicate get created for it.</p>
+              {linkedTransaction ? (
+                <button className="picker-row" onClick={() => setLinkedFirstPaymentId(null)}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>{linkedTransaction.note || 'Expense'} · {formatCurrency(linkedTransaction.amount)}</span>
+                  <span className="chevron" style={{ color: 'var(--red)' }}>✕</span>
+                </button>
+              ) : (
+                <button className="picker-row" onClick={() => { (document.activeElement as HTMLElement | null)?.blur(); setShowFirstPaymentPicker(true) }}>
+                  <span>Link an existing transaction</span>
+                  <span className="chevron">›</span>
+                </button>
+              )}
+            </>
+          )}
+
           <p className="hint" style={{ marginTop: 16 }}>
             Each payment is created automatically as it comes due, the same way recurring bills are — nothing to enter by hand as it goes.
           </p>
         </div>
+
+        {showFirstPaymentPicker && (() => {
+          const { closing: fc, requestClose: rfc } = firstPaymentPickerClose
+          return (
+            <div className={`modal-backdrop${fc ? ' modal-closing' : ''}`} onClick={() => rfc(() => setShowFirstPaymentPicker(false))}>
+              <div className={`modal-sheet${fc ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+                <div className="modal-header">
+                  <span className="modal-title">Link First Payment</span>
+                  <button onClick={() => rfc(() => setShowFirstPaymentPicker(false))} className="text-button text-button-primary">Cancel</button>
+                </div>
+                <div className="modal-body">
+                  <p className="hint" style={{ marginBottom: 12 }}>Only expenses not already linked to something else are shown.</p>
+                  {candidateFirstPayments.length === 0 && (
+                    <p style={{ color: 'var(--text-dim)', fontSize: 13 }}>No unlinked expenses to pick from.</p>
+                  )}
+                  {candidateFirstPayments.map((t) => (
+                    <button
+                      key={t.id}
+                      className="picker-row"
+                      onClick={() => rfc(() => { setLinkedFirstPaymentId(t.id); setShowFirstPaymentPicker(false) })}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>{t.note || 'Expense'} · {new Date(t.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span>
+                      <span className="amount">{formatCurrency(t.amount)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )
+        })()}
 
         {showCategoryPicker && (() => {
           const { closing: cc, requestClose: rcc } = categoryPickerClose

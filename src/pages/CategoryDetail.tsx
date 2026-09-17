@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction } from '../types'
+import type { Category, Transaction, Account } from '../types'
 import { formatCurrency, netAmount, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, repaysNote } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
+import { migrateCategoryToAccount } from '../db'
 import TransactionEditor from '../components/TransactionEditor'
 import AnimatedProgressBar from '../components/AnimatedProgressBar'
 import { useSwipeBack } from '../useSwipeBack'
+import { useModalClose } from '../useModalClose'
 import SortMenuButton from '../components/SortMenuButton'
 
 interface Props {
@@ -16,13 +18,15 @@ interface Props {
   onDelete: (id: string) => void
   onOpenCategory: (category: Category) => void
   onChanged: () => void
+  onOpenAccount?: (account: Account) => void
 }
 
-export default function CategoryDetail({ category, allCategories, transactions, onBack, onSave, onDelete, onOpenCategory, onChanged }: Props) {
+export default function CategoryDetail({ category, allCategories, transactions, onBack, onSave, onDelete, onOpenCategory, onChanged, onOpenAccount }: Props) {
   useSwipeBack(onBack)
   const [showAllTime, setShowAllTime] = useState(false)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [editing, setEditing] = useState<Transaction | null>(null)
+  const [showMigrate, setShowMigrate] = useState(false)
 
   const subcategories = allCategories.filter((c) => c.parentId === category.id)
   const categoryIds = new Set([category.id, ...subcategories.map((s) => s.id)])
@@ -86,6 +90,9 @@ export default function CategoryDetail({ category, allCategories, transactions, 
           <p className="hint" style={{ marginTop: 6 }}>
             Every contribution counted, minus anything already drawn down (e.g. funded to an expense) — this is what's actually available to use.
           </p>
+          <button onClick={() => setShowMigrate(true)} className="text-button" style={{ fontSize: 13, color: 'var(--blue)', marginTop: 8 }}>
+            Migrate to an Account
+          </button>
         </div>
       )}
 
@@ -175,6 +182,78 @@ export default function CategoryDetail({ category, allCategories, transactions, 
           onChanged={onChanged}
         />
       )}
+
+      {showMigrate && (
+        <MigrateToAccountModal
+          category={category}
+          currentBalance={goalProgress(category, transactions)}
+          onClose={() => setShowMigrate(false)}
+          onDone={(account) => { setShowMigrate(false); onChanged(); onOpenAccount?.(account) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function MigrateToAccountModal({ category, currentBalance, onClose, onDone }: {
+  category: Category
+  currentBalance: number
+  onClose: () => void
+  onDone: (account: Account) => void
+}) {
+  const { closing, requestClose } = useModalClose(onClose)
+  const [name, setName] = useState(category.name)
+  const [icon, setIcon] = useState(category.icon)
+  const canSave = name.trim().length > 0 && icon.trim().length > 0
+
+  async function handleConfirm() {
+    if (!canSave) return
+    const account = await migrateCategoryToAccount(category.id, {
+      name: name.trim(),
+      icon: icon.trim(),
+      color: category.color,
+      type: 'savings',
+      isArchived: false,
+      sortOrder: 999
+    })
+    onDone(account)
+  }
+
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <button onClick={() => requestClose()} className="text-button">Cancel</button>
+          <span className="modal-title">Migrate to Account</span>
+          <span style={{ width: 60 }} />
+        </div>
+        <div className="modal-body">
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
+            Creates a new account starting at <strong>{formatCurrency(currentBalance)}</strong> — this category's current balance. Every past transaction stays exactly as it is; nothing here gets deleted or rewritten. "{category.name}" just stops being offered as a savings source going forward, so future funding uses the account instead.
+          </p>
+
+          <label className="field-label">Account Name</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+
+          <label className="field-label" style={{ marginTop: 12 }}>Icon (emoji)</label>
+          <input type="text" value={icon} onChange={(e) => setIcon(e.target.value)} style={{ width: 80 }} />
+
+          <div className="card" style={{ marginTop: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <span style={{ color: 'var(--text-dim)' }}>Opening balance</span>
+              <span className="amount">{formatCurrency(currentBalance)}</span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => requestClose(handleConfirm)}
+            disabled={!canSave}
+            style={{ width: '100%', textAlign: 'center', background: canSave ? 'var(--blue)' : 'var(--surface-2)', color: canSave ? '#FFFFFF' : 'var(--text-faint)', borderRadius: 10, padding: 12, fontWeight: 600, marginTop: 20 }}
+          >
+            Migrate to Account
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
