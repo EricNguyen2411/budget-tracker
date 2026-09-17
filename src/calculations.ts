@@ -3,9 +3,33 @@ import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetP
 import { normalizeMerchantKey } from './merchantRules'
 import { normalizeTag } from './tags'
 
-/** Reimbursements linked to a given expense. */
+/** Reimbursements linked to a given expense — both the simple,
+ * single-expense case (reimbursesExpenseId, used when editing one
+ * transaction's own Fund From Savings link) and the multi-expense case
+ * (multiAllocations, used by the bulk reimburse/fund flows, where one
+ * real payment covers several different expenses at once).
+ *
+ * For a multi-allocation transaction, returns a SYNTHESIZED view with
+ * `.amount` overridden to just this expense's own share, not the full
+ * transaction total — e.g. a single $970 payment covering three
+ * different expenses shows up here, for any ONE of those expenses, as
+ * a transaction whose amount is only the $450 (or whatever) that
+ * specific expense actually received. This is the one place that
+ * distinction gets made: every other calculation in this file
+ * (totalReimbursed, netAmount, reimbursementBreakdown,
+ * outstandingReimbursements, fundedFromSavingsThisPeriod, repaysNote,
+ * and more) is built on top of this function and just reads `.amount`
+ * normally, so they all correctly handle multi-allocation transactions
+ * automatically without needing their own changes. */
 export function reimbursementsFor(expense: Transaction, all: Transaction[]): Transaction[] {
-  return all.filter((t) => t.reimbursesExpenseId === expense.id)
+  const direct = all.filter((t) => t.reimbursesExpenseId === expense.id)
+  const multi = all
+    .filter((t) => t.multiAllocations?.some((a) => a.expenseId === expense.id))
+    .map((t) => {
+      const allocation = t.multiAllocations!.find((a) => a.expenseId === expense.id)!
+      return { ...t, amount: allocation.amount }
+    })
+  return [...direct, ...multi]
 }
 
 export function totalReimbursed(expense: Transaction, all: Transaction[]): number {
@@ -312,8 +336,7 @@ export function reimbursementBreakdown(expenses: Transaction[], all: Transaction
 }
 
 export interface SavingsGivebackPlan {
-  updates: { transactionId: string; newAmount: number }[]
-  deletions: string[]
+  reductions: { transactionId: string; expenseId: string; reduceBy: number }[]
   totalGivenBack: number
 }
 
@@ -329,30 +352,36 @@ export interface SavingsGivebackPlan {
  * Reduces the MOST RECENTLY applied savings funding first — the newest
  * draw is the least "already spent" one — working backward through
  * older ones only if the newest alone isn't enough to free up the full
- * amount needed. A transaction reduced all the way to zero is marked
- * for deletion rather than left behind as a zero-dollar entry. */
+ * amount needed.
+ *
+ * Returns which EXPENSE's allocation on which transaction to reduce,
+ * and by how much — not a new whole-transaction amount directly, since
+ * a savings-funding transaction covering several different expenses at
+ * once (multiAllocations) can't have its total amount blindly
+ * overwritten without corrupting whichever OTHER expenses it also
+ * covers. applySavingsGiveback (db.ts) is what actually knows how to
+ * turn one of these reductions into the right write, whether the
+ * target is a simple single-link transaction or one allocation inside
+ * a shared one. */
 export function planSavingsGiveback(expenses: Transaction[], all: Transaction[], categories: Category[], incomingReimbursement: number): SavingsGivebackPlan {
   const breakdown = reimbursementBreakdown(expenses, all, categories)
   const newTotalOther = breakdown.reimbursedByOthers + incomingReimbursement
   const idealSavings = Math.max(0, Math.round((breakdown.totalCost - newTotalOther) * 100) / 100)
   let toGiveBack = Math.max(0, Math.round((breakdown.fundedFromSavings - idealSavings) * 100) / 100)
 
-  const updates: SavingsGivebackPlan['updates'] = []
-  const deletions: string[] = []
+  const reductions: SavingsGivebackPlan['reductions'] = []
   let totalGivenBack = 0
 
   const mostRecentFirst = [...breakdown.savingsTransactions].sort((a, b) => b.transaction.date.localeCompare(a.transaction.date))
   for (const entry of mostRecentFirst) {
     if (toGiveBack <= 0.01) break
     const reduceBy = Math.min(entry.applied, toGiveBack)
-    const newAmount = Math.round((entry.transaction.amount - reduceBy) * 100) / 100
-    if (newAmount <= 0.01) deletions.push(entry.transaction.id)
-    else updates.push({ transactionId: entry.transaction.id, newAmount })
+    reductions.push({ transactionId: entry.transaction.id, expenseId: entry.expense.id, reduceBy })
     totalGivenBack += reduceBy
     toGiveBack = Math.round((toGiveBack - reduceBy) * 100) / 100
   }
 
-  return { updates, deletions, totalGivenBack: Math.round(totalGivenBack * 100) / 100 }
+  return { reductions, totalGivenBack: Math.round(totalGivenBack * 100) / 100 }
 }
 
 export function formatCurrency(amount: number): string {
@@ -622,7 +651,22 @@ export function findFundedExpense(transaction: Transaction, all: Transaction[], 
 }
 
 export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = [], accounts: Account[] = []): string | null {
-  if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
+  if (transaction.isExpense) return null
+
+  if (transaction.multiAllocations && transaction.multiAllocations.length > 0) {
+    // Same savings-vs-reimbursement distinction as the single-expense
+    // case below, just described once for the whole shared payment
+    // rather than per expense — a person reading "covers 3 expenses"
+    // still needs to know whether that money came from their own
+    // savings or someone else, the same way the single-link case
+    // already makes that distinction.
+    const ownCategory = transaction.categoryId ? categories.find((c) => c.id === transaction.categoryId) : null
+    const count = transaction.multiAllocations.length
+    if (ownCategory?.isSavingsCategory) return `funded from ${ownCategory.name} · covers ${count} expenses`
+    return `covers ${count} expenses`
+  }
+
+  if (!transaction.reimbursesExpenseId) return null
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
   if (!expense) return null
   // Distinguishes "I funded this from my own savings" from "someone
@@ -677,7 +721,7 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[], 
   // savings portion when the two are genuinely mixed on the same
   // expense, rather than collapsing to the generic "reimbursed" wording
   // that would otherwise hide it entirely.
-  const linkedTransactions = all.filter((t) => t.reimbursesExpenseId === transaction.id)
+  const linkedTransactions = reimbursementsFor(transaction, all)
   const savingsLinked = linkedTransactions.filter((t) => {
     const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
     return cat?.isSavingsCategory ?? false

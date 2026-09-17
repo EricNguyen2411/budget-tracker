@@ -54,7 +54,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
   const filtered = useMemo(() => transactions.filter((t) => {
     if (filter === 'income' && t.isExpense) return false
     if (filter === 'expense' && !t.isExpense) return false
-    if (filter === 'income' && unlinkedOnly && t.reimbursesExpenseId) return false
+    if (filter === 'income' && unlinkedOnly && (t.reimbursesExpenseId || (t.multiAllocations && t.multiAllocations.length > 0))) return false
     if (search) {
       const trimmed = search.trim()
       // A leading "#" is an exact tag filter (what tapping a tag chip,

@@ -235,6 +235,48 @@ export async function saveTransaction(transaction: Transaction) {
   await db.put('transactions', transaction)
 }
 
+/** Applies a planSavingsGiveback plan (calculations.ts) — the one place
+ * that actually knows how to turn "give back $X of what this
+ * transaction covers for this expense" into the right write, since a
+ * savings-funding transaction can be either a simple single-expense
+ * link (reimbursesExpenseId) or one allocation inside a transaction
+ * that covers several different expenses at once (multiAllocations).
+ * For the simple case this reduces (or, fully consumed, deletes) the
+ * whole transaction, exactly as before. For a shared one it only
+ * touches THIS expense's own entry, recomputing the transaction's total
+ * amount to match what's left — touching the other expenses' shares
+ * would silently corrupt them. A shared transaction reduced down to
+ * its last remaining allocation collapses back to the simple
+ * single-link shape rather than staying a one-entry array; reduced to
+ * none at all, the transaction is deleted outright, the same as the
+ * simple case. */
+export async function applySavingsGiveback(reductions: { transactionId: string; expenseId: string; reduceBy: number }[]) {
+  const db = await getDB()
+  const tx = db.transaction('transactions', 'readwrite')
+  for (const r of reductions) {
+    const t = await tx.store.get(r.transactionId)
+    if (!t) continue
+
+    if (t.multiAllocations && t.multiAllocations.length > 0) {
+      const remaining = t.multiAllocations
+        .map((a) => a.expenseId === r.expenseId ? { ...a, amount: Math.round((a.amount - r.reduceBy) * 100) / 100 } : a)
+        .filter((a) => a.amount > 0.01)
+      if (remaining.length === 0) {
+        await tx.store.delete(r.transactionId)
+      } else if (remaining.length === 1) {
+        await tx.store.put({ ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount })
+      } else {
+        await tx.store.put({ ...t, multiAllocations: remaining, amount: remaining.reduce((sum, a) => sum + a.amount, 0) })
+      }
+    } else {
+      const newAmount = Math.round((t.amount - r.reduceBy) * 100) / 100
+      if (newAmount <= 0.01) await tx.store.delete(r.transactionId)
+      else await tx.store.put({ ...t, amount: newAmount })
+    }
+  }
+  await tx.done
+}
+
 /** Deleting a transaction that other transactions are linked to via
  * reimbursesExpenseId (a friend's repayment, or a Fund From Savings
  * withdrawal) would otherwise leave those links pointing at nothing —
@@ -249,10 +291,33 @@ export async function saveTransaction(transaction: Transaction) {
  * re-counting it as ordinary unlinked income instead of losing it. */
 export async function deleteTransaction(id: string) {
   const db = await getDB()
-  const orphaned = (await db.getAll('transactions')).filter((t) => t.reimbursesExpenseId === id)
+  const all = await db.getAll('transactions')
+
+  const orphaned = all.filter((t) => t.reimbursesExpenseId === id)
   for (const t of orphaned) {
     await db.put('transactions', { ...t, reimbursesExpenseId: null })
   }
+
+  // Same orphan-safety, extended to multi-allocation transactions — if
+  // the deleted expense was one of several a single payment covered,
+  // only that one allocation entry is dropped, not the whole
+  // transaction; its own amount is recomputed to match what's left, so
+  // the "amount always equals the sum of its allocations" invariant
+  // holds even after this. A transaction left with only one allocation
+  // (or none) collapses back to the simple single-link shape, or plain
+  // unlinked income if nothing remains — never a lone-entry array.
+  const multiLinked = all.filter((t) => t.multiAllocations?.some((a) => a.expenseId === id))
+  for (const t of multiLinked) {
+    const remaining = t.multiAllocations!.filter((a) => a.expenseId !== id)
+    if (remaining.length === 0) {
+      await db.put('transactions', { ...t, multiAllocations: null, reimbursesExpenseId: null })
+    } else if (remaining.length === 1) {
+      await db.put('transactions', { ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount })
+    } else {
+      await db.put('transactions', { ...t, multiAllocations: remaining, amount: remaining.reduce((sum, a) => sum + a.amount, 0) })
+    }
+  }
+
   await db.delete('transactions', id)
 }
 
@@ -512,6 +577,16 @@ export async function deleteTransfer(expenseId: string, incomeId: string) {
   for (const t of all) {
     if (t.reimbursesExpenseId === expenseId || t.reimbursesExpenseId === incomeId) {
       await tx.store.put({ ...t, reimbursesExpenseId: null })
+    }
+    if (t.multiAllocations?.some((a) => a.expenseId === expenseId || a.expenseId === incomeId)) {
+      const remaining = t.multiAllocations.filter((a) => a.expenseId !== expenseId && a.expenseId !== incomeId)
+      if (remaining.length === 0) {
+        await tx.store.put({ ...t, multiAllocations: null })
+      } else if (remaining.length === 1) {
+        await tx.store.put({ ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount })
+      } else {
+        await tx.store.put({ ...t, multiAllocations: remaining, amount: remaining.reduce((sum, a) => sum + a.amount, 0) })
+      }
     }
   }
   await tx.store.delete(expenseId)

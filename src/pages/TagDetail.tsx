@@ -6,7 +6,7 @@ import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 import { DonutChart } from '../components/Charts'
 import TransactionEditor from '../components/TransactionEditor'
-import { createTransaction, deleteTransaction, saveTransaction } from '../db'
+import { createTransaction, deleteTransaction, applySavingsGiveback } from '../db'
 
 /** Simulates what the ledger looks like immediately after a giveback
  * plan is applied, without actually writing anything — used purely so
@@ -14,14 +14,37 @@ import { createTransaction, deleteTransaction, saveTransaction } from '../db'
  * payment's own allocation preview sees the POST-giveback amounts, not
  * the stale pre-giveback ones, while the person is still just looking
  * at a preview and hasn't confirmed anything yet. */
+/** Pure, in-memory simulation of what applySavingsGiveback (db.ts) will
+ * actually write, used purely so the "how much is still owed"
+ * calculation that drives this same payment's own allocation preview
+ * sees the POST-giveback amounts, not the stale pre-giveback ones,
+ * while the person is still just looking at a preview and hasn't
+ * confirmed anything yet. Mirrors that function's own logic exactly —
+ * a simple single-link transaction reduces or disappears outright,
+ * while a shared (multiAllocations) transaction only has THIS expense's
+ * own entry touched, collapsing to the simple shape once only one
+ * allocation is left, or disappearing once none are. */
 function applyGivebackPlan(transactions: Transaction[], plan: SavingsGivebackPlan | null): Transaction[] {
   if (!plan) return transactions
-  return transactions
-    .filter((t) => !plan.deletions.includes(t.id))
-    .map((t) => {
-      const update = plan.updates.find((u) => u.transactionId === t.id)
-      return update ? { ...t, amount: update.newAmount } : t
-    })
+  let result = transactions
+  for (const r of plan.reductions) {
+    result = result
+      .map((t) => {
+        if (t.id !== r.transactionId) return t
+        if (t.multiAllocations && t.multiAllocations.length > 0) {
+          const remaining = t.multiAllocations
+            .map((a) => a.expenseId === r.expenseId ? { ...a, amount: Math.round((a.amount - r.reduceBy) * 100) / 100 } : a)
+            .filter((a) => a.amount > 0.01)
+          if (remaining.length === 0) return null
+          if (remaining.length === 1) return { ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount }
+          return { ...t, multiAllocations: remaining, amount: remaining.reduce((sum, a) => sum + a.amount, 0) }
+        }
+        const newAmount = Math.round((t.amount - r.reduceBy) * 100) / 100
+        return newAmount <= 0.01 ? null : { ...t, amount: newAmount }
+      })
+      .filter((t): t is Transaction => t !== null)
+  }
+  return result
 }
 
 interface Props {
@@ -344,19 +367,26 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
   async function handleConfirm() {
     if (allocations.length === 0 || !categoryId) return
     const today = new Date().toISOString()
-    for (const a of allocations) {
-      const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
-      await createTransaction({
-        amount: a.amount,
-        note: `Re: ${expense?.note || 'expense'}`,
-        date: today,
-        isExpense: false,
-        categoryId,
-        reimbursesExpenseId: a.expenseId,
-        tags: [],
-        accountId
-      })
-    }
+    // One transaction for the whole action, not one per expense it
+    // happens to touch — confirmed directly this was the actual source
+    // of the transaction list filling up with reimbursement entries.
+    // Its own amount is kept as the sum of what it actually covers, so
+    // every balance/account calculation that just reads a transaction's
+    // amount normally continues to work without needing to know
+    // anything about allocations.
+    await createTransaction({
+      amount: allocations.reduce((sum, a) => sum + a.amount, 0),
+      note: allocations.length === 1
+        ? `Re: ${outstandingExpenses.find((e) => e.id === allocations[0].expenseId)?.note || 'expense'}`
+        : `${tagLabel} funded from ${category?.name ?? 'savings'}`,
+      date: today,
+      isExpense: false,
+      categoryId,
+      reimbursesExpenseId: allocations.length === 1 ? allocations[0].expenseId : null,
+      multiAllocations: allocations.length > 1 ? allocations : null,
+      tags: [],
+      accountId
+    })
     onDone()
   }
 
@@ -529,8 +559,7 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
   // outstandingExpenses prop, which was computed before any giveback.
   const effectiveOutstanding = allTaggedExpenses.filter((e) => {
     const alreadyOwed = e.amount - totalReimbursed(e, transactions)
-    const freedUp = givebackPlan?.updates.some((u) => transactions.find((t) => t.id === u.transactionId)?.reimbursesExpenseId === e.id)
-      || givebackPlan?.deletions.some((id) => transactions.find((t) => t.id === id)?.reimbursesExpenseId === e.id)
+    const freedUp = givebackPlan?.reductions.some((r) => r.expenseId === e.id)
     return alreadyOwed > 0.01 || freedUp
   })
 
@@ -551,29 +580,29 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
     // deleted savings transactions are already out of the way — giving
     // the freed-up amount back to Travel Savings first, then letting
     // the new payment claim what's now actually outstanding.
-    if (givebackPlan) {
-      for (const u of givebackPlan.updates) {
-        const t = transactions.find((tx) => tx.id === u.transactionId)
-        if (t) await saveTransaction({ ...t, amount: u.newAmount })
-      }
-      for (const id of givebackPlan.deletions) {
-        await deleteTransaction(id)
-      }
+    if (givebackPlan && givebackPlan.reductions.length > 0) {
+      await applySavingsGiveback(givebackPlan.reductions)
     }
 
-    for (const a of allocations) {
-      const expense = effectiveOutstanding.find((e) => e.id === a.expenseId)
-      await createTransaction({
-        amount: a.amount,
-        note: `Re: ${expense?.note || 'expense'}`,
-        date,
-        isExpense: false,
-        categoryId: null,
-        reimbursesExpenseId: a.expenseId,
-        tags: [],
-        accountId: linkAccountId
-      })
-    }
+    // One transaction covering everything this payment actually
+    // settles, not one per expense — the leftover (genuinely unlinked
+    // extra, beyond what was owed) stays as its own separate
+    // transaction, since it isn't part of any expense's allocation and
+    // folding it in would break the invariant that a multi-allocation
+    // transaction's amount always equals the sum of its allocations.
+    await createTransaction({
+      amount: allocations.reduce((sum, a) => sum + a.amount, 0),
+      note: allocations.length === 1
+        ? `Re: ${effectiveOutstanding.find((e) => e.id === allocations[0].expenseId)?.note || 'expense'}`
+        : `${tagLabel} reimbursement`,
+      date,
+      isExpense: false,
+      categoryId: null,
+      reimbursesExpenseId: allocations.length === 1 ? allocations[0].expenseId : null,
+      multiAllocations: allocations.length > 1 ? allocations : null,
+      tags: [],
+      accountId: linkAccountId
+    })
     if (leftover > 0.01) {
       await createTransaction({
         amount: leftover,

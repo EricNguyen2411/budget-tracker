@@ -14,6 +14,11 @@ export interface Category {
   goalRecurring: boolean // for annual expenses (insurance, registration) — once reached, offers a one-tap renewal into next year's cycle rather than staying a one-time target
 }
 
+export interface TransactionAllocation {
+  expenseId: string
+  amount: number
+}
+
 export interface Transaction {
   id: string
   amount: number
@@ -25,6 +30,21 @@ export interface Transaction {
   tags: string[] // free-form, lowercase-normalized on entry; cuts across categories (e.g. "japan 2026", "work trip")
   accountId: string | null // which real account (bank/credit card/savings) this transaction moved money through — independent of category, since one category can be paid from several accounts
   installmentPlanId?: string | null // links a generated payment back to its InstallmentPlan — optional rather than a full migration, since it's only read in a few grouping/progress-display spots, not the widespread per-transaction comparisons accountId needed
+  // One real payment can cover several different expenses at once — a
+  // single bulk reimbursement or Fund From Savings action, rather than
+  // being forced into one transaction per expense it happens to touch.
+  // Confirmed directly this was the actual source of "my transactions
+  // list is filling up with reimbursement entries" — one trip's worth
+  // of expenses reimbursed in one go previously meant one new
+  // transaction PER expense; this holds them as a single transaction's
+  // own breakdown instead. reimbursesExpenseId stays exactly as it was
+  // for the single-expense case (an individual Fund From Savings link,
+  // editing one transaction at a time) — this is additive, not a
+  // replacement, and every calculation that reads reimbursement links
+  // reads both through one shared function so nothing needed touching
+  // twice. This transaction's own `amount` always equals the sum of
+  // these allocations, kept in sync any time an entry changes.
+  multiAllocations?: TransactionAllocation[] | null
 }
 
 export type AccountType = 'bank' | 'credit_card' | 'savings' | 'cash' | 'other'
