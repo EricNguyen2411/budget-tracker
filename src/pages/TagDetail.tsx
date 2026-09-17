@@ -1,12 +1,28 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress, reimbursementBreakdown } from '../calculations'
+import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress, reimbursementBreakdown, planSavingsGiveback, type SavingsGivebackPlan } from '../calculations'
 import { normalizeTag } from '../tags'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 import { DonutChart } from '../components/Charts'
 import TransactionEditor from '../components/TransactionEditor'
-import { createTransaction, deleteTransaction } from '../db'
+import { createTransaction, deleteTransaction, saveTransaction } from '../db'
+
+/** Simulates what the ledger looks like immediately after a giveback
+ * plan is applied, without actually writing anything — used purely so
+ * the "how much is still owed" calculation that drives this same
+ * payment's own allocation preview sees the POST-giveback amounts, not
+ * the stale pre-giveback ones, while the person is still just looking
+ * at a preview and hasn't confirmed anything yet. */
+function applyGivebackPlan(transactions: Transaction[], plan: SavingsGivebackPlan | null): Transaction[] {
+  if (!plan) return transactions
+  return transactions
+    .filter((t) => !plan.deletions.includes(t.id))
+    .map((t) => {
+      const update = plan.updates.find((u) => u.transactionId === t.id)
+      return update ? { ...t, amount: update.newAmount } : t
+    })
+}
 
 interface Props {
   tag: string
@@ -25,6 +41,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [showBulkReimburse, setShowBulkReimburse] = useState(false)
   const [showBulkFund, setShowBulkFund] = useState(false)
+  const [viewingBreakdownSource, setViewingBreakdownSource] = useState<'savings' | 'others' | null>(null)
   const normalized = normalizeTag(tag)
 
   const tagged = useMemo(
@@ -144,16 +161,22 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
             <span className="amount">{formatCurrency(breakdown.totalCost)}</span>
           </div>
           {breakdown.fundedFromSavings > 0.01 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderTop: '1px solid var(--border)' }}>
-              <span style={{ color: 'var(--text-dim)' }}>✈️ Funded from savings</span>
+            <button
+              onClick={() => setViewingBreakdownSource('savings')}
+              style={{ display: 'flex', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '8px 0', fontSize: 14, borderTop: '1px solid var(--border)' }}
+            >
+              <span style={{ color: 'var(--text-dim)' }}>✈️ Funded from savings <span className="chevron">›</span></span>
               <span className="amount" style={{ color: 'var(--blue)' }}>−{formatCurrency(breakdown.fundedFromSavings)}</span>
-            </div>
+            </button>
           )}
           {breakdown.reimbursedByOthers > 0.01 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 14, borderTop: '1px solid var(--border)' }}>
-              <span style={{ color: 'var(--text-dim)' }}>Reimbursed by others</span>
+            <button
+              onClick={() => setViewingBreakdownSource('others')}
+              style={{ display: 'flex', justifyContent: 'space-between', width: '100%', textAlign: 'left', padding: '8px 0', fontSize: 14, borderTop: '1px solid var(--border)' }}
+            >
+              <span style={{ color: 'var(--text-dim)' }}>Reimbursed by others <span className="chevron">›</span></span>
               <span className="amount" style={{ color: 'var(--green)' }}>−{formatCurrency(breakdown.reimbursedByOthers)}</span>
-            </div>
+            </button>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontSize: 15, fontWeight: 700, borderTop: '1px solid var(--border)', marginTop: 4 }}>
             <span>Actually out of pocket</span>
@@ -215,7 +238,9 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
         <BulkReimburseModal
           tagLabel={normalized}
           outstandingExpenses={outstandingExpenses}
+          allTaggedExpenses={tagged.filter((t) => t.isExpense)}
           transactions={transactions}
+          categories={categories}
           accounts={accounts}
           onClose={() => setShowBulkReimburse(false)}
           onDone={() => { setShowBulkReimburse(false); onChanged() }}
@@ -232,6 +257,54 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
           onDone={() => { setShowBulkFund(false); onChanged() }}
         />
       )}
+
+      {viewingBreakdownSource && (
+        <BreakdownSourceModal
+          source={viewingBreakdownSource}
+          entries={viewingBreakdownSource === 'savings' ? breakdown.savingsTransactions : breakdown.otherTransactions}
+          onClose={() => setViewingBreakdownSource(null)}
+          onOpenTransaction={(t) => { setViewingBreakdownSource(null); setEditing(t) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function BreakdownSourceModal({ source, entries, onClose, onOpenTransaction }: {
+  source: 'savings' | 'others'
+  entries: { transaction: Transaction; expense: Transaction; applied: number }[]
+  onClose: () => void
+  onOpenTransaction: (t: Transaction) => void
+}) {
+  const { closing, requestClose } = useModalClose(onClose)
+  return (
+    <div className={`modal-backdrop${closing ? ' modal-closing' : ''}`} onClick={() => requestClose()}>
+      <div className={`modal-sheet${closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <span style={{ width: 60 }} />
+          <span className="modal-title">{source === 'savings' ? 'Funded From Savings' : 'Reimbursed By Others'}</span>
+          <button onClick={() => requestClose()} className="text-button text-button-primary">Done</button>
+        </div>
+        <div className="modal-body">
+          <p className="hint" style={{ marginBottom: 12 }}>Tap any of these to open it directly.</p>
+          {entries.map((entry, i) => (
+            <button
+              key={entry.transaction.id + i}
+              className="card"
+              style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 8 }}
+              onClick={() => requestClose(() => onOpenTransaction(entry.transaction))}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{entry.transaction.note || 'Income'}</span>
+                <span className="amount" style={{ color: 'var(--green)' }}>+{formatCurrency(entry.applied)}</span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>
+                {new Date(entry.transaction.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })} · covers {entry.expense.note || 'expense'}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -363,10 +436,12 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
   )
 }
 
-function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accounts, onClose, onDone }: {
+function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, transactions, categories, accounts, onClose, onDone }: {
   tagLabel: string
   outstandingExpenses: Transaction[]
+  allTaggedExpenses: Transaction[]
   transactions: Transaction[]
+  categories: Category[]
   accounts: Account[]
   onClose: () => void
   onDone: () => void
@@ -393,8 +468,30 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accou
 
   const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
   const parsed = existingTx ? existingTx.amount : parseFloat(amount)
-  const { allocations, leftover } = !isNaN(parsed) && parsed > 0
-    ? splitBulkReimbursement(outstandingExpenses, transactions, parsed)
+  const validAmount = !isNaN(parsed) && parsed > 0
+
+  // A payment bigger than what's currently owed doesn't necessarily
+  // mean money left over — if this tag's expenses were already partly
+  // funded from savings, a friend now covering more of the trip means
+  // savings didn't need to cover as much after all. Worked out against
+  // ALL of this tag's expenses (not just the still-outstanding ones),
+  // since an expense already fully covered from savings is exactly
+  // where money might need to be given back from.
+  const givebackPlan = validAmount ? planSavingsGiveback(allTaggedExpenses, transactions, categories, parsed) : null
+
+  // Once savings gives back what it no longer needs to cover, those
+  // expenses are outstanding again for the purposes of THIS allocation
+  // — recomputed from the full tagged set rather than the original
+  // outstandingExpenses prop, which was computed before any giveback.
+  const effectiveOutstanding = allTaggedExpenses.filter((e) => {
+    const alreadyOwed = e.amount - totalReimbursed(e, transactions)
+    const freedUp = givebackPlan?.updates.some((u) => transactions.find((t) => t.id === u.transactionId)?.reimbursesExpenseId === e.id)
+      || givebackPlan?.deletions.some((id) => transactions.find((t) => t.id === id)?.reimbursesExpenseId === e.id)
+    return alreadyOwed > 0.01 || freedUp
+  })
+
+  const { allocations, leftover } = validAmount
+    ? splitBulkReimbursement(effectiveOutstanding, applyGivebackPlan(transactions, givebackPlan), parsed)
     : { allocations: [] as { expenseId: string; amount: number }[], leftover: 0 }
 
   async function handleConfirm() {
@@ -405,8 +502,23 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accou
     // on its own real date, through its own real account.
     const date = existingTx ? existingTx.date : new Date().toISOString()
     const linkAccountId = existingTx ? existingTx.accountId : accountId
+
+    // Applied BEFORE creating the new allocations, so the reduced/
+    // deleted savings transactions are already out of the way — giving
+    // the freed-up amount back to Travel Savings first, then letting
+    // the new payment claim what's now actually outstanding.
+    if (givebackPlan) {
+      for (const u of givebackPlan.updates) {
+        const t = transactions.find((tx) => tx.id === u.transactionId)
+        if (t) await saveTransaction({ ...t, amount: u.newAmount })
+      }
+      for (const id of givebackPlan.deletions) {
+        await deleteTransaction(id)
+      }
+    }
+
     for (const a of allocations) {
-      const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
+      const expense = effectiveOutstanding.find((e) => e.id === a.expenseId)
       await createTransaction({
         amount: a.amount,
         note: `Re: ${expense?.note || 'expense'}`,
@@ -475,11 +587,22 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, transactions, accou
             </>
           )}
 
+          {givebackPlan && givebackPlan.totalGivenBack > 0.01 && (
+            <div className="card" style={{ marginTop: 16, borderLeft: '3px solid var(--blue)' }}>
+              <span style={{ fontSize: 13, color: 'var(--blue)', fontWeight: 600 }}>
+                ✈️ Also returns {formatCurrency(givebackPlan.totalGivenBack)} to savings
+              </span>
+              <p className="hint" style={{ marginTop: 6 }}>
+                This payment covers more of the trip than was still owed — savings no longer needs to fund as much, so the difference goes back to where it came from.
+              </p>
+            </div>
+          )}
+
           {allocations.length > 0 && (
-            <div className="card" style={{ marginTop: 20 }}>
+            <div className="card" style={{ marginTop: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 8px' }}>Applied To</span>
               {allocations.map((a) => {
-                const expense = outstandingExpenses.find((e) => e.id === a.expenseId)
+                const expense = effectiveOutstanding.find((e) => e.id === a.expenseId)
                 return (
                   <div key={a.expenseId} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13 }}>
                     <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{expense?.note || 'Expense'}</span>

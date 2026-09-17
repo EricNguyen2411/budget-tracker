@@ -251,11 +251,19 @@ export function fundedFromSavingsThisPeriod(categories: Category[], transactions
     }, 0)
 }
 
+export interface AppliedReimbursement {
+  transaction: Transaction
+  expense: Transaction
+  applied: number
+}
+
 export interface ReimbursementBreakdown {
   totalCost: number
   fundedFromSavings: number
   reimbursedByOthers: number
   outOfPocket: number
+  savingsTransactions: AppliedReimbursement[]
+  otherTransactions: AppliedReimbursement[]
 }
 
 /** Splits a set of expenses' total cost into where the money to cover
@@ -270,26 +278,81 @@ export interface ReimbursementBreakdown {
  * "how much of THIS SPECIFIC reimbursement actually got applied, in
  * order" logic, just generalized to accept any expense list instead of
  * a period filter, and further split into savings vs everything else
- * rather than only isolating savings. */
+ * rather than only isolating savings.
+ *
+ * Also returns which specific transactions make up each total, not
+ * just the sum — a person looking at "$300 reimbursed by others" with
+ * no way to see which transaction that actually was has no way to
+ * verify or trace it, which defeats the point of showing the number
+ * at all. */
 export function reimbursementBreakdown(expenses: Transaction[], all: Transaction[], categories: Category[]): ReimbursementBreakdown {
   const totalCost = expenses.reduce((sum, e) => sum + e.amount, 0)
   let fundedFromSavings = 0
   let reimbursedByOthers = 0
+  const savingsTransactions: AppliedReimbursement[] = []
+  const otherTransactions: AppliedReimbursement[] = []
 
   for (const expense of expenses) {
     const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
     let remaining = expense.amount
     for (const r of reimbursements) {
       const applied = Math.min(r.amount, Math.max(0, remaining))
-      const ownCategory = r.categoryId ? categories.find((c) => c.id === r.categoryId) : null
-      if (ownCategory?.isSavingsCategory) fundedFromSavings += applied
-      else reimbursedByOthers += applied
+      if (applied > 0.01) {
+        const ownCategory = r.categoryId ? categories.find((c) => c.id === r.categoryId) : null
+        const entry: AppliedReimbursement = { transaction: r, expense, applied }
+        if (ownCategory?.isSavingsCategory) { fundedFromSavings += applied; savingsTransactions.push(entry) }
+        else { reimbursedByOthers += applied; otherTransactions.push(entry) }
+      }
       remaining -= applied
     }
   }
 
   const outOfPocket = Math.max(0, totalCost - fundedFromSavings - reimbursedByOthers)
-  return { totalCost, fundedFromSavings, reimbursedByOthers, outOfPocket }
+  return { totalCost, fundedFromSavings, reimbursedByOthers, outOfPocket, savingsTransactions, otherTransactions }
+}
+
+export interface SavingsGivebackPlan {
+  updates: { transactionId: string; newAmount: number }[]
+  deletions: string[]
+  totalGivenBack: number
+}
+
+/** When a new reimbursement is about to be applied to a set of expenses
+ * and, combined with what's already been reimbursed by others, would
+ * now cover more of the total cost than savings actually needs to —
+ * works out which existing savings-funding transactions should shrink
+ * (or disappear entirely) to give that freed-up amount back to savings,
+ * since a friend's payment is meant to take priority over your own
+ * savings as the funding source, not just pile up as unlinked excess
+ * income on top of it.
+ *
+ * Reduces the MOST RECENTLY applied savings funding first — the newest
+ * draw is the least "already spent" one — working backward through
+ * older ones only if the newest alone isn't enough to free up the full
+ * amount needed. A transaction reduced all the way to zero is marked
+ * for deletion rather than left behind as a zero-dollar entry. */
+export function planSavingsGiveback(expenses: Transaction[], all: Transaction[], categories: Category[], incomingReimbursement: number): SavingsGivebackPlan {
+  const breakdown = reimbursementBreakdown(expenses, all, categories)
+  const newTotalOther = breakdown.reimbursedByOthers + incomingReimbursement
+  const idealSavings = Math.max(0, Math.round((breakdown.totalCost - newTotalOther) * 100) / 100)
+  let toGiveBack = Math.max(0, Math.round((breakdown.fundedFromSavings - idealSavings) * 100) / 100)
+
+  const updates: SavingsGivebackPlan['updates'] = []
+  const deletions: string[] = []
+  let totalGivenBack = 0
+
+  const mostRecentFirst = [...breakdown.savingsTransactions].sort((a, b) => b.transaction.date.localeCompare(a.transaction.date))
+  for (const entry of mostRecentFirst) {
+    if (toGiveBack <= 0.01) break
+    const reduceBy = Math.min(entry.applied, toGiveBack)
+    const newAmount = Math.round((entry.transaction.amount - reduceBy) * 100) / 100
+    if (newAmount <= 0.01) deletions.push(entry.transaction.id)
+    else updates.push({ transactionId: entry.transaction.id, newAmount })
+    totalGivenBack += reduceBy
+    toGiveBack = Math.round((toGiveBack - reduceBy) * 100) / 100
+  }
+
+  return { updates, deletions, totalGivenBack: Math.round(totalGivenBack * 100) / 100 }
 }
 
 export function formatCurrency(amount: number): string {
