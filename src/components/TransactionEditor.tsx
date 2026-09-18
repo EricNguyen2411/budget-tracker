@@ -319,7 +319,22 @@ function RegularTransactionEditor({ transaction, categories, allTransactions, on
       categoryId: effectiveCategoryId,
       accountId,
       reimbursesExpenseId: isExpense ? null : reimbursesId,
-      tags: dedupeTags(tags)
+      tags: dedupeTags(tags),
+      // This form has no fields for these — they aren't something a
+      // person edits directly here, they're internal links written by
+      // other flows (account reconciliation, a bulk multi-expense
+      // payment, an auto-generated installment). Carried through
+      // untouched from whatever this transaction already had, rather
+      // than left out of the object literal: leaving them out doesn't
+      // just leave them "unchanged," it actively overwrites them to
+      // undefined on save, since saveTransaction does a full record
+      // replace (db.put), not a merge. Confirmed directly: opening a
+      // balance-adjustment transaction and hitting Save with no changes
+      // silently stripped isBalanceAdjustment, making it reappear as
+      // ordinary income on the Income screen.
+      isBalanceAdjustment: transaction?.isBalanceAdjustment,
+      multiAllocations: transaction?.multiAllocations,
+      installmentPlanId: transaction?.installmentPlanId
     })
   }
 

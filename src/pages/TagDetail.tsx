@@ -72,7 +72,15 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
     [transactions, normalized]
   )
 
-  const expenseTotal = tagged.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
+  // Deliberately NOT netAmount's per-transaction netting — that nets
+  // out every linked reimbursement regardless of source, savings and
+  // friends alike, which isn't what "Spent on this tag" should mean.
+  // Money funded from your own savings is still money you spent (it
+  // came out of a balance you were tracking as yours); only a genuine
+  // friend/other-party reimbursement should reduce what this tag "cost"
+  // you. reimbursementBreakdown already keeps those two sources apart,
+  // so total cost minus just the other-party share (equivalently,
+  // outOfPocket + fundedFromSavings) is the right figure here.
 
   // Only worth its own section once there's actually something to
   // break down — a tag with no savings-funding or reimbursement at all
@@ -83,6 +91,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
     [tagged, transactions, categories]
   )
   const showBreakdown = breakdown.fundedFromSavings > 0.01 || breakdown.reimbursedByOthers > 0.01
+  const expenseTotal = breakdown.outOfPocket + breakdown.fundedFromSavings
   const incomeTotal = tagged.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
 
   // Every tagged expense that isn't yet fully paid back — sorted oldest

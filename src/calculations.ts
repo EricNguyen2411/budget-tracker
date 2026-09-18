@@ -643,12 +643,30 @@ export function outstandingReimbursements(transactions: Transaction[]): Outstand
  * transaction pointing at the expense it offsets) — deliberately, so it
  * inherits the same safe-deletion handling and the same automatic
  * exclusion from the Income stat, without a new field or new
- * calculation path to keep in sync. Identified here by both sides
- * having a DIFFERENT account set — the one signal a genuine friend
- * reimbursement essentially never has, since the normal "Reimburses"
- * picker doesn't prompt for an account on either side. */
+ * calculation path to keep in sync.
+ *
+ * Originally identified purely by both sides having a DIFFERENT account
+ * set. Confirmed via a real screenshot that signal alone is too broad:
+ * TagDetail's bulk "Fund from Savings" and bulk "Reimburse" flows both
+ * legitimately set a real accountId (the savings account, or wherever
+ * the friend's money landed) that's very often different from the
+ * expense's own account — which made ordinary reimbursements of real,
+ * categorized spending get misread as transfers, silently excluded from
+ * netAmount's netting (so a fully-reimbursed expense still showed its
+ * full original cost) and from the category/tag breakdowns that rely on
+ * netAmount too.
+ *
+ * The expense side's categoryId is the reliable extra signal: createTransfer
+ * always leaves it null on both creation and every subsequent edit (the
+ * transfer editor has no category field at all), while a real expense
+ * being funded or reimbursed — the whole reason reimbursementsFor exists
+ * — is a categorized purchase in the overwhelming normal case. Requiring
+ * categoryId === null keeps genuine transfers (old and new) recognized
+ * exactly as before, while no longer catching a categorized expense's
+ * reimbursement just because it happened to be recorded on a different
+ * account. */
 export function isAccountTransferLink(reimbursingTx: Transaction, expenseTx: Transaction): boolean {
-  return !!reimbursingTx.accountId && !!expenseTx.accountId && reimbursingTx.accountId !== expenseTx.accountId
+  return !!reimbursingTx.accountId && !!expenseTx.accountId && reimbursingTx.accountId !== expenseTx.accountId && expenseTx.categoryId === null
 }
 
 /** Given either half of a transfer, finds the other half — used to edit
