@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, repaysNote, excessForReimbursement, localDateInputValue, isUnlinkedIncome, isLinkedReimbursement } from '../calculations'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, localDateInputValue, isUnlinkedIncome, isLinkedReimbursement, totalExcessReimbursement } from '../calculations'
 import { periodOffsetBy, getCycleConfig, getSettings, isCustomCycle } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -84,6 +84,20 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
     for (const t of rangeTransactions.filter((t) => t.categoryId)) {
       const delta = t.isExpense ? netAmount(t, transactions) : (t.reimbursesExpenseId ? 0 : -t.amount)
       map.set(t.categoryId!, (map.get(t.categoryId!) ?? 0) + delta)
+    }
+    // The other half of matching the Dashboard/netSpentForCategory exactly:
+    // a reimbursement that adds up to MORE than its expense needed leaves
+    // a genuine surplus that netAmount alone can't represent (it's floored
+    // at 0 per transaction, never negative), the same reasoning
+    // netSpentForCategory documents for why it subtracts totalExcessReimbursement
+    // separately. Missing here was a real, confirmed gap: this report
+    // diverged from the Dashboard's own Spent figure by exactly that surplus
+    // whenever an expense in range had been reimbursed for more than it cost
+    // — silently breaking the "must match when the range lines up with the
+    // current period" guarantee the comment above already promises.
+    for (const t of rangeTransactions.filter((t) => t.isExpense && t.categoryId)) {
+      const excess = totalExcessReimbursement(t, transactions, categories)
+      if (excess > 0) map.set(t.categoryId!, (map.get(t.categoryId!) ?? 0) - excess)
     }
     return Array.from(map.entries())
       .map(([id, amount]) => ({ category: categories.find((c) => c.id === id), amount: Math.max(0, amount) }))

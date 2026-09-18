@@ -60,11 +60,24 @@ export interface InstallmentProgress {
 
 export function installmentProgress(plan: InstallmentPlan, transactions: Transaction[]): InstallmentProgress {
   const own = transactions.filter((t) => t.installmentPlanId === plan.id)
-  const paidCount = own.length
   const paidAmount = own.reduce((sum, t) => sum + t.amount, 0)
   const amounts = installmentAmounts(plan)
   const dueDates = installmentDueDates(plan)
   const remainingAmount = Math.max(0, Math.round((plan.totalAmount - paidAmount) * 100) / 100)
+  // "How many installments has this plan gotten through" and "how many
+  // real payments exist right now" are NOT the same question once a
+  // generated payment has ever been deleted — confirmed directly:
+  // processDueInstallments deliberately advances plan.nextInstallmentIndex
+  // and never regenerates a slot once passed, specifically so deleting a
+  // payment can't cause it to reappear as a duplicate later (see the
+  // comment on that function). But this display was still recounting
+  // existing transactions instead, so after a deletion it showed a
+  // "next due" date and amount for the slot that was just deleted —
+  // one the generator had already moved past and would never actually
+  // create. Bootstrapped the same way processDueInstallments bootstraps
+  // it, for a plan saved before this field existed.
+  const nextIndex = plan.nextInstallmentIndex ?? own.length
+  const paidCount = Math.min(nextIndex, plan.numberOfInstallments)
   const isPaidOff = paidCount >= plan.numberOfInstallments
   return {
     paidCount,
