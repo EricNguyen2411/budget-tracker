@@ -3,6 +3,41 @@ import { isInSamePeriod, daysRemainingInPeriod, periodOffsetBy } from './budgetP
 import { normalizeMerchantKey } from './merchantRules'
 import { normalizeTag } from './tags'
 
+/** True if an income transaction is genuinely unlinked — not tied to
+ * covering any specific expense, whether via the simple single-link
+ * field (reimbursesExpenseId) or the multi-expense allocations array
+ * (multiAllocations), and not an account balance reconciliation
+ * either. A transaction using multiAllocations has reimbursesExpenseId
+ * set to null by design, and a balance adjustment has neither field
+ * set at all, so checking only reimbursesExpenseId was confirmed to
+ * let both slip through as if they were ordinary, unlinked income —
+ * real money already accounted for elsewhere, or not real new money at
+ * all, getting double-counted as fresh income on top of it. Every
+ * place in this file and the rest of the app that identifies "unlinked
+ * income" reads through this one function so that distinction can't
+ * drift out of sync between them again. */
+export function isUnlinkedIncome(t: Transaction): boolean {
+  return !t.isExpense && !t.reimbursesExpenseId && !(t.multiAllocations && t.multiAllocations.length > 0) && !t.isBalanceAdjustment
+}
+
+/** The inverse of isUnlinkedIncome — true if an income transaction IS
+ * linked to covering one or more expenses, however it's linked. */
+export function isLinkedReimbursement(t: Transaction): boolean {
+  return !t.isExpense && !isUnlinkedIncome(t)
+}
+
+/** Every expense id a reimbursement transaction covers — one, via the
+ * simple single-link field, or several, via multiAllocations. Shared so
+ * anything that needs to walk "what does this payment actually cover"
+ * (the dashboard's own Reimbursed total, monthly/custom-range reports,
+ * and more) does it the same way rather than re-deriving it and
+ * potentially only handling one of the two shapes. */
+export function coveredExpenseIds(t: Transaction): string[] {
+  if (t.multiAllocations && t.multiAllocations.length > 0) return t.multiAllocations.map((a) => a.expenseId)
+  if (t.reimbursesExpenseId) return [t.reimbursesExpenseId]
+  return []
+}
+
 /** Reimbursements linked to a given expense — both the simple,
  * single-expense case (reimbursesExpenseId, used when editing one
  * transaction's own Fund From Savings link) and the multi-expense case
@@ -92,7 +127,7 @@ export function netSpentForCategory(category: Category, allCategories: Category[
 
   const expenses = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, allTransactions), 0)
   const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, allTransactions), 0)
-  const unlinkedIncome = relevant.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+  const unlinkedIncome = relevant.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
 
   return expenses - excess - unlinkedIncome
 }
@@ -203,25 +238,28 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
   const spent = spendingCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
   const saved = savingsCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
 
-  const unlinkedIncome = thisMonth.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+  const unlinkedIncome = thisMonth.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
   const excessFromLinked = thisMonth
-    .filter((t) => !t.isExpense && t.reimbursesExpenseId)
+    .filter((t) => isLinkedReimbursement(t))
     .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
   const income = unlinkedIncome + excessFromLinked
 
   const reimbursed = thisMonth
-    .filter((t) => !t.isExpense && t.reimbursesExpenseId)
+    .filter((t) => isLinkedReimbursement(t))
     .reduce((sum, t) => {
-      const expense = transactions.find((e) => e.id === t.reimbursesExpenseId)
-      if (!expense) return sum
-      const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
-      let remaining = expense.amount
-      for (const r of reimbursements) {
-        const applied = Math.min(r.amount, Math.max(0, remaining))
-        if (r.id === t.id) return sum + applied
-        remaining -= applied
+      let total = 0
+      for (const expenseId of coveredExpenseIds(t)) {
+        const expense = transactions.find((e) => e.id === expenseId)
+        if (!expense) continue
+        const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
+        let remaining = expense.amount
+        for (const r of reimbursements) {
+          const applied = Math.min(r.amount, Math.max(0, remaining))
+          if (r.id === t.id) { total += applied; break }
+          remaining -= applied
+        }
       }
-      return sum
+      return sum + total
     }, 0)
   // A savings category counts toward Safe to Spend only if it has its
   // own monthly budget explicitly set — that's the signal that it's a
@@ -256,22 +294,25 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
 export function fundedFromSavingsThisPeriod(categories: Category[], transactions: Transaction[], referenceDate: Date): number {
   const thisMonth = transactions.filter((t) => isInSamePeriod(new Date(t.date), referenceDate))
   return thisMonth
-    .filter((t) => !t.isExpense && t.reimbursesExpenseId)
+    .filter((t) => isLinkedReimbursement(t))
     .filter((t) => {
       const ownCategory = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
       return ownCategory?.isSavingsCategory ?? false
     })
     .reduce((sum, t) => {
-      const expense = transactions.find((e) => e.id === t.reimbursesExpenseId)
-      if (!expense) return sum
-      const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
-      let remaining = expense.amount
-      for (const r of reimbursements) {
-        const applied = Math.min(r.amount, Math.max(0, remaining))
-        if (r.id === t.id) return sum + applied
-        remaining -= applied
+      let total = 0
+      for (const expenseId of coveredExpenseIds(t)) {
+        const expense = transactions.find((e) => e.id === expenseId)
+        if (!expense) continue
+        const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
+        let remaining = expense.amount
+        for (const r of reimbursements) {
+          const applied = Math.min(r.amount, Math.max(0, remaining))
+          if (r.id === t.id) { total += applied; break }
+          remaining -= applied
+        }
       }
-      return sum
+      return sum + total
     }, 0)
 }
 
@@ -463,9 +504,9 @@ export function last6PeriodsNetSavings(categories: Category[], transactions: Tra
       })
       .reduce((sum, t) => sum + netAmount(t, transactions), 0)
 
-    const unlinkedIncome = periodTx.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+    const unlinkedIncome = periodTx.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
     const excessFromLinked = periodTx
-      .filter((t) => !t.isExpense && t.reimbursesExpenseId)
+      .filter((t) => isLinkedReimbursement(t))
       .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
     const income = unlinkedIncome + excessFromLinked
 

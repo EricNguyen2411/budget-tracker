@@ -70,7 +70,7 @@ export function detectRecurring(
 
   const cutoff = new Date(referenceDate)
   cutoff.setMonth(cutoff.getMonth() - 18)
-  const recent = transactions.filter((t) => new Date(t.date) >= cutoff && !t.reimbursesExpenseId)
+  const recent = transactions.filter((t) => new Date(t.date) >= cutoff && !t.reimbursesExpenseId && !(t.multiAllocations && t.multiAllocations.length > 0))
 
   const grouped = new Map<string, Transaction[]>()
   for (const t of recent) {

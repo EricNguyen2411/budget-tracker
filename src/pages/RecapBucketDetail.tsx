@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, excessForReimbursement, effectiveBudget } from '../calculations'
+import { formatCurrency, netAmount, excessForReimbursement, effectiveBudget, isUnlinkedIncome } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import { isSavingsOrChildOfSavings, directSpentForCategory } from '../monthlyRecap'
 import { useSwipeBack } from '../useSwipeBack'
@@ -96,7 +96,7 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
     }
     // income: unlinked income in full, plus the excess portion of any reimbursement
     if (t.isExpense) return false
-    if (!t.reimbursesExpenseId) return true
+    if (isUnlinkedIncome(t)) return true
     return excessForReimbursement(t, transactions) > 0
   })
   const total = rows.reduce((sum, t) => {

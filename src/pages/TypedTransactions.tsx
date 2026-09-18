@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory } from '../calculations'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isLinkedReimbursement, coveredExpenseIds, reimbursementsFor } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -57,13 +57,21 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         return thisPeriod.filter((t) => {
           const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
           if (t.isExpense) return !cat?.isSavingsCategory
-          return !!cat && !cat.isSavingsCategory && !t.reimbursesExpenseId
+          return !!cat && !cat.isSavingsCategory && isUnlinkedIncome(t)
         })
       case 'saved':
+        // A savings-funding withdrawal — whether the simple single-link
+        // shape or a multi-allocation one covering several expenses at
+        // once — is money coming back OUT of savings, not going in, so
+        // it's excluded here the same way as the other. Confirmed
+        // directly this was a real gap: a multi-allocation withdrawal
+        // has reimbursesExpenseId set to null by design (it uses the
+        // other field instead), which made it read as "not linked" and
+        // get counted as if it were itself a fresh contribution.
         return thisPeriod.filter((t) => {
           const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
           if (!cat?.isSavingsCategory) return false
-          return t.isExpense || !t.reimbursesExpenseId
+          return t.isExpense || isUnlinkedIncome(t)
         })
       case 'income':
         // Also includes the EXCESS portion of an over-reimbursement (paid
@@ -72,9 +80,9 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         // previously invisible here, since the filter excluded every
         // reimbursement-linked transaction outright regardless of
         // whether part of it was genuine excess income.
-        return thisPeriod.filter((t) => !t.isExpense && (!t.reimbursesExpenseId || excessForReimbursement(t, transactions) > 0))
+        return thisPeriod.filter((t) => !t.isExpense && (isUnlinkedIncome(t) || excessForReimbursement(t, transactions) > 0))
       case 'reimbursed':
-        return thisPeriod.filter((t) => !t.isExpense && t.reimbursesExpenseId)
+        return thisPeriod.filter((t) => isLinkedReimbursement(t))
     }
   }, [thisPeriod, kind, categories, transactions])
 
@@ -89,17 +97,32 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
       return topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
     }
     if (kind === 'income') {
-      const unlinkedIncome = thisPeriod.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
-      const excessFromLinked = thisPeriod.filter((t) => !t.isExpense && t.reimbursesExpenseId).reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
+      const unlinkedIncome = thisPeriod.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
+      const excessFromLinked = thisPeriod.filter((t) => isLinkedReimbursement(t)).reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
       return unlinkedIncome + excessFromLinked
     }
-    // reimbursed
+    // reimbursed — sums what THIS transaction actually contributes
+    // across every expense it covers (one, for the simple single-link
+    // shape; possibly several, for a multi-allocation one), via the
+    // same order-aware "applied" logic used everywhere else, rather
+    // than assuming a multi-allocation transaction's own amount always
+    // equals its contribution — correct in the overwhelmingly common
+    // case, but not if some other reimbursement on the same expense
+    // came in after this one and partly displaced it.
     return scoped.reduce((sum, t) => {
-      if (t.reimbursesExpenseId) {
-        const excess = excessForReimbursement(t, transactions)
-        return sum + (t.amount - excess)
+      let total = 0
+      for (const expenseId of coveredExpenseIds(t)) {
+        const expense = transactions.find((e) => e.id === expenseId)
+        if (!expense) continue
+        const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
+        let remaining = expense.amount
+        for (const r of reimbursements) {
+          const applied = Math.min(r.amount, Math.max(0, remaining))
+          if (r.id === t.id) { total += applied; break }
+          remaining -= applied
+        }
       }
-      return sum + netAmount(t, transactions)
+      return sum + total
     }, 0)
   }, [kind, categories, transactions, now, thisPeriod, scoped])
 

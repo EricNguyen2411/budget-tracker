@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { suggestBudgets } from '../budgetSuggestions'
-import { formatCurrency, goalProgress, computeDashboardTotals } from '../calculations'
+import { formatCurrency, goalProgress, computeDashboardTotals, isUnlinkedIncome } from '../calculations'
 import { referenceDateOffsetBy } from '../budgetPeriod'
 import { saveCategory } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
@@ -31,7 +31,7 @@ export default function TotalBudgetPlanner({ categories, transactions, onBack, o
   // friend paying back their share of dinner. Most recent first, since
   // the payslip being looked for is almost always a recent one.
   const incomeCandidates = useMemo(
-    () => transactions.filter((t) => !t.isExpense && !t.reimbursesExpenseId).sort((a, b) => b.date.localeCompare(a.date)),
+    () => transactions.filter((t) => isUnlinkedIncome(t)).sort((a, b) => b.date.localeCompare(a.date)),
     [transactions]
   )
 

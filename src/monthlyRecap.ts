@@ -1,7 +1,7 @@
 import type { Category, Transaction } from './types'
 import {
   netSpentForCategory, effectiveBudget, computeDashboardTotals, formatCurrency,
-  goalProgress, goalProgressFraction, projectedGoalCompletionDate, netAmount, totalExcessReimbursement
+  goalProgress, goalProgressFraction, projectedGoalCompletionDate, netAmount, totalExcessReimbursement, isUnlinkedIncome
 } from './calculations'
 import { isInSamePeriod } from './budgetPeriod'
 
@@ -62,7 +62,7 @@ export function directSpentForCategory(category: Category, transactions: Transac
   const relevant = transactions.filter((t) => t.categoryId === category.id && isInSamePeriod(new Date(t.date), referenceDate))
   const expenses = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
   const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, transactions), 0)
-  const unlinkedIncome = relevant.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+  const unlinkedIncome = relevant.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
   return expenses - excess - unlinkedIncome
 }
 

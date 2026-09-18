@@ -1,6 +1,6 @@
 import type { Transaction, RecurringTransaction, Category, Account } from './types'
 import { findDuplicates, isLikelyTransitFare } from './duplicates'
-import { goalProgress, projectedGoalCompletionDate, netSpentForCategory, findTransferPair } from './calculations'
+import { goalProgress, projectedGoalCompletionDate, netSpentForCategory, findTransferPair, isUnlinkedIncome } from './calculations'
 import { detectRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
@@ -204,7 +204,7 @@ export function runHealthCheck(
     // would break a correctly-set-up funding link. Only an UNLINKED
     // income transaction sitting in a savings category is the real
     // pattern this warning exists to catch.
-    return cat?.isSavingsCategory === true && !t.reimbursesExpenseId
+    return cat?.isSavingsCategory === true && isUnlinkedIncome(t)
   })
   if (incomeInSavings.length > 0) {
     findings.push({

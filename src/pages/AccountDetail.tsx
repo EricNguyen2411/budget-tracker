@@ -201,7 +201,8 @@ function ReconcileModal({ account, transactions, onClose, onDone }: { account: A
       categoryId: null,
       reimbursesExpenseId: null,
       tags: [],
-      accountId: account.id
+      accountId: account.id,
+      isBalanceAdjustment: true
     })
     onDone()
   }

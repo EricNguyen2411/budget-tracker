@@ -45,6 +45,18 @@ export interface Transaction {
   // twice. This transaction's own `amount` always equals the sum of
   // these allocations, kept in sync any time an entry changes.
   multiAllocations?: TransactionAllocation[] | null
+  // A reconciliation adjustment (AccountDetail's "Doesn't match your
+  // bank? Fix it") — correcting the tracked balance to match reality,
+  // not a real, new financial event. Still counts toward the
+  // account's own balance (that's the whole point of it), but
+  // deliberately excluded from Income, Spent, and every other stat
+  // that describes what actually happened this period — confirmed
+  // directly this was a real gap: with nothing marking it as
+  // different, a positive adjustment read exactly like a genuine,
+  // unlinked income transaction (a salary deposit, a gift) everywhere
+  // that stat is shown, inflating it with money that was never
+  // actually earned.
+  isBalanceAdjustment?: boolean
 }
 
 export type AccountType = 'bank' | 'credit_card' | 'savings' | 'cash' | 'other'

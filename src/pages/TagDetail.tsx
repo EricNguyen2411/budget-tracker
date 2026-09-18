@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress, reimbursementBreakdown, planSavingsGiveback, type SavingsGivebackPlan } from '../calculations'
+import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress, reimbursementBreakdown, planSavingsGiveback, type SavingsGivebackPlan, isUnlinkedIncome } from '../calculations'
 import { normalizeTag } from '../tags'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
@@ -83,7 +83,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
     [tagged, transactions, categories]
   )
   const showBreakdown = breakdown.fundedFromSavings > 0.01 || breakdown.reimbursedByOthers > 0.01
-  const incomeTotal = tagged.filter((t) => !t.isExpense && !t.reimbursesExpenseId).reduce((sum, t) => sum + t.amount, 0)
+  const incomeTotal = tagged.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
 
   // Every tagged expense that isn't yet fully paid back — sorted oldest
   // first, matching splitBulkReimbursement's own allocation order, so
@@ -536,7 +536,7 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
   // income side of a link this exact flow already created, not a fresh
   // payment waiting to be applied.
   const candidateTransactions = transactions
-    .filter((t) => !t.isExpense && !t.reimbursesExpenseId && !t.tags.some((tg) => tg === tagLabel))
+    .filter((t) => isUnlinkedIncome(t) && !t.tags.some((tg) => tg === tagLabel))
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 20)
 

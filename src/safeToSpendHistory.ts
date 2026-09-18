@@ -10,6 +10,7 @@ interface SnapshotTransaction {
   categoryId: string | null
   note: string
   reimbursesExpenseId: string | null
+  hasMultiAllocations: boolean
 }
 
 export interface PeriodSnapshot {
@@ -34,7 +35,7 @@ export function computeSnapshot(categories: Category[], transactions: Transactio
   const periodTx = transactions.filter((t) => t.categoryId && isInSamePeriod(new Date(t.date), referenceDate))
   const txMap: Record<string, SnapshotTransaction> = {}
   for (const t of periodTx) {
-    txMap[t.id] = { amount: t.amount, isExpense: t.isExpense, categoryId: t.categoryId, note: t.note, reimbursesExpenseId: t.reimbursesExpenseId }
+    txMap[t.id] = { amount: t.amount, isExpense: t.isExpense, categoryId: t.categoryId, note: t.note, reimbursesExpenseId: t.reimbursesExpenseId, hasMultiAllocations: !!(t.multiAllocations && t.multiAllocations.length > 0) }
   }
   return {
     periodKey: periodKeyFor(referenceDate),
@@ -97,8 +98,9 @@ export function diffSnapshots(prev: PeriodSnapshot, current: PeriodSnapshot, cat
 
     if (!before && after) {
       const impact = after.isExpense ? -after.amount : after.amount
-      const label = after.reimbursesExpenseId ? 'Reimbursement' : after.isExpense ? 'New expense' : 'New income'
-      const icon = after.reimbursesExpenseId ? '💸' : after.isExpense ? '➖' : '➕'
+      const isReimbursement = !!after.reimbursesExpenseId || after.hasMultiAllocations
+      const label = isReimbursement ? 'Reimbursement' : after.isExpense ? 'New expense' : 'New income'
+      const icon = isReimbursement ? '💸' : after.isExpense ? '➖' : '➕'
       lines.push({ icon, text: `${label}: "${after.note || categoryName(categories, after.categoryId)}" ${signed(impact)}`, impact })
     } else if (before && !after) {
       const impact = before.isExpense ? before.amount : -before.amount
