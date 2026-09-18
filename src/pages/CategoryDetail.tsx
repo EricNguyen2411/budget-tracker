@@ -40,6 +40,10 @@ export default function CategoryDetail({ category, allCategories, transactions, 
     sort === 'recent' ? b.date.localeCompare(a.date) : netAmount(b, transactions) - netAmount(a, transactions)
   )
   const budget = effectiveBudget(category, allCategories)
+  // Exclusive (budget-relative) netAmount throughout this screen — the
+  // "Spent this period" figure above and every row below must agree
+  // with each other, and with netSpentForCategory's own logic (see
+  // there for why savings draw-downs don't reduce this).
   const spent = Math.max(0, netSpentForCategory(category, allCategories, transactions, new Date()))
   const goal = isGoal(category)
 

@@ -29,7 +29,7 @@ let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 6, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 7, {
       async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -66,10 +66,41 @@ function getDB() {
           // missing field and an explicit null read identically
           // everywhere this gets checked.
         }
+        if (oldVersion < 7) {
+          // Repairs data corrupted by a real bug (fixed alongside this
+          // migration): editing a balance-adjustment transaction through
+          // the regular transaction editor silently dropped its
+          // isBalanceAdjustment flag on save, since the editor rebuilt
+          // the record from only its own form fields and saveTransaction
+          // fully replaces the stored record rather than merging into
+          // it. Confirmed via a real screenshot: a reconciliation entry
+          // that should have been excluded from the Income total instead
+          // counted as ordinary income once its flag was gone.
+          //
+          // Re-running this is safe and a no-op for anyone unaffected —
+          // it only touches transactions that still carry the exact
+          // note text and null category the reconcile flow always
+          // writes, and only when the flag isn't already true, so a
+          // transaction a person genuinely renamed away from "Balance
+          // adjustment" is left alone.
+          await migrateMissingBalanceAdjustmentFlag(transaction)
+        }
       }
     })
   }
   return dbPromise
+}
+
+async function migrateMissingBalanceAdjustmentFlag(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
+  const store = transaction.objectStore('transactions')
+  let cursor = await store.openCursor()
+  while (cursor) {
+    const t = cursor.value as Transaction
+    if (t.note === 'Balance adjustment' && t.categoryId === null && t.isBalanceAdjustment !== true) {
+      await cursor.update({ ...t, isBalanceAdjustment: true })
+    }
+    cursor = await cursor.continue()
+  }
 }
 
 async function migrateMissingTags(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {

@@ -113,7 +113,7 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
                       <span className="tx-category">{cat?.name ?? 'Uncategorized'} · {new Date(t.date).toLocaleDateString('en-AU')}</span>
                     </div>
                     <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-                      {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions))}
+                      {t.isExpense ? '-' : '+'}{formatCurrency(netAmount(t, transactions, categories))}
                     </span>
                   </button>
                 )

@@ -58,10 +58,10 @@ export function isSavingsOrChildOfSavings(category: Category, allCategories: Cat
  * category (leaf or not) exactly reconstructs total spend with no
  * double-counting, since every transaction belongs to exactly one
  * category. */
-export function directSpentForCategory(category: Category, transactions: Transaction[], referenceDate: Date): number {
+export function directSpentForCategory(category: Category, transactions: Transaction[], referenceDate: Date, categories: Category[] = []): number {
   const relevant = transactions.filter((t) => t.categoryId === category.id && isInSamePeriod(new Date(t.date), referenceDate))
   const expenses = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
-  const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, transactions), 0)
+  const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, transactions, categories), 0)
   const unlinkedIncome = relevant.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
   return expenses - excess - unlinkedIncome
 }
@@ -130,10 +130,10 @@ export function buildMonthRecap(categories: Category[], transactions: Transactio
   const classifiable = categories.filter((c) => !isSavingsOrChildOfSavings(c, categories))
   const needsSpent = classifiable
     .filter((c) => classify(c, categories) === 'need')
-    .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate)), 0)
+    .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate, categories)), 0)
   const wantsSpent = classifiable
     .filter((c) => classify(c, categories) === 'want')
-    .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate)), 0)
+    .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate, categories)), 0)
   // Unclassified categories aren't forced into either bucket — better to
   // leave the split honestly incomplete than silently miscategorize
   // spending into the wrong benchmark.

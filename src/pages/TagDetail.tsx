@@ -129,7 +129,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
       const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
       const key = cat?.id ?? 'none'
       const existing = byCategory.get(key) ?? { name: cat?.name ?? 'Uncategorized', icon: cat?.icon ?? '❓', color: cat?.color ?? '#5C6167', amount: 0 }
-      existing.amount += netAmount(t, transactions)
+      existing.amount += netAmount(t, transactions, categories)
       byCategory.set(key, existing)
     }
     return Array.from(byCategory.values()).filter((c) => c.amount > 0).sort((a, b) => b.amount - a.amount)
@@ -238,7 +238,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         {tagged.map((t, i) => {
           const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
-          const net = netAmount(t, transactions)
+          const net = netAmount(t, transactions, categories)
           // A tag total should still show what a trip or event actually
           // cost, even for a transaction fully paid down by savings —
           // net is correctly $0.00 for Safe to Spend purposes, but that

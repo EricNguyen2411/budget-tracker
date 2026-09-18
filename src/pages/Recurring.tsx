@@ -36,6 +36,7 @@ export default function RecurringPage({ categories, transactions, recurring, onC
       isExpense: s.isExpense,
       frequency: s.frequency,
       nextDueDate: s.suggestedNextDueDate.toISOString(),
+      anchorDay: s.anchorDay,
       categoryId: s.categoryId,
       accountId: s.accountId,
       isActive: true
@@ -196,6 +197,11 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
       amount: parsed,
       frequency,
       nextDueDate: new Date(y, m - 1, d).toISOString(),
+      // Always re-derived from whatever date is actually picked here,
+      // for both a new item and an edit — so changing the due date
+      // also re-anchors which day-of-month future cycles target,
+      // rather than leaving a stale anchor from before the edit.
+      anchorDay: d,
       categoryId,
       accountId
     })

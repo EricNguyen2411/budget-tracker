@@ -35,11 +35,22 @@ export function runHealthCheck(
     })
   }
 
-  const uncategorized = transactions.filter((t) => !t.categoryId)
+  // Expenses only — an uncategorized EXPENSE really is missing
+  // something (it drops out of every budget/category total until it's
+  // assigned one). Uncategorized INCOME isn't the same kind of gap:
+  // isUnlinkedIncome and everywhere it feeds into (the Income stat, a
+  // salary deposit, etc.) never required a category to begin with, so
+  // flagging it here reads as "something's wrong" about a transaction
+  // that's already in its normal, complete state. Confirmed directly
+  // with a realistic dataset: routine salary deposits (deliberately
+  // uncategorized, same as most people actually enter them) made up
+  // the entire count here, with no real expense among them — the
+  // finding was nagging about transactions that had nothing to fix.
+  const uncategorized = transactions.filter((t) => t.isExpense && !t.categoryId)
   if (uncategorized.length >= 3) {
     findings.push({
       icon: '❓',
-      title: `${uncategorized.length} uncategorized transactions`,
+      title: `${uncategorized.length} uncategorized expenses`,
       detail: 'Not counted toward any budget or category total until they\u2019re assigned one.',
       severity: 'info',
       transactions: uncategorized

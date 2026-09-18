@@ -202,9 +202,9 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             {group.transactions.map((t, i) => {
               const category = t.categoryId ? categoryById.get(t.categoryId) : undefined
-              const amount = netAmount(t, transactions)
+              const amount = netAmount(t, transactions, categories)
               const reimbursedNote = reimbursementNote(t, transactions, categories)
-              const excessNote = excessIncomeNote(t, transactions)
+              const excessNote = excessIncomeNote(t, transactions, categories)
               const repayNote = repaysNote(t, transactions, categories, accounts)
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>

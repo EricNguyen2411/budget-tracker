@@ -10,6 +10,7 @@ export interface RecurringSuggestion {
   occurrenceCount: number
   lastDate: Date
   suggestedNextDueDate: Date
+  anchorDay: number
   categoryId: string | null
   accountId: string | null
 }
@@ -51,12 +52,32 @@ function mostCommonValue(values: (string | null)[]): string | null {
   return best
 }
 
-function addInterval(date: Date, frequency: RecurrenceFrequency): Date {
-  const d = new Date(date)
-  if (frequency === 'weekly') d.setDate(d.getDate() + 7)
-  if (frequency === 'monthly') d.setMonth(d.getMonth() + 1)
-  if (frequency === 'yearly') d.setFullYear(d.getFullYear() + 1)
-  return d
+/** Adds calendar months (or years, via a 12-multiple) to `date`, always
+ * targeting `anchorDay` as the resulting day-of-month — clamped to the
+ * actual last day of that target month, never rolling over into the
+ * next one. Confirmed directly this matters: a bill anchored on the
+ * 31st, stepped monthly with plain `Date#setMonth`, drifted to the 3rd
+ * within a couple of cycles (Jan 31 -> Feb 31 doesn't exist, so native
+ * rollover silently becomes Mar 3 -> Mar 3 + 1 month = Apr 3 -> ...),
+ * compounding further every cycle rather than settling anywhere near
+ * the intended date. Using the ORIGINAL anchor day each time (not
+ * `date`'s own, possibly-already-clamped day) is what makes a 31st-of-
+ * the-month bill correctly return to the 31st in every month that has
+ * one, rather than getting stuck at 28 forever the first time it
+ * clamps for February. */
+function addMonthsToAnchor(date: Date, months: number, anchorDay: number): Date {
+  const targetYear = date.getFullYear()
+  const targetMonth = date.getMonth() + months
+  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
+  const day = Math.min(anchorDay, daysInTargetMonth)
+  return new Date(targetYear, targetMonth, day, date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds())
+}
+
+function addInterval(date: Date, frequency: RecurrenceFrequency, anchorDay: number = date.getDate()): Date {
+  if (frequency === 'weekly') { const d = new Date(date); d.setDate(d.getDate() + 7); return d }
+  if (frequency === 'monthly') return addMonthsToAnchor(date, 1, anchorDay)
+  if (frequency === 'yearly') return addMonthsToAnchor(date, 12, anchorDay)
+  return new Date(date)
 }
 
 export function detectRecurring(
@@ -118,6 +139,7 @@ export function detectRecurring(
       occurrenceCount: sorted.length,
       lastDate,
       suggestedNextDueDate: addInterval(lastDate, frequency),
+      anchorDay: lastDate.getDate(),
       categoryId: mostCommonCategoryId(sorted),
       accountId: mostCommonAccountId(sorted)
     })
@@ -137,6 +159,16 @@ export function processDueRecurring(
   for (const item of recurring) {
     if (!item.isActive) { updatedRecurring.push(item); continue }
     let nextDue = new Date(item.nextDueDate)
+    // Bootstrapped once from this item's own current nextDueDate for a
+    // record saved before anchorDay existed — same pattern as
+    // InstallmentPlan.nextInstallmentIndex. Persisted below even when
+    // nothing is due this pass, so every subsequent cycle steps from
+    // the SAME anchor rather than re-deriving it from whatever day
+    // nextDueDate happens to be (which, post-fix, stays correct, but
+    // re-deriving would silently reintroduce the drift bug for any
+    // record still carrying an already-drifted nextDueDate from before
+    // this fix).
+    const anchorDay = item.anchorDay ?? new Date(item.nextDueDate).getDate()
     let guardCount = 0
     while (nextDue <= now && guardCount < 24) {
       newTransactions.push({
@@ -149,10 +181,10 @@ export function processDueRecurring(
         tags: [],
         accountId: item.accountId ?? null
       })
-      nextDue = addInterval(nextDue, item.frequency)
+      nextDue = addInterval(nextDue, item.frequency, anchorDay)
       guardCount++
     }
-    updatedRecurring.push({ ...item, nextDueDate: nextDue.toISOString() })
+    updatedRecurring.push({ ...item, nextDueDate: nextDue.toISOString(), anchorDay })
   }
 
   return { newTransactions, updatedRecurring }

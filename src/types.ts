@@ -102,6 +102,7 @@ export interface RecurringTransaction {
   categoryId: string | null
   isActive: boolean
   accountId?: string | null // optional rather than a full migration like Transaction's — records saved before this existed just read as "no account", same real-world effect
+  anchorDay?: number // the day-of-month (1-31) this item is meant to land on every cycle, independent of nextDueDate's current value — see recurring.ts's addMonthsToAnchor for why this can't just be re-derived from nextDueDate.getDate() every time. Optional for the same reason as accountId: a record saved before this existed bootstraps from its own current nextDueDate the first time it's processed, which is exactly what it would have been anyway.
 }
 
 export interface ShoppingListItem {

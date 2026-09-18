@@ -53,6 +53,8 @@ export default function PeriodDetail({ title, start, end, categories, transactio
   const filterCategory = categoryFilter ? categories.find((c) => c.id === categoryFilter) : null
   const filterIds = filterCategory ? categoryAndDescendantIds(filterCategory, categories) : null
   const filtered = filterIds ? periodTransactions.filter((t) => t.categoryId && filterIds.has(t.categoryId)) : periodTransactions
+  // Deliberately the exclusive (budget-relative) netAmount, matching
+  // this screen's own header total — see netSpentForCategory.
   const totalSpent = filtered.filter((t) => t.isExpense).reduce((s, t) => s + netAmount(t, transactions), 0)
   const filteredCategoryName = filterCategory?.name ?? null
   const sorted = [...filtered].sort((a, b) =>

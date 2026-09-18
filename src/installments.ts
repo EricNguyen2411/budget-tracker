@@ -1,10 +1,26 @@
 import type { Transaction, InstallmentPlan, InstallmentFrequency } from './types'
 
-function addInstallmentInterval(date: Date, frequency: InstallmentFrequency): Date {
+/** Adds calendar months to `date`, targeting `anchorDay` as the
+ * resulting day-of-month — clamped to that target month's actual last
+ * day, never rolling over into the month after. See recurring.ts's
+ * identical helper for the full story: native `Date#setMonth` treats
+ * an out-of-range day as "roll into the next month", which drifts a
+ * 31st-of-the-month due date further off course every single cycle
+ * (Jan 31 -> Mar 3 -> Apr 3 -> ...) rather than clamping to Feb 28 and
+ * bouncing back to the 31st every month that actually has one. */
+function addMonthsToAnchor(date: Date, months: number, anchorDay: number): Date {
+  const targetYear = date.getFullYear()
+  const targetMonth = date.getMonth() + months
+  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate()
+  const day = Math.min(anchorDay, daysInTargetMonth)
+  return new Date(targetYear, targetMonth, day, date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds())
+}
+
+function addInstallmentInterval(date: Date, frequency: InstallmentFrequency, anchorDay: number): Date {
   const d = new Date(date)
   if (frequency === 'weekly') d.setDate(d.getDate() + 7)
   if (frequency === 'fortnightly') d.setDate(d.getDate() + 14)
-  if (frequency === 'monthly') d.setMonth(d.getMonth() + 1)
+  if (frequency === 'monthly') return addMonthsToAnchor(date, 1, anchorDay)
   return d
 }
 
@@ -23,10 +39,11 @@ export function installmentAmounts(plan: InstallmentPlan): number[] {
 
 export function installmentDueDates(plan: InstallmentPlan): Date[] {
   const dates: Date[] = []
+  const anchorDay = new Date(plan.firstDueDate).getDate()
   let cursor = new Date(plan.firstDueDate)
   for (let i = 0; i < plan.numberOfInstallments; i++) {
     dates.push(new Date(cursor))
-    cursor = addInstallmentInterval(cursor, plan.frequency)
+    cursor = addInstallmentInterval(cursor, plan.frequency, anchorDay)
   }
   return dates
 }

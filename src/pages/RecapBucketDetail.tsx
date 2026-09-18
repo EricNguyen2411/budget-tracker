@@ -52,7 +52,7 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
       .map((c) => ({
         category: c,
         parent: c.parentId ? categories.find((p) => p.id === c.parentId) : null,
-        spent: Math.max(0, directSpentForCategory(c, transactions, referenceDate)),
+        spent: Math.max(0, directSpentForCategory(c, transactions, referenceDate, categories)),
         budget: effectiveBudget(c, categories)
       }))
       .filter((r) => r.spent > 0)
@@ -97,10 +97,10 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
     // income: unlinked income in full, plus the excess portion of any reimbursement
     if (t.isExpense) return false
     if (isUnlinkedIncome(t)) return true
-    return excessForReimbursement(t, transactions) > 0
+    return excessForReimbursement(t, transactions, categories) > 0
   })
   const total = rows.reduce((sum, t) => {
-    if (bucket === 'income' && t.reimbursesExpenseId) return sum + excessForReimbursement(t, transactions)
+    if (bucket === 'income' && t.reimbursesExpenseId) return sum + excessForReimbursement(t, transactions, categories)
     return sum + netAmount(t, transactions)
   }, 0)
   const catById = new Map(categories.map((c) => [c.id, c]))
@@ -122,7 +122,7 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
         {sorted.map((t, i) => {
           const cat = t.categoryId ? catById.get(t.categoryId) : undefined
           const isExcessOnly = bucket === 'income' && !!t.reimbursesExpenseId
-          const displayAmount = isExcessOnly ? excessForReimbursement(t, transactions) : netAmount(t, transactions)
+          const displayAmount = isExcessOnly ? excessForReimbursement(t, transactions, categories) : netAmount(t, transactions)
           return (
             <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
               <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>

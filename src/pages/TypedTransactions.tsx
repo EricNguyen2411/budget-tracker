@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isLinkedReimbursement, coveredExpenseIds, reimbursementsFor } from '../calculations'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isLinkedReimbursement, coveredExpenseIds, orderedReimbursements } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -80,7 +80,7 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         // previously invisible here, since the filter excluded every
         // reimbursement-linked transaction outright regardless of
         // whether part of it was genuine excess income.
-        return thisPeriod.filter((t) => !t.isExpense && (isUnlinkedIncome(t) || excessForReimbursement(t, transactions) > 0))
+        return thisPeriod.filter((t) => !t.isExpense && (isUnlinkedIncome(t) || excessForReimbursement(t, transactions, categories) > 0))
       case 'reimbursed':
         return thisPeriod.filter((t) => isLinkedReimbursement(t))
     }
@@ -91,6 +91,40 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
   // rather than re-deriving a total from the transaction list above,
   // guarantees the two numbers can't drift apart the way they were
   // confirmed to before this fix.
+  // How much of THIS reimbursement transaction actually counts as
+  // "reimbursed" — summed across every expense it covers (one, for the
+  // simple single-link shape; possibly several, for a multi-allocation
+  // one), via the same order-aware "applied" logic used everywhere
+  // else, rather than assuming a multi-allocation transaction's own
+  // amount always equals its contribution — correct in the
+  // overwhelmingly common case, but not if some other reimbursement on
+  // the same expense came in after this one and partly displaced it,
+  // or if this transaction itself overpaid the expense (the excess
+  // portion belongs to Income instead, not here). Shared by the total
+  // below AND each row's own display, so they can't drift apart the
+  // way they were confirmed to before this fix: a reimbursement that
+  // partly overpaid what it covered was showing its full face value on
+  // its own row while the header above only counted the applied
+  // portion, so the rows never quite summed to the header — the exact
+  // same class of mismatch already fixed once for the Income list
+  // above, just missed here originally.
+  function appliedReimbursement(t: Transaction): number {
+    let total = 0
+    for (const expenseId of coveredExpenseIds(t)) {
+      const expense = transactions.find((e) => e.id === expenseId)
+      if (!expense) continue
+      const reimbursements = orderedReimbursements(expense, transactions, categories)
+      let remaining = expense.amount
+      for (const r of reimbursements) {
+        const applied = Math.min(r.amount, Math.max(0, remaining))
+        if (r.id === t.id) { total += applied; break }
+        remaining -= applied
+      }
+    }
+    return total
+  }
+  const memoizedAppliedReimbursement = useCallback(appliedReimbursement, [transactions, categories])
+
   const total = useMemo(() => {
     if (kind === 'spent' || kind === 'saved') {
       const topLevel = categories.filter((c) => !c.parentId && (kind === 'saved') === c.isSavingsCategory)
@@ -98,33 +132,11 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
     }
     if (kind === 'income') {
       const unlinkedIncome = thisPeriod.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
-      const excessFromLinked = thisPeriod.filter((t) => isLinkedReimbursement(t)).reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
+      const excessFromLinked = thisPeriod.filter((t) => isLinkedReimbursement(t)).reduce((sum, t) => sum + excessForReimbursement(t, transactions, categories), 0)
       return unlinkedIncome + excessFromLinked
     }
-    // reimbursed — sums what THIS transaction actually contributes
-    // across every expense it covers (one, for the simple single-link
-    // shape; possibly several, for a multi-allocation one), via the
-    // same order-aware "applied" logic used everywhere else, rather
-    // than assuming a multi-allocation transaction's own amount always
-    // equals its contribution — correct in the overwhelmingly common
-    // case, but not if some other reimbursement on the same expense
-    // came in after this one and partly displaced it.
-    return scoped.reduce((sum, t) => {
-      let total = 0
-      for (const expenseId of coveredExpenseIds(t)) {
-        const expense = transactions.find((e) => e.id === expenseId)
-        if (!expense) continue
-        const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
-        let remaining = expense.amount
-        for (const r of reimbursements) {
-          const applied = Math.min(r.amount, Math.max(0, remaining))
-          if (r.id === t.id) { total += applied; break }
-          remaining -= applied
-        }
-      }
-      return sum + total
-    }, 0)
-  }, [kind, categories, transactions, now, thisPeriod, scoped])
+    return scoped.reduce((sum, t) => sum + memoizedAppliedReimbursement(t), 0)
+  }, [kind, categories, transactions, now, thisPeriod, scoped, memoizedAppliedReimbursement])
 
   // For the Income list specifically, a reimbursement-linked transaction
   // only appears here because part of it was excess (see the scoped
@@ -135,8 +147,18 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
   // only added $30 of it, so the rows didn't add up to the header. Used
   // for both the row display and the "highest price" sort, so neither
   // one quietly disagrees with the other.
+  //
+  // Same reasoning applies to the Reimbursed list: a row there needs
+  // the APPLIED portion (appliedReimbursement), not the transaction's
+  // full face value — otherwise a partly-excess reimbursement shows
+  // its whole amount here AND its excess sliver again over on Income,
+  // double-displaying that sliver of the same real dollar in two
+  // different lists.
   function rowAmount(t: Transaction): number {
-    if (kind === 'income' && t.reimbursesExpenseId) return excessForReimbursement(t, transactions)
+    if (kind === 'income' && t.reimbursesExpenseId) return excessForReimbursement(t, transactions, categories)
+    if (kind === 'reimbursed') return appliedReimbursement(t)
+    // Exclusive (budget-relative) netAmount for spent/saved specifically
+    // — must match `total` above, which goes through netSpentForCategory.
     return netAmount(t, transactions)
   }
 

@@ -102,7 +102,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
   const unlinkedIncome = rangeTransactions.filter((t) => isUnlinkedIncome(t)).reduce((s, t) => s + t.amount, 0)
   const excessFromLinked = rangeTransactions
     .filter((t) => isLinkedReimbursement(t))
-    .reduce((s, t) => s + excessForReimbursement(t, transactions), 0)
+    .reduce((s, t) => s + excessForReimbursement(t, transactions, categories), 0)
   const totalIncome = unlinkedIncome + excessFromLinked
 
   const displayedTransactions = categoryFilter

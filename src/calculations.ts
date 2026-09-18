@@ -67,12 +67,66 @@ export function reimbursementsFor(expense: Transaction, all: Transaction[]): Tra
   return [...direct, ...multi]
 }
 
+/** The order an expense's linked reimbursements actually get applied to
+ * its cost, everywhere that matters: a friend's repayment (or any
+ * other non-savings reimbursement) always absorbs the expense first;
+ * a savings draw-down only covers whatever's left after that — never
+ * the other way around, regardless of which happened to get recorded
+ * first. Confirmed directly with the person this is the intended
+ * behavior: savings is meant to be the backstop, not the first source
+ * tapped, so if someone pays you back for something you'd already
+ * funded from savings, that repayment should be understood as
+ * displacing the savings draw (freeing it up), not stacking as extra
+ * income on top of an unnecessarily-large savings withdrawal.
+ *
+ * Within each of those two groups, still date order (earliest first) —
+ * this only changes the relative order BETWEEN a savings source and a
+ * non-savings one, not the order among several contributions of the
+ * same kind, which still resolves the same predictable way it always
+ * did.
+ *
+ * Every place that allocates a shared cost across several
+ * reimbursements — excess detection, the savings-vs-other breakdown,
+ * the dashboard's reimbursed/funded-from-savings stats — goes through
+ * this one function, so the priority rule can't drift out of sync
+ * between them the way five separate copies of the same sort would. */
+export function orderedReimbursements(expense: Transaction, all: Transaction[], categories: Category[]): Transaction[] {
+  const priority = (t: Transaction): number => {
+    const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+    return cat?.isSavingsCategory ? 1 : 0
+  }
+  return reimbursementsFor(expense, all).sort((a, b) => {
+    const byPriority = priority(a) - priority(b)
+    return byPriority !== 0 ? byPriority : a.date.localeCompare(b.date)
+  })
+}
+
 export function totalReimbursed(expense: Transaction, all: Transaction[]): number {
   return reimbursementsFor(expense, all).reduce((sum, t) => sum + t.amount, 0)
 }
 
-/** What an expense actually cost after linked reimbursements — floored at 0. */
-export function netAmount(transaction: Transaction, all: Transaction[]): number {
+/** What an expense actually cost after reimbursement — floored at 0.
+ *
+ * Only nets out reimbursement from OTHER people/sources. Money funded
+ * from the person's own savings is deliberately NOT netted here, even
+ * though the underlying link (an income transaction pointing at the
+ * expense) is identical to a genuine external reimbursement — confirmed
+ * via a real screenshot this was wrong: a trip expense fully covered by
+ * a savings draw-down was showing as "-$0.00" on its own transaction
+ * row, reading as if it cost nothing. It did cost something — the
+ * savings balance really went down to pay for it — it just wasn't new
+ * money someone else handed back. Only genuine outside reimbursement (a
+ * friend paying their share) removes something from what this expense
+ * cost the person overall.
+ *
+ * `categories` is what distinguishes the two: a reimbursing transaction
+ * whose own category is a savings category is a savings draw-down and
+ * is excluded from the netting; anything else nets as before. Optional
+ * (defaults to none excluded, i.e. the old fully-netted behavior) for
+ * the few callers — goal-contribution accounting — where a transaction
+ * being reimbursed at all isn't a real scenario, so there was no reason
+ * to thread categories all the way through just for this. */
+export function netAmount(transaction: Transaction, all: Transaction[], categories: Category[] = []): number {
   if (!transaction.isExpense) return transaction.amount
   // A transfer's own "reimbursement" (its linked income landing in
   // another of the person's own tracked accounts) is deliberately NOT
@@ -81,13 +135,17 @@ export function netAmount(transaction: Transaction, all: Transaction[]): number 
   // which reads as if the expense cost nothing. It didn't cost nothing;
   // the money genuinely moved, just to somewhere this person still owns
   // and tracks. Netting to zero only makes sense for a genuine
-  // reimbursement or a Fund From Savings draw-down, where the whole
-  // point IS that it didn't cost anything extra. Safe to exclude here
-  // specifically: a transfer always has categoryId null, so this
-  // change can't affect any category's spend or Safe to Spend either
-  // way — it only fixes what the transaction's own row displays.
+  // reimbursement, where the whole point IS that it didn't cost
+  // anything extra. Safe to exclude here specifically: a transfer
+  // always has categoryId null, so this change can't affect any
+  // category's spend or Safe to Spend either way — it only fixes what
+  // the transaction's own row displays.
   const reimbursed = reimbursementsFor(transaction, all)
     .filter((t) => !isAccountTransferLink(t, transaction))
+    .filter((t) => {
+      const ownCategory = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
+      return !ownCategory?.isSavingsCategory
+    })
     .reduce((sum, t) => sum + t.amount, 0)
   if (reimbursed === 0) return transaction.amount
   return Math.max(transaction.amount - reimbursed, 0)
@@ -95,13 +153,18 @@ export function netAmount(transaction: Transaction, all: Transaction[]): number 
 
 /**
  * If reimbursements linked to an expense add up to MORE than it cost, the
- * excess is real income, not a reimbursement — allocated in order
- * (earliest first) so with several people chipping in, only the actual
- * overflow counts as excess, not an even split across everyone.
+ * excess is real income, not a reimbursement — allocated in priority
+ * order (see orderedReimbursements: non-savings first, then savings)
+ * so with several sources chipping in, only the actual overflow counts
+ * as excess, not an even split across everyone. `categories` is
+ * optional (defaults to plain date order, savings indistinguishable
+ * from any other source) for the couple of callers that don't have
+ * category data on hand and where this distinction is unlikely to
+ * matter in practice.
  */
-export function totalExcessReimbursement(expense: Transaction, all: Transaction[]): number {
+export function totalExcessReimbursement(expense: Transaction, all: Transaction[], categories: Category[] = []): number {
   if (!expense.isExpense) return 0
-  const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
+  const reimbursements = orderedReimbursements(expense, all, categories)
   let remaining = expense.amount
   let excess = 0
   for (const r of reimbursements) {
@@ -121,12 +184,27 @@ export function categoryAndDescendantIds(category: Category, allCategories: Cate
 }
 
 /** Net spend for a category (+ subcategories) within the given month. */
+/** Net spend for a category (+ subcategories) within the given month.
+ *
+ * Deliberately budget-relative, not the same "what did this actually
+ * cost me" concept netAmount uses for a transaction row: a savings
+ * draw-down IS excluded from this netting (categories intentionally not
+ * passed to netAmount below), because this number feeds Safe to Spend
+ * and every budget-vs-spent progress bar in the app. Confirmed by a
+ * real regression while making the transaction-row display more
+ * accurate elsewhere: if a savings-funded expense counted fully against
+ * this month's budget too, the same dollar would reduce Safe to Spend
+ * twice — once when it was originally set aside into savings, again
+ * here when it's drawn back out to pay for something. The "How Safe to
+ * Spend Works" breakdown on the dashboard exists specifically to
+ * explain why a savings draw-down doesn't reduce this a second time;
+ * this function is what makes that explanation actually true. */
 export function netSpentForCategory(category: Category, allCategories: Category[], allTransactions: Transaction[], referenceDate: Date): number {
   const ids = categoryAndDescendantIds(category, allCategories)
   const relevant = allTransactions.filter((t) => t.categoryId && ids.has(t.categoryId) && isInSamePeriod(new Date(t.date), referenceDate))
 
   const expenses = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, allTransactions), 0)
-  const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, allTransactions), 0)
+  const excess = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + totalExcessReimbursement(t, allTransactions, allCategories), 0)
   const unlinkedIncome = relevant.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
 
   return expenses - excess - unlinkedIncome
@@ -217,7 +295,20 @@ export function monthlyEquivalentRecurringExpenses(recurring: RecurringTransacti
         const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
         return paid > 0 ? sum : sum + r.amount
       }
-      if (r.frequency === 'yearly') return sum + r.amount / 12
+      if (r.frequency === 'yearly') {
+        // Same double-counting guard as monthly, just applied to the
+        // month it's actually due rather than every month: without
+        // this, the month a yearly bill's real transaction posts, Safe
+        // to Spend counted BOTH the full real amount (via the category
+        // it's budgeted under) AND that month's routine 1/12th reserve
+        // on top of it — over-penalizing by the monthly-equivalent
+        // share specifically in its own due month, confirmed directly
+        // with a real $1200/year bill posting in October: reserve
+        // stayed at $100 that month instead of dropping to $0 the way
+        // monthly's own guard already does when ITS bill posts.
+        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
+        return paid > 0 ? sum : sum + r.amount / 12
+      }
       if (r.frequency === 'weekly') {
         const fullReserve = (r.amount * 52) / 12
         const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
@@ -241,7 +332,7 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
   const unlinkedIncome = thisMonth.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
   const excessFromLinked = thisMonth
     .filter((t) => isLinkedReimbursement(t))
-    .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
+    .reduce((sum, t) => sum + excessForReimbursement(t, transactions, categories), 0)
   const income = unlinkedIncome + excessFromLinked
 
   const reimbursed = thisMonth
@@ -251,7 +342,7 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
       for (const expenseId of coveredExpenseIds(t)) {
         const expense = transactions.find((e) => e.id === expenseId)
         if (!expense) continue
-        const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
+        const reimbursements = orderedReimbursements(expense, transactions, categories)
         let remaining = expense.amount
         for (const r of reimbursements) {
           const applied = Math.min(r.amount, Math.max(0, remaining))
@@ -304,7 +395,7 @@ export function fundedFromSavingsThisPeriod(categories: Category[], transactions
       for (const expenseId of coveredExpenseIds(t)) {
         const expense = transactions.find((e) => e.id === expenseId)
         if (!expense) continue
-        const reimbursements = reimbursementsFor(expense, transactions).sort((a, b) => a.date.localeCompare(b.date))
+        const reimbursements = orderedReimbursements(expense, transactions, categories)
         let remaining = expense.amount
         for (const r of reimbursements) {
           const applied = Math.min(r.amount, Math.max(0, remaining))
@@ -358,7 +449,7 @@ export function reimbursementBreakdown(expenses: Transaction[], all: Transaction
   const otherTransactions: AppliedReimbursement[] = []
 
   for (const expense of expenses) {
-    const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
+    const reimbursements = orderedReimbursements(expense, all, categories)
     let remaining = expense.amount
     for (const r of reimbursements) {
       const applied = Math.min(r.amount, Math.max(0, remaining))
@@ -454,6 +545,10 @@ export interface DayPoint {
   amount: number
 }
 
+/** Budget-relative daily spend for the "Last 14 Days" chart — same
+ * savings-excluded concept as netSpentForCategory, deliberately, so
+ * this chart's numbers and the Dashboard's Spent tile / Safe to Spend
+ * never disagree for the same day. See netSpentForCategory. */
 export function last14DaysSpend(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date()): DayPoint[] {
   const result: DayPoint[] = []
   for (let offset = 13; offset >= 0; offset--) {
@@ -476,6 +571,10 @@ export interface PeriodPoint {
   amount: number
 }
 
+/** Budget-relative monthly spend for the "Monthly Trend" chart — same
+ * savings-excluded concept as netSpentForCategory (see there), and
+ * specifically what PeriodDetail's own total must match when a bar
+ * here gets tapped into. */
 export function last6PeriodsSpend(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): PeriodPoint[] {
   const result: PeriodPoint[] = []
   for (let offset = 5; offset >= 0; offset--) {
@@ -491,6 +590,10 @@ export function last6PeriodsSpend(categories: Category[], transactions: Transact
   return result
 }
 
+/** Budget-relative net savings (income minus budget-relative spend) for
+ * the "Net Savings Trend" chart, sitting directly under Monthly Trend —
+ * uses the same savings-excluded spend concept as that chart (see
+ * netSpentForCategory) so the two stay comparable month to month. */
 export function last6PeriodsNetSavings(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): PeriodPoint[] {
   const result: PeriodPoint[] = []
   for (let offset = 5; offset >= 0; offset--) {
@@ -507,7 +610,7 @@ export function last6PeriodsNetSavings(categories: Category[], transactions: Tra
     const unlinkedIncome = periodTx.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
     const excessFromLinked = periodTx
       .filter((t) => isLinkedReimbursement(t))
-      .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
+      .reduce((sum, t) => sum + excessForReimbursement(t, transactions, categories), 0)
     const income = unlinkedIncome + excessFromLinked
 
     result.push({ periodStart: period.start, amount: income - spent })
@@ -538,6 +641,11 @@ export interface MerchantTotal {
   amount: number
 }
 
+/** Unlike the budget-relative spend functions above, this deliberately
+ * uses the savings-INCLUSIVE netAmount (categories passed through) — a
+ * merchant total is "how much did I actually pay this merchant,"
+ * matching what an individual transaction row shows, not a
+ * budget-consumption figure. */
 export function topMerchantsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
   const thisMonth = transactions
     .filter((t) => {
@@ -565,9 +673,9 @@ export function topMerchantsThisMonth(transactions: Transaction[], categories: C
     const key = /beem/i.test(brandKey) ? `beem-${beemCounter++}` : brandKey
     const existing = map.get(key)
     if (existing) {
-      existing.amount += netAmount(t, transactions)
+      existing.amount += netAmount(t, transactions, categories)
     } else {
-      map.set(key, { amount: netAmount(t, transactions), note: t.note.trim() })
+      map.set(key, { amount: netAmount(t, transactions, categories), note: t.note.trim() })
     }
   }
   return Array.from(map.values())
@@ -593,6 +701,10 @@ export interface TagTotal {
  * dashboard itself, so a trip or event you're actively tracking (the
  * whole reason tags exist) was invisible unless you specifically went
  * looking for it under More → Tags. */
+/** Deliberately savings-INCLUSIVE (categories passed through) — a tag's
+ * monthly total here must match TagDetail's own header for that same
+ * tag, which is a trip-cost concept (real money spent, savings-funded
+ * included), not a budget-consumption one. */
 export function topTagsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): TagTotal[] {
   const thisMonth = transactions.filter((t) => {
     if (!t.isExpense || t.tags.length === 0 || !isInSamePeriod(new Date(t.date), referenceDate)) return false
@@ -602,7 +714,7 @@ export function topTagsThisMonth(transactions: Transaction[], categories: Catego
 
   const map = new Map<string, { amount: number; count: number }>()
   for (const t of thisMonth) {
-    const amount = netAmount(t, transactions)
+    const amount = netAmount(t, transactions, categories)
     if (amount <= 0) continue
     for (const rawTag of t.tags) {
       const tag = normalizeTag(rawTag)
@@ -743,16 +855,17 @@ export function repaysNote(transaction: Transaction, all: Transaction[], categor
 }
 
 /** How much of THIS SPECIFIC reimbursement transaction is excess beyond
- * what the expense actually cost — allocated in order (earliest
- * reimbursement first), so with several people chipping in, only the
- * actual overflow counts as excess, not an even split. Returns 0 if this
- * transaction isn't an excess-producing reimbursement at all. */
-export function excessForReimbursement(transaction: Transaction, all: Transaction[]): number {
+ * what the expense actually cost — allocated in priority order (see
+ * orderedReimbursements), so with several sources chipping in, only the
+ * actual overflow counts as excess, not an even split. `categories`
+ * optional, same reasoning as totalExcessReimbursement. Returns 0 if
+ * this transaction isn't an excess-producing reimbursement at all. */
+export function excessForReimbursement(transaction: Transaction, all: Transaction[], categories: Category[] = []): number {
   if (transaction.isExpense || !transaction.reimbursesExpenseId) return 0
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
   if (!expense) return 0
 
-  const reimbursements = reimbursementsFor(expense, all).sort((a, b) => a.date.localeCompare(b.date))
+  const reimbursements = orderedReimbursements(expense, all, categories)
   let remaining = expense.amount
   for (const r of reimbursements) {
     const applied = Math.min(r.amount, Math.max(0, remaining))
@@ -763,8 +876,8 @@ export function excessForReimbursement(transaction: Transaction, all: Transactio
   return 0
 }
 
-export function excessIncomeNote(transaction: Transaction, all: Transaction[]): string | null {
-  const excess = excessForReimbursement(transaction, all)
+export function excessIncomeNote(transaction: Transaction, all: Transaction[], categories: Category[] = []): string | null {
+  const excess = excessForReimbursement(transaction, all, categories)
   return excess > 0 ? `${formatCurrency(excess)} extra, counted as income` : null
 }
 
@@ -780,6 +893,15 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[], 
   // savings portion when the two are genuinely mixed on the same
   // expense, rather than collapsing to the generic "reimbursed" wording
   // that would otherwise hide it entirely.
+  //
+  // Only the genuine-outside-reimbursement amount is ever phrased as
+  // "− $Y reimbursed" — that's the only part netAmount actually
+  // subtracts from what the row displays. Savings draw-downs and
+  // transfers are both still real money spent, just not money someone
+  // else gave back, so they're called out separately rather than
+  // folded into that subtraction — confirmed via a real screenshot
+  // this mattered: the old wording implied a fully savings-funded
+  // expense net to $0, which no longer matches what the row shows.
   const linkedTransactions = reimbursementsFor(transaction, all)
   const savingsLinked = linkedTransactions.filter((t) => {
     const cat = t.categoryId ? categories.find((c) => c.id === t.categoryId) : null
@@ -788,17 +910,22 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[], 
   const transferLinked = linkedTransactions.filter((t) => isAccountTransferLink(t, transaction))
   const otherLinked = linkedTransactions.filter((t) => !savingsLinked.includes(t) && !transferLinked.includes(t))
 
-  if (savingsLinked.length === linkedTransactions.length) {
-    return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} funded from savings`
+  const savingsAmount = savingsLinked.reduce((sum, t) => sum + t.amount, 0)
+  const transferAmount = transferLinked.reduce((sum, t) => sum + t.amount, 0)
+  const otherAmount = otherLinked.reduce((sum, t) => sum + t.amount, 0)
+
+  const asides: string[] = []
+  if (savingsAmount > 0.01) asides.push(`${formatCurrency(savingsAmount)} from savings`)
+  if (transferAmount > 0.01) asides.push(`${formatCurrency(transferAmount)} transferred out`)
+
+  if (otherAmount > 0.01) {
+    const suffix = asides.length > 0 ? ` (also ${asides.join(', ')})` : ''
+    return `${formatCurrency(transaction.amount)} − ${formatCurrency(otherAmount)} reimbursed${suffix}`
   }
-  if (transferLinked.length === linkedTransactions.length) {
-    return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} transferred out`
-  }
-  if (savingsLinked.length > 0 && otherLinked.length > 0) {
-    const savingsAmount = savingsLinked.reduce((sum, t) => sum + t.amount, 0)
-    return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed (incl. ${formatCurrency(savingsAmount)} from savings)`
-  }
-  return `${formatCurrency(transaction.amount)} − ${formatCurrency(reimbursed)} reimbursed`
+  // No genuine outside reimbursement — nothing here reduces the amount
+  // shown, so no "−" subtraction is implied, just a plain statement of
+  // where the (still fully spent) money came from.
+  return asides.length > 0 ? asides.join(', ') : null
 }
 
 export interface BulkReimbursementAllocation {
@@ -853,6 +980,10 @@ export function goalProgress(category: Category, transactions: Transaction[]): n
   const relevant = category.goalStartDate
     ? own.filter((t) => new Date(t.date) >= new Date(category.goalStartDate!))
     : own
+  // No categories passed: a goal contribution (a deposit into this
+  // savings category) being itself reimbursed isn't a real scenario, so
+  // there's no case here where the savings-vs-other distinction matters
+  // — the default (net everything) is exactly right.
   const contributions = relevant.filter((t) => t.isExpense).reduce((sum, t) => sum + netAmount(t, transactions), 0)
   const withdrawals = relevant.filter((t) => !t.isExpense).reduce((sum, t) => sum + t.amount, 0)
   return Math.max(0, contributions - withdrawals)
