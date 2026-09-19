@@ -1,5 +1,17 @@
 import type { Transaction } from './types'
 
+// Comparing dollar amounts as floats for exact/near equality is
+// unreliable — confirmed directly: 35.69 - 35.68 evaluates to
+// 0.00999999999999801 in JS floating point, not 0.01, so a plain
+// `Math.abs(a - b) >= 0.01` "these are different amounts" check
+// silently treats two transactions a full cent apart as the same
+// amount right at that boundary. Rounding to whole cents first sidesteps
+// the representation error entirely, since integer comparison has no
+// such issue.
+function toCents(amount: number): number {
+  return Math.round(amount * 100)
+}
+
 export interface PotentialDuplicateGroup {
   id: string
   transactions: Transaction[]
@@ -59,12 +71,12 @@ export function findPendingFareMatch(
   // Re-importing the exact same $1.00 pending state isn't "resolving"
   // anything — that's an ordinary possible-duplicate case, already
   // handled correctly by the general same-amount-same-day matcher.
-  if (Math.abs(incoming.amount - 1) < 0.01) return null
+  if (toCents(incoming.amount) === 100) return null
 
   const incomingTime = new Date(incoming.date).getTime()
   const candidates = existingTransactions.filter((t) => {
     if (excludeIds.has(t.id)) return false
-    if (!t.isExpense || Math.abs(t.amount - 1) > 0.01) return false
+    if (!t.isExpense || toCents(t.amount) !== 100) return false
     if (!isLikelyTransitFare(t.note)) return false
     const daysApart = Math.abs(new Date(t.date).getTime() - incomingTime) / (24 * 60 * 60 * 1000)
     return daysApart <= 3
@@ -110,7 +122,7 @@ interface DuplicateCandidate {
 }
 
 export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, windowDays = 3, generic: Set<string> = new Set()): boolean {
-  if (Math.abs(a.amount - b.amount) >= 0.01) return false
+  if (toCents(a.amount) !== toCents(b.amount)) return false
   if (a.isExpense !== b.isExpense) return false
 
   const dayDiffMs = Math.abs(new Date(a.date).getTime() - new Date(b.date).getTime())
@@ -129,7 +141,7 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
   const generic = genericTokens(transactions)
   const sorted = [...transactions]
     .filter((t) => !isLikelyTransitFare(t.note))
-    .sort((a, b) => (a.amount !== b.amount ? a.amount - b.amount : a.date.localeCompare(b.date)))
+    .sort((a, b) => (toCents(a.amount) !== toCents(b.amount) ? a.amount - b.amount : a.date.localeCompare(b.date)))
   const used = new Set<string>()
   const groups: { transactions: Transaction[]; hasSharedToken: boolean }[] = []
 
@@ -143,7 +155,7 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
     for (let j = i + 1; j < sorted.length; j++) {
       const candidate = sorted[j]
       if (used.has(candidate.id)) continue
-      if (Math.abs(candidate.amount - anchor.amount) >= 0.01) break
+      if (toCents(candidate.amount) !== toCents(anchor.amount)) break
       if (!isLikelyDuplicate(anchor, candidate, windowDays, generic)) continue
 
       const candidateTokens = new Set([...significantTokens(candidate.note)].filter((t) => !generic.has(t)))
