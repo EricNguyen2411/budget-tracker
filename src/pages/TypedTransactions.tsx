@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
 import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isLinkedReimbursement, coveredExpenseIds, orderedReimbursements } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
+import { normalizeTag } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
@@ -30,6 +31,7 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
   useSwipeBack(onBack)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [showZeroImpact, setShowZeroImpact] = useState(false)
+  const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set())
   const [editing, setEditing] = useState<Transaction | null>(null)
   const now = useMemo(() => new Date(), [])
 
@@ -167,19 +169,30 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
     sort === 'recent' ? b.date.localeCompare(a.date) : rowAmount(b) - rowAmount(a)
   )
 
-  // Confirmed via a real screenshot this needed splitting out: in a
-  // period where a lot of spending was funded from savings or paid
-  // back in full, EVERY visible row can legitimately show "-$0.00" —
-  // correct for what this screen tracks (see the netAmount comment
-  // above), but a whole screen of $0 rows under a confidently
-  // non-zero total at the top reads as broken, not "working as
-  // intended." Splitting the $0-impact rows into their own collapsed
-  // section keeps the main list meaningful (what actually counts
-  // against this period) while still making the $0 rows easy to find,
-  // rather than either cluttering the main list with them or hiding
-  // them with no way to see them at all.
-  const zeroImpactRows = kind === 'spent' || kind === 'saved' ? sorted.filter((t) => t.isExpense && rowAmount(t) === 0) : []
-  const mainRows = kind === 'spent' || kind === 'saved' ? sorted.filter((t) => !(t.isExpense && rowAmount(t) === 0)) : sorted
+  // Group tagged transactions into per-tag folders — a transaction with
+  // several tags contributes to each of them, same convention
+  // topTagsThisMonth already uses, so a tag's total here matches what
+  // that Dashboard widget (and TagDetail) would show for the same tag.
+  // Untagged transactions fall through to the flat list below exactly
+  // as before.
+  const tagGroups = (() => {
+    const map = new Map<string, { tag: string; total: number; rows: Transaction[] }>()
+    for (const t of sorted) {
+      for (const rawTag of t.tags) {
+        const tag = normalizeTag(rawTag)
+        if (!tag) continue
+        if (!map.has(tag)) map.set(tag, { tag, total: 0, rows: [] })
+        const group = map.get(tag)!
+        group.total += rowAmount(t)
+        group.rows.push(t)
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.total - a.total)
+  })()
+  const untaggedRows = sorted.filter((t) => t.tags.length === 0)
+
+  const zeroImpactRows = kind === 'spent' || kind === 'saved' ? untaggedRows.filter((t) => t.isExpense && rowAmount(t) === 0) : []
+  const mainRows = kind === 'spent' || kind === 'saved' ? untaggedRows.filter((t) => !(t.isExpense && rowAmount(t) === 0)) : untaggedRows
 
   const catById = new Map(categories.map((c) => [c.id, c]))
 
@@ -227,12 +240,42 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         <div className="hero-amount amount" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
       </div>
 
-      {mainRows.length === 0 && zeroImpactRows.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing here this period.</p>}
-      {mainRows.length === 0 && zeroImpactRows.length > 0 && (
+      {mainRows.length === 0 && zeroImpactRows.length === 0 && tagGroups.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing here this period.</p>}
+      {mainRows.length === 0 && zeroImpactRows.length > 0 && tagGroups.length === 0 && (
         <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20, fontSize: 13 }}>
           Everything this period was fully covered — see below.
         </p>
       )}
+
+      {tagGroups.map((group) => {
+        const isExpanded = expandedTags.has(group.tag)
+        return (
+          <div key={group.tag} className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
+            <button
+              className="list-button"
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 14 }}
+              onClick={() => setExpandedTags((prev) => {
+                const next = new Set(prev)
+                if (next.has(group.tag)) next.delete(group.tag)
+                else next.add(group.tag)
+                return next
+              })}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 15 }}>🏷️ {group.tag}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>({group.rows.length})</span>
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className="amount" style={{ fontSize: 15 }}>{formatCurrency(group.total)}</span>
+                <span style={{ color: 'var(--text-faint)' }}>{isExpanded ? '▾' : '▸'}</span>
+              </span>
+            </button>
+            {isExpanded && group.rows.map((t, i) => (
+              <TransactionRow key={t.id} t={t} isLast={i === group.rows.length - 1} />
+            ))}
+          </div>
+        )
+      })}
 
       {mainRows.length > 0 && (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
