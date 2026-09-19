@@ -17,6 +17,22 @@ export interface ParsedTransaction {
   // statement), since Beem settled every share the moment the split was
   // created rather than leaving them pending.
   splitInfo?: { totalPeople: number; perPersonAmount: number } | null
+  // True whenever `note` is the generic "Transaction"/"Beem transfer"
+  // fallback rather than something actually read off the screenshot —
+  // confirmed via direct testing against real search-results
+  // screenshots that this isn't rare: the app's own colour-highlighted
+  // search match (white text on a solid highlight, used to show what
+  // matched a search term) is reliably hard for Tesseract, ranging from
+  // a full misread ("Virgin" → "ew Vitaly") to the word vanishing
+  // entirely ("Airbnb" not detected at all, leaving nothing to build a
+  // note from). The one specific case already known and text-corrected
+  // ("Transport NSW") only covers that one exact merchant; every other
+  // highlighted merchant hits this same fallback with no correction,
+  // silently importing as a plausible-looking but wrong "Transaction"
+  // unless the person happens to catch it. Rather than guess at more
+  // merchant-specific text corrections indefinitely, this flag lets the
+  // review screen surface the uncertainty instead of hiding it.
+  noteUnreliable?: boolean
 }
 
 function uuid() {
@@ -330,7 +346,7 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
 
   // First pass: build each transaction with its naive text-based sign,
   // plus the running balance if this row's anchor showed one.
-  interface Draft { amount: number; note: string; date: Date; textIsExpense: boolean; balanceAfter: number | null }
+  interface Draft { amount: number; note: string; date: Date; textIsExpense: boolean; balanceAfter: number | null; noteUnreliable: boolean }
   const drafts: Draft[] = []
   const skippedTexts: string[] = []
 
@@ -441,7 +457,7 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
     const isEffectivelyEmpty = !note || /^\d{1,2}$/.test(note)
     if (isEffectivelyEmpty) note = /beem/i.test(rawNoteSource) ? 'Beem transfer' : 'Transaction'
 
-    drafts.push({ amount: parsedAmount.amount, note, date, textIsExpense: parsedAmount.isExpense, balanceAfter: parseBalance(anchorText) })
+    drafts.push({ amount: parsedAmount.amount, note, date, textIsExpense: parsedAmount.isExpense, balanceAfter: parseBalance(anchorText), noteUnreliable: isEffectivelyEmpty })
   }
 
   // Second pass: rows sort newest-first (matching how the screen reads
@@ -470,7 +486,8 @@ export function parseAppTransactionList(items: TextItem[], categories: Category[
       note: draft.note,
       date: draft.date.toISOString(),
       isExpense,
-      suggestedCategoryId: suggestCategoryId(draft.note, categories)
+      suggestedCategoryId: suggestCategoryId(draft.note, categories),
+      noteUnreliable: draft.noteUnreliable
     })
   }
   skipped.push(...skippedTexts)

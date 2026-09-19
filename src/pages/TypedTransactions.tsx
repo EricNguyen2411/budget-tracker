@@ -29,6 +29,7 @@ const TITLES: Record<StatKind, string> = {
 export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete, onChanged, accounts = [] }: Props) {
   useSwipeBack(onBack)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
+  const [showZeroImpact, setShowZeroImpact] = useState(false)
   const [editing, setEditing] = useState<Transaction | null>(null)
   const now = useMemo(() => new Date(), [])
 
@@ -166,7 +167,48 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
     sort === 'recent' ? b.date.localeCompare(a.date) : rowAmount(b) - rowAmount(a)
   )
 
+  // Confirmed via a real screenshot this needed splitting out: in a
+  // period where a lot of spending was funded from savings or paid
+  // back in full, EVERY visible row can legitimately show "-$0.00" —
+  // correct for what this screen tracks (see the netAmount comment
+  // above), but a whole screen of $0 rows under a confidently
+  // non-zero total at the top reads as broken, not "working as
+  // intended." Splitting the $0-impact rows into their own collapsed
+  // section keeps the main list meaningful (what actually counts
+  // against this period) while still making the $0 rows easy to find,
+  // rather than either cluttering the main list with them or hiding
+  // them with no way to see them at all.
+  const zeroImpactRows = kind === 'spent' || kind === 'saved' ? sorted.filter((t) => t.isExpense && rowAmount(t) === 0) : []
+  const mainRows = kind === 'spent' || kind === 'saved' ? sorted.filter((t) => !(t.isExpense && rowAmount(t) === 0)) : sorted
+
   const catById = new Map(categories.map((c) => [c.id, c]))
+
+  function TransactionRow({ t, isLast }: { t: Transaction; isLast: boolean }) {
+    const cat = t.categoryId ? catById.get(t.categoryId) : undefined
+    const isExcessOnlyRow = kind === 'income' && !!t.reimbursesExpenseId
+    return (
+      <button className="transaction-row" style={{ borderBottom: isLast ? 'none' : '1px solid var(--border)' }} onClick={() => setEditing(t)}>
+        <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
+        <div className="tx-info">
+          <span className="tx-note">{t.note || cat?.name || 'Uncategorized'}</span>
+          <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories, accounts) && ` · ${repaysNote(t, transactions, categories, accounts)}`}</span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
+          {!isExcessOnlyRow && rowAmount(t) !== t.amount && (
+            <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
+              {formatCurrency(t.amount)}
+            </span>
+          )}
+          <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
+            {t.isExpense ? '-' : '+'}{formatCurrency(rowAmount(t))}
+          </span>
+          {isExcessOnlyRow && (
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>(of {formatCurrency(t.amount)} repayment)</span>
+          )}
+        </div>
+      </button>
+    )
+  }
 
   return (
     <div className="screen">
@@ -185,36 +227,38 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         <div className="hero-amount amount" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
       </div>
 
-      {sorted.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing here this period.</p>}
+      {mainRows.length === 0 && zeroImpactRows.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing here this period.</p>}
+      {mainRows.length === 0 && zeroImpactRows.length > 0 && (
+        <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20, fontSize: 13 }}>
+          Everything this period was fully covered — see below.
+        </p>
+      )}
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {sorted.map((t, i) => {
-          const cat = t.categoryId ? catById.get(t.categoryId) : undefined
-          const isExcessOnlyRow = kind === 'income' && !!t.reimbursesExpenseId
-          return (
-            <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
-              <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
-              <div className="tx-info">
-                <span className="tx-note">{t.note || cat?.name || 'Uncategorized'}</span>
-                <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories, accounts) && ` · ${repaysNote(t, transactions, categories, accounts)}`}</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
-                {!isExcessOnlyRow && rowAmount(t) !== t.amount && (
-                  <span className="amount" style={{ fontSize: 12, color: 'var(--text-faint)', textDecoration: 'line-through' }}>
-                    {formatCurrency(t.amount)}
-                  </span>
-                )}
-                <span className="amount tx-amount" style={{ color: t.isExpense ? 'var(--text)' : 'var(--green)' }}>
-                  {t.isExpense ? '-' : '+'}{formatCurrency(rowAmount(t))}
-                </span>
-                {isExcessOnlyRow && (
-                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>(of {formatCurrency(t.amount)} repayment)</span>
-                )}
-              </div>
-            </button>
-          )
-        })}
-      </div>
+      {mainRows.length > 0 && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {mainRows.map((t, i) => (
+            <TransactionRow key={t.id} t={t} isLast={i === mainRows.length - 1} />
+          ))}
+        </div>
+      )}
+
+      {zeroImpactRows.length > 0 && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginTop: mainRows.length > 0 ? 16 : 0 }}>
+          <button
+            className="list-button"
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', padding: 14 }}
+            onClick={() => setShowZeroImpact((v) => !v)}
+          >
+            <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+              {zeroImpactRows.length} fully covered transaction{zeroImpactRows.length === 1 ? '' : 's'} — no budget impact this period
+            </span>
+            <span style={{ color: 'var(--text-faint)' }}>{showZeroImpact ? '▾' : '▸'}</span>
+          </button>
+          {showZeroImpact && zeroImpactRows.map((t, i) => (
+            <TransactionRow key={t.id} t={t} isLast={i === zeroImpactRows.length - 1} />
+          ))}
+        </div>
+      )}
 
       {editing && (
         <TransactionEditor

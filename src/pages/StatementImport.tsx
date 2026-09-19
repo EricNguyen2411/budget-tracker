@@ -4,6 +4,8 @@ import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
 import { isLikelyDuplicate, significantTokens, genericTokens, isLikelyTransitFare, findPendingFareMatch } from '../duplicates'
 import { formatCurrency } from '../calculations'
+import { allTagsFrom } from '../tags'
+import TagEditor from '../components/TagEditor'
 import { normalizeMerchantKey } from '../merchantRules'
 import { createTransaction, saveTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
@@ -52,6 +54,23 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [categoryOverrides, setCategoryOverrides] = useState<Map<string, string | null>>(new Map())
   const [pickingCategoryFor, setPickingCategoryFor] = useState<string | null>(null)
   const pickingCategoryClose = useModalClose(() => setPickingCategoryFor(null))
+  // Per-row tags added during review — a fresh scanned row has none of
+  // its own (ParsedTransaction carries no tags), so every row starts
+  // untagged unless added here, same override-map shape as
+  // categoryOverrides above.
+  const [tagOverrides, setTagOverrides] = useState<Map<string, string[]>>(new Map())
+  const [editingTagsFor, setEditingTagsFor] = useState<string | null>(null)
+  const editingTagsClose = useModalClose(() => setEditingTagsFor(null))
+  // A separate mode from the existing per-row "include in import"
+  // checkbox — that one decides what gets imported, this one decides
+  // which rows a bulk tag action applies to, so they can't collide
+  // (selecting rows to tag shouldn't accidentally exclude them from
+  // the import, or vice versa).
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedForBulkTag, setSelectedForBulkTag] = useState<Set<string>>(new Set())
+  const [bulkTagging, setBulkTagging] = useState(false)
+  const bulkTagClose = useModalClose(() => setBulkTagging(false))
+  const [pendingBulkTags, setPendingBulkTags] = useState<string[]>([])
   const [similarPrompt, setSimilarPrompt] = useState<{ categoryId: string | null; matchIds: string[] } | null>(null)
   const [similarPromptSelected, setSimilarPromptSelected] = useState<Set<string>>(new Set())
   const similarBatchClose = useModalClose(() => setSimilarPrompt(null))
@@ -231,6 +250,41 @@ export default function StatementImport({ categories, existingTransactions, onBa
     return categoryOverrides.has(r.id) ? categoryOverrides.get(r.id)! : r.suggestedCategoryId
   }
 
+  function tagsFor(r: ParsedTransaction): string[] {
+    return tagOverrides.get(r.id) ?? []
+  }
+
+  function setTagsForRow(id: string, tags: string[]) {
+    setTagOverrides((m) => new Map(m).set(id, tags))
+  }
+
+  function toggleSelectedForBulkTag(id: string) {
+    setSelectedForBulkTag((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Merges newly-typed tags into every selected row's existing tags
+  // (never replaces what a row already has) — the natural meaning of
+  // "add this tag to these N rows" when the rows may already carry
+  // different tags of their own.
+  function applyBulkTags(newTags: string[]) {
+    if (newTags.length === 0) return
+    setTagOverrides((m) => {
+      const next = new Map(m)
+      for (const id of selectedForBulkTag) {
+        const existing = next.get(id) ?? []
+        const merged = [...existing]
+        for (const t of newTags) if (!merged.includes(t)) merged.push(t)
+        next.set(id, merged)
+      }
+      return next
+    })
+  }
+
   // Candidate expenses an income row could reimburse: existing unlinked
   // expenses already in the app, plus other expense rows in this same
   // import batch (most relevant for a Beem split — its actual bill often
@@ -339,7 +393,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
         isExpense: r.isExpense,
         categoryId: categoryFor(r),
         reimbursesExpenseId: null,
-        tags: [],
+        tags: tagsFor(r),
         accountId: importAccountId
       })
       createdByParsedId.set(r.id, created)
@@ -372,6 +426,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
   }
 
   const catById = new Map(categories.map((c) => [c.id, c]))
+  const existingTagsList = allTagsFrom(existingTransactions)
 
   if (importSummary) {
     return (
@@ -413,7 +468,14 @@ export default function StatementImport({ categories, existingTransactions, onBa
               value={sort}
               onChange={setSort}
             />
-            <button className="text-button text-button-primary" onClick={handleImport}>Import ({included.size})</button>
+            <button
+              className="text-button"
+              style={{ color: selectMode ? 'var(--blue)' : undefined }}
+              onClick={() => { setSelectMode((v) => !v); setSelectedForBulkTag(new Set()) }}
+            >
+              {selectMode ? 'Cancel' : 'Select'}
+            </button>
+            {!selectMode && <button className="text-button text-button-primary" onClick={handleImport}>Import ({included.size})</button>}
           </div>
         )}
         {status !== 'done' && <span style={{ width: 60 }} />}
@@ -424,6 +486,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
           <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
             Scans a banking app screenshot, payment notification screenshot, or Beem activity screenshot and pulls out transactions automatically.
             Runs entirely on your device using free OCR — accuracy won't quite match a native app, so double-check the results before importing.
+            Screenshot the plain transaction list rather than a search results screen if you can — confirmed directly that a highlighted search match is much harder to read correctly than ordinary text.
           </p>
           <label className="list-button" style={{ display: 'block', textAlign: 'center', background: 'var(--blue)', color: '#fff', borderRadius: 10, padding: 12, fontWeight: 600, marginBottom: 10 }}>
             Choose Photo(s)
@@ -523,32 +586,65 @@ export default function StatementImport({ categories, existingTransactions, onBa
               <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
                 {visible.map((r, i) => {
                   const cat = categoryFor(r) ? catById.get(categoryFor(r)!) : undefined
+                  const tags = tagsFor(r)
                   return (
-                    <div key={r.id} className="transaction-row" style={{ borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none' }}>
-                  <input type="checkbox" checked={included.has(r.id)} onChange={() => toggle(r.id)} style={{ width: 18, height: 18 }} />
+                    <div
+                      key={r.id}
+                      className="transaction-row"
+                      style={{
+                        borderBottom: i < visible.length - 1 ? '1px solid var(--border)' : 'none',
+                        background: selectMode && selectedForBulkTag.has(r.id) ? 'var(--surface-2)' : undefined
+                      }}
+                      onClick={selectMode ? () => toggleSelectedForBulkTag(r.id) : undefined}
+                    >
+                  {/* Same checkbox slot, two different meanings depending on
+                     mode — reflects "include in import" normally, and
+                     "selected for bulk tagging" while Select mode is
+                     active, rather than a second checkbox competing for
+                     the same small row alongside it. */}
+                  <input
+                    type="checkbox"
+                    checked={selectMode ? selectedForBulkTag.has(r.id) : included.has(r.id)}
+                    onChange={() => selectMode ? toggleSelectedForBulkTag(r.id) : toggle(r.id)}
+                    onClick={(e) => selectMode && e.stopPropagation()}
+                    style={{ width: 18, height: 18 }}
+                  />
                   <div className="tx-info">
                     <span className="tx-note">
                       {r.note}
                       {outlierIds.has(r.id) && <span style={{ color: 'var(--red)' }}> 🚩</span>}
                       {pendingFareIds.has(r.id) && <span> 🚊</span>}
                     </span>
+                    {r.noteUnreliable && (
+                      <span style={{ fontSize: 12, color: 'var(--amber)' }}>
+                        ⚠️ Couldn't read the merchant name clearly — check the original screenshot
+                      </span>
+                    )}
                     <span className="tx-category">
                       {new Date(r.date).toLocaleDateString('en-AU')}
                       {!r.isExpense && r.splitInfo && ` · share of a bill split ${r.splitInfo.totalPeople} ways`}
                     </span>
-                    <button onClick={() => setPickingCategoryFor(r.id)} style={{ fontSize: 12, color: 'var(--blue)' }}>
+                    <button onClick={(e) => { e.stopPropagation(); setPickingCategoryFor(r.id) }} style={{ fontSize: 12, color: 'var(--blue)' }}>
                       {cat ? `${cat.icon} ${cat.name}` : 'Set category'}
                     </button>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: tags.length > 0 ? 4 : 0 }}>
+                      {tags.map((t) => (
+                        <span key={t} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 12, background: 'var(--surface-2)', color: 'var(--purple)' }}>{t}</span>
+                      ))}
+                      <button onClick={(e) => { e.stopPropagation(); setEditingTagsFor(r.id) }} style={{ fontSize: 12, color: 'var(--blue)' }}>
+                        {tags.length > 0 ? '+ tag' : '+ Tags'}
+                      </button>
+                    </div>
                     {!r.isExpense && (() => {
                       const linked = linkedTarget(r)
                       return (
-                        <button onClick={() => setLinkingFor(r)} style={{ fontSize: 12, color: linked ? 'var(--purple)' : 'var(--blue)', textAlign: 'left' }}>
+                        <button onClick={(e) => { e.stopPropagation(); setLinkingFor(r) }} style={{ fontSize: 12, color: linked ? 'var(--purple)' : 'var(--blue)', textAlign: 'left' }}>
                           {linked ? `🔀 Reimburses "${linked.note}" (${formatCurrency(linked.amount)})` : '🔀 Link to expense'}
                         </button>
                       )
                     })()}
                     {duplicateIds.has(r.id) && (
-                      <button onClick={() => setViewingDuplicateFor(r)} style={{ fontSize: 12, color: 'var(--amber)', textAlign: 'left' }}>
+                      <button onClick={(e) => { e.stopPropagation(); setViewingDuplicateFor(r) }} style={{ fontSize: 12, color: 'var(--amber)', textAlign: 'left' }}>
                         ⚠️ Possible duplicate — tap to compare
                       </button>
                     )}
@@ -556,7 +652,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
                       const match = pendingFareResolutions.get(r.id)!
                       return (
                         <button
-                          onClick={() => setSkippedResolutions((prev) => new Set(prev).add(r.id))}
+                          onClick={(e) => { e.stopPropagation(); setSkippedResolutions((prev) => new Set(prev).add(r.id)) }}
                           style={{ fontSize: 12, color: 'var(--blue)', textAlign: 'left' }}
                         >
                           🚎 Updates pending {formatCurrency(match.amount)} fare from {new Date(match.date).toLocaleDateString('en-AU')} — tap to import as new instead
@@ -565,7 +661,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
                     })()}
                     {pendingFareResolutions.has(r.id) && skippedResolutions.has(r.id) && (
                       <button
-                        onClick={() => setSkippedResolutions((prev) => { const next = new Set(prev); next.delete(r.id); return next })}
+                        onClick={(e) => { e.stopPropagation(); setSkippedResolutions((prev) => { const next = new Set(prev); next.delete(r.id); return next }) }}
                         style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'left' }}
                       >
                         Will import as new — tap to update the pending fare instead
@@ -584,6 +680,22 @@ export default function StatementImport({ categories, existingTransactions, onBa
 
           <button className="list-button" style={{ marginTop: 16, color: 'var(--text-dim)', fontSize: 13 }} onClick={() => setStatus('idle')}>Scan More Photos</button>
         </>
+      )}
+
+      {selectMode && (
+        <div className="sticky-action-bar" style={{ position: 'sticky', bottom: 0, display: 'flex', gap: 10, padding: '10px 16px', background: 'var(--surface-1)', borderTop: '1px solid var(--border)' }}>
+          <span style={{ flex: 1, alignSelf: 'center', fontSize: 13, color: 'var(--text-dim)' }}>
+            {selectedForBulkTag.size === 0 ? 'Tap rows to select' : `${selectedForBulkTag.size} selected`}
+          </span>
+          <button
+            className="text-button text-button-primary"
+            style={{ padding: '8px 16px', borderRadius: 10, background: selectedForBulkTag.size > 0 ? 'var(--blue)' : 'var(--surface-2)', color: selectedForBulkTag.size > 0 ? '#fff' : 'var(--text-faint)' }}
+            disabled={selectedForBulkTag.size === 0}
+            onClick={() => { setPendingBulkTags([]); setBulkTagging(true) }}
+          >
+            Tag {selectedForBulkTag.size > 0 ? selectedForBulkTag.size : ''}
+          </button>
+        </div>
       )}
 
       {pickingCategoryFor && (
@@ -609,6 +721,60 @@ export default function StatementImport({ categories, existingTransactions, onBa
                   ))}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {editingTagsFor && (() => {
+        const row = results.find((r) => r.id === editingTagsFor)
+        if (!row) return null
+        return (
+          <div className={`modal-backdrop${editingTagsClose.closing ? ' modal-closing' : ''}`} onClick={() => editingTagsClose.requestClose()}>
+            <div className={`modal-sheet${editingTagsClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <span className="modal-title">Tags for "{row.note}"</span>
+                <button className="text-button text-button-primary" onClick={() => editingTagsClose.requestClose()}>Done</button>
+              </div>
+              <div className="modal-body">
+                <TagEditor
+                  tags={tagsFor(row)}
+                  onChange={(tags) => setTagsForRow(row.id, tags)}
+                  existingTags={existingTagsList}
+                  autoFocus
+                />
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+      {bulkTagging && (
+        <div className={`modal-backdrop${bulkTagClose.closing ? ' modal-closing' : ''}`} onClick={() => bulkTagClose.requestClose()}>
+          <div className={`modal-sheet${bulkTagClose.closing ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Tag {selectedForBulkTag.size} transaction{selectedForBulkTag.size === 1 ? '' : 's'}</span>
+              <button
+                className="text-button text-button-primary"
+                onClick={() => bulkTagClose.requestClose(() => {
+                  applyBulkTags(pendingBulkTags)
+                  setSelectMode(false)
+                  setSelectedForBulkTag(new Set())
+                  setBulkTagging(false)
+                })}
+              >
+                Done
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
+                Added to every selected row, alongside whatever tags each one already has — not a replacement.
+              </p>
+              <TagEditor
+                tags={pendingBulkTags}
+                onChange={setPendingBulkTags}
+                existingTags={existingTagsList}
+                placeholder="Add a tag, e.g. bali2025"
+                autoFocus
+              />
             </div>
           </div>
         </div>

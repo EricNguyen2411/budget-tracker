@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import type { Category, RecurringTransaction, Transaction, Account } from '../types'
 import { formatCurrency, localDateInputValue, goalProgress, totalReimbursed, matchingRecurringItem, accountBalance, findTransferPair, findFundedExpense } from '../calculations'
 import { learnMerchant, suggestCategoryId } from '../merchantRules'
-import { allTagsFrom, dedupeTags, normalizeTag } from '../tags'
+import { allTagsFrom, dedupeTags } from '../tags'
 import { createTransaction, deleteTransaction, updateTransfer, deleteTransfer } from '../db'
 import { frequencyLabel } from '../recurring'
 import { useModalClose } from '../useModalClose'
+import TagEditor from './TagEditor'
 
 interface Props {
   transaction: Transaction | null
@@ -218,7 +219,6 @@ function RegularTransactionEditor({ transaction, categories, allTransactions, on
   const [accountId, setAccountId] = useState<string | null>(transaction?.accountId ?? null)
   const [reimbursesId, setReimbursesId] = useState<string | null>(transaction?.reimbursesExpenseId ?? null)
   const [tags, setTags] = useState<string[]>(transaction?.tags ?? [])
-  const [tagInput, setTagInput] = useState('')
 
   const existingTags = allTagsFrom(allTransactions)
 
@@ -282,17 +282,6 @@ function RegularTransactionEditor({ transaction, categories, allTransactions, on
     if (isExpense || !reimbursedExpense) return
     if (reimbursedExpense.categoryId) setCategoryId(reimbursedExpense.categoryId)
   }, [reimbursesId])
-
-  function addTag(raw: string) {
-    const norm = normalizeTag(raw)
-    if (!norm) return
-    setTags((prev) => dedupeTags([...prev, norm]))
-    setTagInput('')
-  }
-
-  function removeTag(tag: string) {
-    setTags((prev) => prev.filter((t) => t !== tag))
-  }
 
   function handleSave() {
     const parsed = parseFloat(amount)
@@ -441,66 +430,7 @@ function RegularTransactionEditor({ transaction, categories, allTransactions, on
           )}
 
           <label className="field-label">Tags</label>
-          {tags.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-              {tags.map((t) => (
-                <span
-                  key={t}
-                  style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--purple)' }}
-                >
-                  {t}
-                  <button onClick={() => removeTag(t)} aria-label={`Remove tag ${t}`} style={{ fontSize: 14, lineHeight: 1, color: 'var(--text-dim)' }}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
-          <input
-            type="text"
-            placeholder="Add a tag, e.g. work trip"
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ',') {
-                e.preventDefault()
-                addTag(tagInput)
-              } else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
-                removeTag(tags[tags.length - 1])
-              }
-            }}
-          />
-          {/* A visible, tappable chip list rather than the browser's
-             native <datalist> — confirmed that datalist's dropdown is
-             unreliable on mobile (iOS Safari in particular often
-             doesn't surface it usefully, if at all), which is exactly
-             why re-using an existing tag still meant retyping it by
-             hand. Filters live as you type, same matching a datalist
-             would have done, just actually visible and one tap. */}
-          {(() => {
-            const query = normalizeTag(tagInput)
-            const suggestions = existingTags
-              .filter((t) => !tags.includes(t))
-              .filter((t) => !query || t.includes(query))
-              .slice(0, 8)
-            if (suggestions.length === 0) return null
-            return (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                {suggestions.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => addTag(t)}
-                    style={{ fontSize: 13, padding: '5px 10px', borderRadius: 14, background: 'var(--surface-2)', color: 'var(--text-dim)' }}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            )
-          })()}
-          {tagInput.trim() && normalizeTag(tagInput) && !existingTags.includes(normalizeTag(tagInput)) && (
-            <button className="text-button" style={{ fontSize: 12, color: 'var(--blue)', marginTop: 8 }} onClick={() => addTag(tagInput)}>
-              Add "{normalizeTag(tagInput)}"
-            </button>
-          )}
+          <TagEditor tags={tags} onChange={setTags} existingTags={existingTags} />
 
           {isExpense && transaction && (
             <>
