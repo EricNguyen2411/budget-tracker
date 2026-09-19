@@ -285,7 +285,6 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
           outstandingExpenses={outstandingExpenses}
           transactions={transactions}
           savingsCategories={availableSavingsCategories}
-          accounts={accounts}
           onClose={() => setShowBulkFund(false)}
           onDone={() => { setShowBulkFund(false); onChanged() }}
         />
@@ -348,22 +347,18 @@ function BreakdownSourceModal({ source, entries, accounts, onClose, onOpenTransa
   )
 }
 
-function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCategories, accounts, onClose, onDone }: {
+function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCategories, onClose, onDone }: {
   tagLabel: string
   outstandingExpenses: Transaction[]
   transactions: Transaction[]
   savingsCategories: Category[]
-  accounts: Account[]
   onClose: () => void
   onDone: () => void
 }) {
   const { closing, requestClose } = useModalClose(onClose)
   const [categoryId, setCategoryId] = useState(savingsCategories[0]?.id ?? null)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
-  const [accountId, setAccountId] = useState<string | null>(null)
-  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const category = savingsCategories.find((c) => c.id === categoryId)
-  const account = accounts.find((a) => a.id === accountId)
 
   const available = category ? goalProgress(category, transactions) : 0
   const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
@@ -394,7 +389,25 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
       reimbursesExpenseId: allocations.length === 1 ? allocations[0].expenseId : null,
       multiAllocations: allocations.length > 1 ? allocations : null,
       tags: [],
-      accountId
+      // Deliberately never tied to a real account, even though the
+      // form used to offer picking one — confirmed via a real
+      // screenshot this was a genuine bug, not a missing feature: this
+      // transaction has to be income-direction (isExpense: false) for
+      // the reimbursesExpenseId/multiAllocations linking to work at
+      // all, but income-direction on a REAL account means "balance
+      // went up." Money actually leaving a real savings account to
+      // cover a trip should make that account's balance go DOWN, so
+      // tying this to an account made its tracked balance rise by
+      // exactly the amount that was really spent — the opposite of
+      // what happened in the person's actual bank. The single-expense
+      // "Fund from Savings" quick action already avoided this by
+      // never setting an account; this bulk version is now consistent
+      // with that. Goal progress (via the savings category) is still
+      // the right place this draw-down shows up. Anyone who also wants
+      // their real savings account's balance to reflect the withdrawal
+      // should record an actual account Transfer for that separately —
+      // that path already handles both sides' signs correctly.
+      accountId: null
     })
     onDone()
   }
@@ -417,16 +430,6 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
               <label className="field-label">From</label>
               <button className="picker-row" onClick={() => setShowCategoryPicker(true)}>
                 <span>{category ? `${category.icon} ${category.name}` : 'Choose a category'}</span>
-                <span className="chevron">›</span>
-              </button>
-            </>
-          )}
-
-          {accounts.length > 0 && (
-            <>
-              <label className="field-label" style={{ marginTop: savingsCategories.length > 1 ? 16 : 0 }}>Which Account</label>
-              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
-                <span>{account ? `${account.icon} ${account.name}` : 'None (optional)'}</span>
                 <span className="chevron">›</span>
               </button>
             </>
@@ -485,29 +488,6 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, savingsCat
                   <button key={c.id} className="picker-row" onClick={() => { setCategoryId(c.id); setShowCategoryPicker(false) }}>
                     <span>{c.icon} {c.name}</span>
                     {categoryId === c.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {showAccountPicker && (
-          <div className="modal-backdrop" onClick={() => setShowAccountPicker(false)}>
-            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <span className="modal-title">Which Account</span>
-                <button onClick={() => setShowAccountPicker(false)} className="text-button text-button-primary">Done</button>
-              </div>
-              <div className="modal-body">
-                <button className="picker-row" onClick={() => { setAccountId(null); setShowAccountPicker(false) }}>
-                  <span>None (optional)</span>
-                  {!accountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                </button>
-                {accounts.map((a) => (
-                  <button key={a.id} className="picker-row" onClick={() => { setAccountId(a.id); setShowAccountPicker(false) }}>
-                    <span>{a.icon} {a.name}</span>
-                    {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
                   </button>
                 ))}
               </div>

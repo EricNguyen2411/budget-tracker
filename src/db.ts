@@ -29,7 +29,7 @@ let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 7, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 8, {
       async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -85,6 +85,36 @@ function getDB() {
           // adjustment" is left alone.
           await migrateMissingBalanceAdjustmentFlag(transaction)
         }
+        if (oldVersion < 8) {
+          // Repairs data corrupted by a real bug (fixed alongside this
+          // migration): the bulk "Fund from Savings" action let a real
+          // account be picked for the resulting transaction, same as
+          // the bulk friend-reimbursement action beside it — but unlike
+          // a friend's repayment, which genuinely does add money to
+          // wherever it lands, a savings draw-down needs to be recorded
+          // as income (isExpense: false) purely so its
+          // reimbursesExpenseId/multiAllocations link works, and income
+          // on a real account means "balance went up." The real money
+          // was leaving that account, not arriving — so tying this to
+          // an account made its tracked balance rise by exactly what
+          // was actually spent, confirmed directly via a real
+          // screenshot showing a Travel Savings account $1,109.76
+          // higher than it should have been. The single-expense
+          // version of this action never had the bug (it never set an
+          // account); this backfill brings bulk-created transactions
+          // already saved with one into line with that always-correct
+          // behavior. Doesn't touch a genuine account Transfer's income
+          // side, which this same shape could otherwise resemble — a
+          // transfer always has categoryId null, while every
+          // transaction this migration targets has a real (savings)
+          // category, which is exactly what the fixed create-flow now
+          // guarantees can never coincide with a set accountId. Not
+          // touched here, and left for the person to review themselves:
+          // any Balance Adjustment they created trying to manually
+          // correct the resulting mismatch — that's a judgment call
+          // this migration has no reliable way to make safely.
+          await migrateSavingsFundingAccountId(transaction)
+        }
       }
     })
   }
@@ -98,6 +128,21 @@ async function migrateMissingBalanceAdjustmentFlag(transaction: IDBPTransaction<
     const t = cursor.value as Transaction
     if (t.note === 'Balance adjustment' && t.categoryId === null && t.isBalanceAdjustment !== true) {
       await cursor.update({ ...t, isBalanceAdjustment: true })
+    }
+    cursor = await cursor.continue()
+  }
+}
+
+async function migrateSavingsFundingAccountId(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
+  const categoryStore = transaction.objectStore('categories')
+  const savingsCategoryIds = new Set((await categoryStore.getAll()).filter((c) => c.isSavingsCategory).map((c) => c.id))
+  const store = transaction.objectStore('transactions')
+  let cursor = await store.openCursor()
+  while (cursor) {
+    const t = cursor.value as Transaction
+    const isSavingsOffset = !t.isExpense && !!t.categoryId && savingsCategoryIds.has(t.categoryId) && (!!t.reimbursesExpenseId || !!(t.multiAllocations && t.multiAllocations.length > 0))
+    if (isSavingsOffset && t.accountId !== null) {
+      await cursor.update({ ...t, accountId: null })
     }
     cursor = await cursor.continue()
   }
