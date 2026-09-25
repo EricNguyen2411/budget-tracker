@@ -1,6 +1,21 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { execSync } from 'node:child_process'
+
+// Short commit hash of whatever's actually being built, not something
+// maintained by hand — the whole point is answering "did my last push
+// actually make it here" without trusting that a version number got
+// bumped correctly. Falls back to 'dev' rather than failing the build
+// if git isn't available for some reason (a source-only deploy with no
+// .git folder, say).
+function getCommitHash(): string {
+  try {
+    return execSync('git rev-parse --short HEAD').toString().trim()
+  } catch {
+    return 'dev'
+  }
+}
 
 // Change this ONE value to match your GitHub repo name exactly (with
 // leading and trailing slashes), or to '/' if using Firebase/Vercel/
@@ -13,6 +28,10 @@ const BASE_PATH = '/budget-tracker/'
 
 export default defineConfig({
   base: BASE_PATH,
+  define: {
+    __APP_COMMIT__: JSON.stringify(getCommitHash()),
+    __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString())
+  },
   plugins: [
     react(),
     VitePWA({

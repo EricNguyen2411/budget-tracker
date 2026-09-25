@@ -227,6 +227,16 @@ export default function More({ categories, transactions, onCategoriesChanged, on
         {status && <p style={{ fontSize: 13, color: status.startsWith('Import failed') ? 'var(--red)' : 'var(--green)', marginTop: 10 }}>{status}</p>}
         <p className="hint" style={{ marginTop: 10 }}>Automatic local snapshots are taken periodically as a safety net against accidental deletion — but they live in the same on-device storage as your live data, so they won't survive iOS clearing this site's storage entirely. Exporting a file (Files, email) is the only backup that survives that.</p>
       </div>
+
+      {/* Answers "did my last push actually make it here" directly —
+         tied to the real git commit and build time at build time
+         (vite.config.ts), not a number anyone has to remember to bump.
+         A stale-looking commit hash after a deploy is the single
+         fastest way to tell a real code problem apart from a caching
+         problem. */}
+      <p style={{ fontSize: 11, color: 'var(--text-faint)', textAlign: 'center', marginTop: 8 }}>
+        v{__APP_COMMIT__} · built {new Date(__APP_BUILD_TIME__).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
+      </p>
     </div>
   )
 }
