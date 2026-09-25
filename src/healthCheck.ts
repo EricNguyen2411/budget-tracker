@@ -1,0 +1,319 @@
+import type { Transaction, RecurringTransaction, Category, Account } from './types'
+import { findDuplicates, isLikelyTransitFare } from './duplicates'
+import { goalProgress, projectedGoalCompletionDate, netSpentForCategory, findTransferPair, isGoal } from './calculations'
+import { detectRecurring } from './recurring'
+import { getSettings } from './budgetPeriod'
+import { normalizeMerchantKey } from './merchantRules'
+
+export interface HealthFinding {
+  icon: string
+  title: string
+  detail: string
+  severity: 'info' | 'warning'
+  transactions: Transaction[]
+  renewableAccountIds?: string[]
+  fixableRecurringIds?: string[]
+}
+
+export function runHealthCheck(
+  transactions: Transaction[],
+  recurring: RecurringTransaction[],
+  categories: Category[],
+  referenceDate: Date = new Date(),
+  accounts: Account[] = []
+): HealthFinding[] {
+  const findings: HealthFinding[] = []
+
+  const dupGroups = findDuplicates(transactions)
+  if (dupGroups.length > 0) {
+    const involved = dupGroups.flatMap((g) => g.transactions)
+    findings.push({
+      icon: '📑',
+      title: `${dupGroups.length} possible duplicate group${dupGroups.length === 1 ? '' : 's'}`,
+      detail: `${involved.length} transactions involved, matched by amount and date — open Duplicate Check to review and resolve them.`,
+      severity: 'warning',
+      transactions: involved
+    })
+  }
+
+  // Expenses only — an uncategorized EXPENSE really is missing
+  // something (it drops out of every budget/category total until it's
+  // assigned one). Uncategorized INCOME isn't the same kind of gap:
+  // isUnlinkedIncome and everywhere it feeds into (the Income stat, a
+  // salary deposit, etc.) never required a category to begin with, so
+  // flagging it here reads as "something's wrong" about a transaction
+  // that's already in its normal, complete state. Confirmed directly
+  // with a realistic dataset: routine salary deposits (deliberately
+  // uncategorized, same as most people actually enter them) made up
+  // the entire count here, with no real expense among them — the
+  // finding was nagging about transactions that had nothing to fix.
+  const uncategorized = transactions.filter((t) => t.isExpense && !t.categoryId)
+  if (uncategorized.length >= 3) {
+    findings.push({
+      icon: '❓',
+      title: `${uncategorized.length} uncategorized expenses`,
+      detail: 'Not counted toward any budget or category total until they\u2019re assigned one.',
+      severity: 'info',
+      transactions: uncategorized
+    })
+  }
+
+  // Interest is deliberately a manual "calculate and add" action rather
+  // than something that happens on its own in the background — every
+  // other money-creating action in this app works the same way, always
+  // shown and confirmed rather than silent. The trade-off is that
+  // nothing reminds a person to actually come back and do it, so an
+  // interest-earning account can easily go months without its balance
+  // reflecting interest it's genuinely already earned. Flagged at 45
+  // days specifically because monthly is the normal real-world credit
+  // cadence, and 45 gives real slack before nagging about something
+  // that's merely a few days into a new month.
+  const accountsNeedingInterest = accounts.filter((a) => {
+    if (!a.interestRate || a.isArchived || a.type === 'credit_card') return false
+    const ownInterestTx = transactions.filter((t) => t.accountId === a.id && !t.isExpense && t.note === 'Interest earned')
+    const lastDate = ownInterestTx.length > 0
+      ? new Date(Math.max(...ownInterestTx.map((t) => new Date(t.date).getTime())))
+      : new Date(a.openingDate)
+    const daysSince = (referenceDate.getTime() - lastDate.getTime()) / (24 * 60 * 60 * 1000)
+    return daysSince > 45
+  })
+  if (accountsNeedingInterest.length > 0) {
+    findings.push({
+      icon: '💰',
+      title: `${accountsNeedingInterest.length} account${accountsNeedingInterest.length === 1 ? '' : 's'} may be missing recent interest`,
+      detail: `${accountsNeedingInterest.map((a) => a.name).join(', ')} — has a rate set but hasn't had interest added in over 45 days. Add it from the account's own screen.`,
+      severity: 'info',
+      transactions: []
+    })
+  }
+
+  const expenseAmounts = transactions.filter((t) => t.isExpense).map((t) => t.amount).sort((a, b) => a - b)
+  if (expenseAmounts.length >= 10) {
+    const median = expenseAmounts[Math.floor(expenseAmounts.length / 2)]
+    if (median > 0) {
+      // Confirmed directly that comparing every expense against the
+      // median of ALL of them (typically dominated by everyday spending
+      // — groceries, coffee, small purchases) flags a normal, expected
+      // bill like rent as a "suspicious outlier" every single month
+      // forever, for essentially anyone who pays rent or a mortgage.
+      // That trains people to ignore this warning entirely, which
+      // defeats catching an actual mistake or fraud later. A large
+      // amount that recurs — the same merchant, a similar amount, more
+      // than once — is normal and expected for this person specifically,
+      // not an anomaly, regardless of how it compares to their day-to-day
+      // spending.
+      const outliers = transactions.filter((t) => {
+        if (!t.isExpense || t.amount <= Math.max(median * 10, 300)) return false
+        // A transfer is a deliberate, self-typed amount — created by
+        // entering a number directly into the Transfer form, not parsed
+        // from an OCR'd screenshot or an imported statement — so it
+        // doesn't carry the same "could be a misread/typo" risk this
+        // check exists to catch. A large one-off transfer (paying off a
+        // big credit card bill) is a normal, explicable reason to be
+        // large, the same way a recurring bill is.
+        if (findTransferPair(t, transactions)) return false
+        const key = normalizeMerchantKey(t.note)
+        if (!key) return true
+        const recurs = transactions.some((other) =>
+          other.id !== t.id && other.isExpense &&
+          normalizeMerchantKey(other.note) === key &&
+          Math.abs(other.amount - t.amount) / t.amount < 0.1
+        )
+        return !recurs
+      })
+      if (outliers.length > 0) {
+        findings.push({
+          icon: '🚩',
+          title: `${outliers.length} unusually large transaction${outliers.length === 1 ? '' : 's'}`,
+          detail: 'Significantly bigger than your typical spend (over 10x the median) and not part of a recurring pattern — worth confirming these amounts are correct.',
+          severity: 'warning',
+          transactions: outliers
+        })
+      }
+    }
+  }
+
+  // Transport NSW (and Opal generally) authorizes contactless fares as
+  // a small placeholder hold — confirmed via real NAB screenshots
+  // earlier as an exact "Transport NSW (Contactless) -$1.00" line,
+  // repeated across multiple days — then finalizes the REAL fare
+  // separately once the trip is calculated, sometimes hours later,
+  // sometimes the next day. Banks don't reliably update the original
+  // transaction in place, so a small entry that's still sitting there
+  // after a couple of days is very likely showing the placeholder
+  // amount, not what actually got charged.
+  //
+  // Shares isLikelyTransitFare's keyword list with duplicates.ts rather
+  // than keeping its own copy — confirmed directly that two separate
+  // copies of this exact list had already drifted apart once (the
+  // duplicate here was missing the real "Transport NSW", no "for",
+  // format entirely), so this check could never fire for the single
+  // most common real-world case it exists to catch.
+  const stalePendingFares = transactions.filter((t) => {
+    if (!t.isExpense || t.amount > 2.0 || !isLikelyTransitFare(t.note)) return false
+    // Tightened from 7 days: Opal fares confirmed to typically finalize
+    // within a day or two, not a week — 7 days left this sitting
+    // unflagged for most of a week after the real fare had almost
+    // certainly already posted.
+    return referenceDate.getTime() - new Date(t.date).getTime() > 2 * 24 * 60 * 60 * 1000
+  })
+  if (stalePendingFares.length > 0) {
+    findings.push({
+      icon: '🚊',
+      title: `${stalePendingFares.length} old pending transit fare${stalePendingFares.length === 1 ? '' : 's'}`,
+      detail: 'Still showing a small placeholder amount from a couple of days ago or more — check your bank app for the real fare and update these.',
+      severity: 'info',
+      transactions: stalePendingFares
+    })
+  }
+
+  const staleRecurring = recurring.filter((r) => r.isActive && referenceDate.getTime() - new Date(r.nextDueDate).getTime() > 45 * 24 * 60 * 60 * 1000)
+  if (staleRecurring.length > 0) {
+    findings.push({
+      icon: '🔁',
+      title: `${staleRecurring.length} recurring item${staleRecurring.length === 1 ? '' : 's'} overdue by 45+ days`,
+      detail: 'Still marked active, but the due date is well in the past. Check Recurring to confirm these are still happening.',
+      severity: 'warning',
+      transactions: []
+    })
+  }
+
+  // Two active recurring items with the same merchant name only matters
+  // because of how matching actually works: matchingRecurringItem picks
+  // the FIRST one found for any given real transaction, so a genuine
+  // duplicate (the same subscription accidentally added twice) means
+  // the second one can never be matched to anything — it just reserves
+  // its full amount every period, forever, with no way for a real
+  // charge to ever satisfy it. Surfaced here since nothing else would
+  // ever explain why one subscription's reserve never clears.
+  const recurringKeyGroups = new Map<string, RecurringTransaction[]>()
+  for (const r of recurring) {
+    if (!r.isActive) continue
+    const key = `${r.isExpense}:${normalizeMerchantKey(r.note)}`
+    if (!key || key === 'true:' || key === 'false:') continue
+    if (!recurringKeyGroups.has(key)) recurringKeyGroups.set(key, [])
+    recurringKeyGroups.get(key)!.push(r)
+  }
+  const duplicateRecurringNames = Array.from(recurringKeyGroups.values()).filter((group) => group.length > 1)
+  if (duplicateRecurringNames.length > 0) {
+    const names = duplicateRecurringNames.map((g) => g[0].note).join(', ')
+    findings.push({
+      icon: '👥',
+      title: `${duplicateRecurringNames.length} recurring item${duplicateRecurringNames.length === 1 ? '' : 's'} listed more than once`,
+      detail: `${names} — each has more than one active recurring entry with the same name. Only one can ever be matched to a real charge, so the other reserves its full amount every period without a way to clear. Worth checking whether one is a leftover duplicate.`,
+      severity: 'warning',
+      transactions: []
+    })
+  }
+
+  // Goals with a target date that's either already passed without being
+  // reached, or on a pace that won't get there in time — surfaced here
+  // since Month in Review only shows this for the current month, and
+  // it's easy to lose track of a goal you're not actively looking at.
+  const goalsOffPace = accounts.filter((a) => {
+    if (!isGoal(a) || !a.goalTargetDate) return false
+    if (goalProgress(a, transactions, referenceDate) >= (a.goalTargetAmount ?? 0)) return false
+    const target = new Date(a.goalTargetDate)
+    if (target < referenceDate) return true // target date already passed, goal not reached
+    const projected = projectedGoalCompletionDate(a, transactions, referenceDate)
+    return projected !== null && projected > target
+  })
+  if (goalsOffPace.length > 0) {
+    findings.push({
+      icon: '🎯',
+      title: `${goalsOffPace.length} savings goal${goalsOffPace.length === 1 ? '' : 's'} behind pace`,
+      detail: goalsOffPace.map((a) => a.name).join(', ') + ' \u2014 at the current contribution rate, won\u2019t reach the target by the date set. Increase the monthly amount or push the date out.',
+      severity: 'warning',
+      transactions: []
+    })
+  }
+
+  // Recurring annual goals (insurance, car registration) that have
+  // either been fully funded or reached their target date — either way
+  // it's time to renew into next year's cycle, since the bill is
+  // presumably due now regardless of whether the full amount was saved.
+  const goalsReadyToRenew = accounts.filter((a) => {
+    if (!isGoal(a) || !a.goalRecurring || !a.goalTargetDate) return false
+    const reached = goalProgress(a, transactions, referenceDate) >= (a.goalTargetAmount ?? 0)
+    const dueDatePassed = new Date(a.goalTargetDate) <= referenceDate
+    return reached || dueDatePassed
+  })
+  if (goalsReadyToRenew.length > 0) {
+    findings.push({
+      icon: '🔄',
+      title: `${goalsReadyToRenew.length} annual goal${goalsReadyToRenew.length === 1 ? '' : 's'} ready to renew`,
+      detail: goalsReadyToRenew.map((a) => a.name).join(', ') + ' \u2014 funded or due. Tap to roll each into next year\u2019s cycle (target date +1 year, progress tracking restarts fresh).',
+      severity: 'info',
+      transactions: [],
+      renewableAccountIds: goalsReadyToRenew.map((a) => a.id)
+    })
+  }
+
+  // A recurring item tied to a savings account, set to Expense
+  // direction, whose own note is essentially that account's name — the
+  // strong, specific signal that someone set up a recurring
+  // CONTRIBUTION (meant to add to the balance) but left it on Expense,
+  // which actually withdraws instead. Confirmed against a real backup:
+  // a recurring "Travel Savings" item pointed straight at the Travel
+  // Savings account, set to Expense, due to fire again within days —
+  // it would have driven that account's real balance negative the
+  // moment it generated, the opposite of what someone naming a
+  // recurring item after the very account it funds almost certainly
+  // intends. Deliberately narrow (name must closely match the
+  // account, not just any expense that happens to be paid from a
+  // savings account) — a genuine recurring withdrawal FROM savings
+  // (an insurance premium funded from an emergency fund, say) is a
+  // completely legitimate pattern and would carry its own name, not
+  // the account's.
+  const misdirectedContributions = recurring.filter((r) => {
+    if (!r.isExpense || !r.isActive || !r.accountId) return false
+    const account = accounts.find((a) => a.id === r.accountId)
+    if (!account || account.type !== 'savings') return false
+    const noteKey = r.note.trim().toLowerCase()
+    const accountKey = account.name.trim().toLowerCase()
+    return noteKey === accountKey || noteKey.includes(accountKey) || accountKey.includes(noteKey)
+  })
+  if (misdirectedContributions.length > 0) {
+    findings.push({
+      icon: '⚠️',
+      title: `${misdirectedContributions.length} recurring item${misdirectedContributions.length === 1 ? '' : 's'} may be set up backwards`,
+      detail: misdirectedContributions.map((r) => `"${r.note}"`).join(', ') + ' \u2014 named after the savings account it\u2019s tied to, but set to Expense. If this is meant to be a monthly contribution, it should be Income instead — as Expense, it will withdraw from that account\u2019s balance rather than add to it.',
+      severity: 'warning',
+      transactions: [],
+      fixableRecurringIds: misdirectedContributions.map((r) => r.id)
+    })
+  }
+
+  // Categories that have real spending this period but no budget set —
+  // easy to miss since Budgets only shows categories that already have
+  // one, so a forgotten category never surfaces there on its own.
+  const unbudgeted = categories.filter((c) => {
+    if (c.parentId || c.monthlyBudget > 0) return false
+    return netSpentForCategory(c, categories, transactions, referenceDate) > 0
+  })
+  if (unbudgeted.length > 0) {
+    findings.push({
+      icon: '📊',
+      title: `${unbudgeted.length} categor${unbudgeted.length === 1 ? 'y has' : 'ies have'} spending but no budget`,
+      detail: unbudgeted.map((c) => c.name).join(', ') + ' — has activity this period but no budget set, so Budget vs Actual has nothing to compare it against.',
+      severity: 'info',
+      transactions: []
+    })
+  }
+
+  // Recurring-looking patterns that haven't actually been added as
+  // recurring yet — the Recurring page only shows this if you go look;
+  // surfacing it here means you're more likely to actually see it.
+  const recurringSuggestions = detectRecurring(transactions, recurring, getSettings().dismissedRecurringSuggestions, referenceDate)
+  if (recurringSuggestions.length > 0) {
+    findings.push({
+      icon: '✨',
+      title: `${recurringSuggestions.length} transaction${recurringSuggestions.length === 1 ? ' looks' : 's look'} recurring but ${recurringSuggestions.length === 1 ? "isn't" : "aren't"} set up`,
+      detail: recurringSuggestions.map((s) => s.displayName).join(', ') + ' — showing up on a regular pattern. Add these in Recurring so they\u2019re tracked and forecasted properly.',
+      severity: 'info',
+      transactions: []
+    })
+  }
+
+  return findings
+}

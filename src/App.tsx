@@ -1,0 +1,467 @@
+import { useEffect, useState, useCallback } from 'react'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, Account, InstallmentPlan } from './types'
+import {
+  ensureDefaultCategories, getCategories, getTransactions, createTransaction, saveTransaction, deleteTransaction, deleteTransfer,
+  getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce,
+  getAccounts, getInstallmentPlans, saveInstallmentPlan
+} from './db'
+import { processDueRecurring } from './recurring'
+import { processDueInstallments } from './installments'
+import { getSettings, isCustomCycle, getCycleConfig, predictedCycleFor, setCycleOverride } from './budgetPeriod'
+import { localDateInputValue, findTransferPair, findFundingPair } from './calculations'
+import { checkInAppNudge } from './notifications'
+import { useSwipeBack } from './useSwipeBack'
+import Dashboard from './pages/Dashboard'
+import TransactionsPage from './pages/Transactions'
+import Budgets from './pages/Budgets'
+import More from './pages/More'
+import RecurringPage from './pages/Recurring'
+import InstallmentPlansPage from './pages/InstallmentPlansPage'
+import ShoppingLists from './pages/ShoppingLists'
+import DuplicateCheck from './pages/DuplicateCheck'
+import HealthCheck from './pages/HealthCheck'
+import CategoryDetail from './pages/CategoryDetail'
+import CategoryTrendPage from './pages/CategoryTrendPage'
+import CustomRangeReport from './pages/CustomRangeReport'
+import MerchantRules from './pages/MerchantRules'
+import TypedTransactions, { type StatKind } from './pages/TypedTransactions'
+import CategoriesScreen from './pages/CategoriesScreen'
+import PeriodDetail from './pages/PeriodDetail'
+import StatementImport from './pages/StatementImport'
+import TotalBudgetPlanner from './pages/TotalBudgetPlanner'
+import AutoBackups from './pages/AutoBackups'
+import CategoryBreakdownByMonth from './pages/CategoryBreakdownByMonth'
+import MonthlyRecapPage from './pages/MonthlyRecapPage'
+import TagsScreen from './pages/TagsScreen'
+import TagDetail from './pages/TagDetail'
+import AccountsScreen from './pages/AccountsScreen'
+import AccountDetail from './pages/AccountDetail'
+import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
+
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts' | 'installments'
+
+export default function App() {
+  const [tab, setTab] = useState<Tab>('dashboard')
+  // Some pages (Month in Review, Spending by Category) are reachable
+  // both from a Dashboard widget and from More → Tools — back needs to
+  // return to wherever the person actually came from, not always
+  // assume the More menu.
+  const [returnTab, setReturnTab] = useState<Tab>('more')
+  const [pendingImportFiles, setPendingImportFiles] = useState<FileList | null>(null)
+  const [pendingTransactionsSearch, setPendingTransactionsSearch] = useState<string | null>(null)
+  const [categories, setCategories] = useState<Category[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [recurring, setRecurring] = useState<RecurringTransaction[]>([])
+  const [shoppingLists, setShoppingLists] = useState<ShoppingList[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [installmentPlans, setInstallmentPlans] = useState<InstallmentPlan[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [categoryDetailId, setCategoryDetailId] = useState<string | null>(null)
+  const [viewingTagDetail, setViewingTagDetail] = useState<string | null>(null)
+  const [viewingAccountDetail, setViewingAccountDetail] = useState<Account | null>(null)
+  const [viewingCategoryTrend, setViewingCategoryTrend] = useState<Category | null>(null)
+  const [statDetail, setStatDetail] = useState<StatKind | null>(null)
+  const [dateRangeNav, setDateRangeNav] = useState<{ title: string; start: string; end: string; categoryId?: string } | null>(null)
+
+  // "Did your pay actually land on a different day this cycle?" — the
+  // last-business-day (or fixed-day) rule is a PREDICTION, and real
+  // paydays sometimes shift (paid a day early for a bank holiday, an
+  // employer's own irregular schedule). Rather than requiring a perfect
+  // rule, a sizeable unlinked income entry whose date doesn't match the
+  // prediction gets offered as a one-off correction for THAT cycle
+  // specifically — see budgetPeriod.ts's override system. $500 and a
+  // 10-day window are deliberately conservative defaults: high enough
+  // to skip small refunds/gifts, tight enough to skip income that's
+  // obviously unrelated to payday timing (which would just be an
+  // unhelpful, confusing prompt) rather than a plausible payday shift.
+  const SALARY_LIKE_THRESHOLD = 5000
+  const MAX_CORRECTION_WINDOW_DAYS = 10
+  const [cyclePrompt, setCyclePrompt] = useState<{ bucketKey: string; txDateISO: string; txDateLabel: string; predictedLabel: string } | null>(null)
+
+  useSwipeBack(
+    () => setTab('more'),
+    tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health'
+  )
+
+  const reload = useCallback(async () => {
+    const [cats, txs, rec, lists, accts, plans] = await Promise.all([getCategories(), getTransactions(), getRecurring(), getShoppingLists(), getAccounts(), getInstallmentPlans()])
+    setCategories(cats)
+    setTransactions(txs)
+    setRecurring(rec)
+    setShoppingLists(lists)
+    setAccounts(accts)
+    setInstallmentPlans(plans)
+  }, [])
+
+  // Shared between initial app load and restoring a backup — a backup
+  // brought in from another device can easily contain recurring bills
+  // or installment plans with payments that are now overdue, and
+  // without this also running right after a restore, they'd just sit
+  // there uncaught-up until the next full page reload happened to
+  // trigger the init effect below, which is neither obvious nor
+  // something a person restoring a backup would think to do themselves.
+  const catchUpDueItems = useCallback(async () => {
+    const rec = await getRecurring()
+    const { newTransactions, updatedRecurring } = processDueRecurring(rec)
+    for (const t of newTransactions) await createTransaction(t)
+    for (const r of updatedRecurring) await saveRecurring(r)
+
+    const plans = await getInstallmentPlans()
+    const existingTx = await getTransactions()
+    const { newTransactions: dueInstallments, updatedPlans } = processDueInstallments(plans, existingTx)
+    for (const t of dueInstallments) await createTransaction(t)
+    for (const p of updatedPlans) await saveInstallmentPlan(p)
+  }, [])
+
+  useEffect(() => {
+    async function init() {
+      await ensureDefaultCategories()
+      await syncReimbursementCategoriesOnce()
+      await catchUpDueItems()
+
+      await reload()
+      setLoaded(true)
+      performAutoBackupIfNeeded()
+
+      const settings = getSettings()
+      const txs = await getTransactions()
+      const mostRecent = txs[0] ? new Date(txs[0].date) : null
+      checkInAppNudge(mostRecent, settings.nudgeEnabled ?? false, 3)
+    }
+    init()
+  }, [reload, catchUpDueItems])
+
+  async function handleSaveTransaction(data: Omit<Transaction, 'id'>, existingId: string | null) {
+    if (existingId) {
+      await saveTransaction({ ...data, id: existingId })
+    } else {
+      const created = await createTransaction(data)
+      maybeOfferCycleCorrection(created)
+    }
+    await reload()
+  }
+
+  function maybeOfferCycleCorrection(t: Transaction) {
+    const settings = getSettings()
+    if (!isCustomCycle(settings)) return
+    if (t.isExpense || t.reimbursesExpenseId || t.amount < SALARY_LIKE_THRESHOLD) return
+
+    const txDate = new Date(t.date)
+    const txDateOnly = new Date(txDate.getFullYear(), txDate.getMonth(), txDate.getDate())
+    const { bucketKey, predictedStart } = predictedCycleFor(txDateOnly, getCycleConfig())
+    const predictedOnly = new Date(predictedStart.getFullYear(), predictedStart.getMonth(), predictedStart.getDate())
+    const diffDays = Math.round((txDateOnly.getTime() - predictedOnly.getTime()) / (24 * 60 * 60 * 1000))
+    if (diffDays === 0 || Math.abs(diffDays) > MAX_CORRECTION_WINDOW_DAYS) return
+
+    setCyclePrompt({
+      bucketKey,
+      txDateISO: localDateInputValue(txDateOnly),
+      txDateLabel: txDateOnly.toLocaleDateString('en-AU', { day: 'numeric', month: 'long' }),
+      predictedLabel: predictedOnly.toLocaleDateString('en-AU', { day: 'numeric', month: 'long' })
+    })
+  }
+
+  function confirmCycleCorrection() {
+    if (!cyclePrompt) return
+    setCycleOverride(cyclePrompt.bucketKey, cyclePrompt.txDateISO)
+    setCyclePrompt(null)
+    reload()
+  }
+
+  async function handleDeleteTransaction(id: string) {
+    // Swipe-to-delete goes through this one shared handler from every
+    // list in the app, unlike the tap-to-edit flow (TransactionEditor),
+    // which already detects a transfer and deletes both halves
+    // together. Confirmed via direct testing this was a real gap, not
+    // just a theoretical one: swiping away either half here called
+    // deleteTransaction on just that one id, leaving its other half
+    // behind as an orphaned, un-paired transaction — still real money
+    // correctly gone from the source account, but never arriving
+    // anywhere, and no longer describable as "a transfer" at all. Same
+    // detection TransactionEditor already relies on, so swiping
+    // matches what tapping-then-deleting has always done.
+    const target = transactions.find((t) => t.id === id)
+    const other = target ? findTransferPair(target, transactions) : null
+    if (target && other) {
+      // Swiping only ever removes ONE row on screen, so silently taking
+      // a second, different-looking transaction along with it — one
+      // that might be sitting on a completely different account's
+      // history, out of view — is a real surprise worth a heads-up for,
+      // even though deleting both together is the correct behavior. A
+      // plain single transaction still deletes with just the swipe +
+      // tap, no extra step — this only fires for the linked case.
+      const otherAccount = accounts.find((a) => a.id === other.accountId)
+      const confirmed = confirm(`This is one half of a transfer. Deleting it will also remove the matching transaction on ${otherAccount?.name ?? 'the other account'} — both sides always go together. Continue?`)
+      if (!confirmed) return
+      const expenseId = target.isExpense ? target.id : other.id
+      const incomeId = target.isExpense ? other.id : target.id
+      await deleteTransfer(expenseId, incomeId)
+    } else {
+      const fundingPair = target ? findFundingPair(target, transactions) : null
+      if (fundingPair && target) {
+        // Whichever side got swiped, the account whose real balance is
+        // affected is findable directly off it: the offset carries
+        // fundedFromAccountId itself, the withdrawal carries it as its
+        // own accountId — never off fundingPair, which is the OTHER
+        // side and wouldn't have the right one in both directions.
+        const fundingAccountId = target.fundedFromAccountId ?? target.accountId
+        const fundingAccount = accounts.find((a) => a.id === fundingAccountId)
+        const confirmed = confirm(`This is linked to a real withdrawal from ${fundingAccount?.name ?? 'a savings account'}. Deleting it will also remove that withdrawal, restoring the account's balance — both sides always go together. Continue?`)
+        if (!confirmed) return
+        await deleteTransaction(fundingPair.id)
+      }
+      await deleteTransaction(id)
+    }
+    await reload()
+  }
+
+  if (!loaded) return null
+
+  const categoryDetail = categoryDetailId ? categories.find((c) => c.id === categoryDetailId) : null
+  const anyOverlay = categoryDetail || statDetail || dateRangeNav || viewingTagDetail || viewingAccountDetail || viewingCategoryTrend
+
+  return (
+    <div className="app-shell">
+      {viewingCategoryTrend ? (
+        <CategoryTrendPage
+          category={viewingCategoryTrend}
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setViewingCategoryTrend(null)}
+        />
+      ) : categoryDetail ? (
+        <CategoryDetail
+          category={categoryDetail}
+          allCategories={categories}
+          transactions={transactions}
+          onBack={() => setCategoryDetailId(null)}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onOpenCategory={(c) => setCategoryDetailId(c.id)}
+          onChanged={reload}
+          onOpenTrend={(c) => setViewingCategoryTrend(c)}
+        />
+      ) : viewingAccountDetail ? (
+        <AccountDetail
+          account={viewingAccountDetail}
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setViewingAccountDetail(null)}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onChanged={reload}
+        />
+      ) : viewingTagDetail ? (
+        <TagDetail
+          tag={viewingTagDetail}
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setViewingTagDetail(null)}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onViewInTransactions={() => {
+            const tag = viewingTagDetail
+            setViewingTagDetail(null)
+            setPendingTransactionsSearch(`#${tag}`)
+            setTab('transactions')
+          }}
+          onChanged={reload}
+          accounts={accounts}
+        />
+      ) : statDetail ? (
+        <TypedTransactions
+          kind={statDetail}
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setStatDetail(null)}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onChanged={reload}
+          accounts={accounts}
+        />
+      ) : dateRangeNav ? (
+        <PeriodDetail
+          title={dateRangeNav.title}
+          categories={categories}
+          transactions={transactions}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onBack={() => setDateRangeNav(null)}
+          start={dateRangeNav.start}
+          end={dateRangeNav.end}
+          initialCategoryId={dateRangeNav.categoryId}
+          onChanged={reload}
+        />
+      ) : (
+        <>
+      {tab === 'dashboard' && (
+        <Dashboard
+          categories={categories}
+          transactions={transactions}
+          recurring={recurring}
+          onOpenCategory={(id) => setCategoryDetailId(id)}
+          onOpenStat={(kind) => setStatDetail(kind)}
+          onOpenDateRange={(title, start, end) => setDateRangeNav({ title, start, end })}
+          onOpenMonthRecap={() => { setReturnTab('dashboard'); setTab('monthlyrecap') }}
+          onOpenCategoryBreakdown={() => { setReturnTab('dashboard'); setTab('categorybreakdown') }}
+          onOpenImport={(files) => { setPendingImportFiles(files); setReturnTab('dashboard'); setTab('import') }}
+          onOpenRecurring={() => setTab('recurring')}
+          onOpenTags={() => { setReturnTab('dashboard'); setTab('tags') }}
+          accounts={accounts}
+          onOpenAccounts={() => { setReturnTab('dashboard'); setTab('accounts') }}
+          installmentPlans={installmentPlans}
+          onOpenInstallments={() => { setReturnTab('dashboard'); setTab('installments') }}
+        />
+      )}
+      {tab === 'transactions' && (
+        <TransactionsPage
+          categories={categories}
+          transactions={transactions}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onChanged={reload}
+          initialSearch={pendingTransactionsSearch ?? undefined}
+          onTransactionCreated={maybeOfferCycleCorrection}
+          recurring={recurring}
+          accounts={accounts}
+        />
+      )}
+      {tab === 'budgets' && <Budgets categories={categories} transactions={transactions} onOpenCategory={(id) => setCategoryDetailId(id)} />}
+      {tab === 'more' && (
+        <More
+          categories={categories}
+          onCategoriesChanged={reload}
+          onNavigate={(t) => { setReturnTab('more'); setTab(t as Tab) }}
+          transactions={transactions}
+          accounts={accounts}
+          onRestored={catchUpDueItems}
+        />
+      )}
+      {tab === 'recurring' && <RecurringPage categories={categories} transactions={transactions} recurring={recurring} onChanged={reload} onBack={() => setTab('more')} accounts={accounts} />}
+      {tab === 'installments' && <InstallmentPlansPage categories={categories} transactions={transactions} installmentPlans={installmentPlans} onChanged={reload} onBack={() => setTab('more')} accounts={accounts} />}
+      {tab === 'shopping' && <ShoppingLists lists={shoppingLists} categories={categories} transactions={transactions} onChanged={reload} />}
+      {tab === 'duplicates' && <DuplicateCheck transactions={transactions} onChanged={reload} onBack={() => setTab(returnTab)} />}
+      {tab === 'health' && (
+        <HealthCheck
+          transactions={transactions}
+          recurring={recurring}
+          categories={categories}
+          onSave={handleSaveTransaction}
+          onDelete={handleDeleteTransaction}
+          onOpenDuplicateCheck={() => { setReturnTab('health'); setTab('duplicates') }}
+          onCategoriesChanged={reload}
+          onBack={() => setTab('more')}
+          accounts={accounts}
+        />
+      )}
+      {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} accounts={accounts} />}
+      {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
+      {tab === 'tags' && (
+        <TagsScreen
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setTab(returnTab)}
+          onOpenTag={(tag) => setViewingTagDetail(tag)}
+          onChanged={reload}
+        />
+      )}
+      {tab === 'accounts' && (
+        <AccountsScreen
+          accounts={accounts}
+          transactions={transactions}
+          onBack={() => setTab('more')}
+          onChanged={reload}
+          onOpenAccount={(a) => setViewingAccountDetail(a)}
+        />
+      )}
+      {tab === 'categories' && <CategoriesScreen categories={categories} onBack={() => setTab('more')} onChanged={reload} />}
+      {tab === 'import' && (
+        <StatementImport
+          categories={categories}
+          existingTransactions={transactions}
+          onBack={() => { setPendingImportFiles(null); setTab(returnTab) }}
+          onImported={reload}
+          initialFiles={pendingImportFiles}
+          accounts={accounts}
+        />
+      )}
+      {tab === 'budgetplanner' && <TotalBudgetPlanner categories={categories} transactions={transactions} accounts={accounts} onBack={() => setTab('more')} onChanged={reload} />}
+      {tab === 'autobackups' && <AutoBackups onBack={() => setTab('more')} onRestored={async () => { await catchUpDueItems(); await reload() }} />}
+      {tab === 'categorybreakdown' && (
+        <CategoryBreakdownByMonth
+          categories={categories}
+          transactions={transactions}
+          onBack={() => setTab(returnTab)}
+          onOpenPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
+        />
+      )}
+      {tab === 'monthlyrecap' && (
+        <MonthlyRecapPage
+          categories={categories}
+          transactions={transactions}
+          accounts={accounts}
+          onBack={() => setTab(returnTab)}
+          onSaveTransaction={handleSaveTransaction}
+          onDeleteTransaction={handleDeleteTransaction}
+          onOpenCategoryPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
+          initialMonthOffset={returnTab === 'dashboard' ? 0 : -1}
+          onChanged={reload}
+        />
+      )}
+
+      {(tab === 'recurring' || tab === 'shopping' || tab === 'duplicates' || tab === 'health') && (
+        <div className="floating-back-button" style={{ position: 'fixed', bottom: 100, right: 20, maxWidth: 560, margin: '0 auto' }}>
+          <button className="round-icon-button" style={{ background: 'var(--surface-3)' }} onClick={() => setTab('more')}>‹</button>
+        </div>
+      )}
+        </>
+      )}
+
+      <nav className="tab-bar">
+        <button className={`tab-button ${tab === 'dashboard' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('dashboard') }}>
+          <DashboardIcon active={tab === 'dashboard' && !anyOverlay} />
+          Dashboard
+        </button>
+        <button className={`tab-button ${tab === 'transactions' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setPendingTransactionsSearch(null); setTab('transactions') }}>
+          <ListIcon active={tab === 'transactions' && !anyOverlay} />
+          Transactions
+        </button>
+        <button className={`tab-button ${tab === 'budgets' && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('budgets') }}>
+          <TargetIcon active={tab === 'budgets' && !anyOverlay} />
+          Budgets
+        </button>
+        <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setViewingAccountDetail(null); setTab('more') }}>
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags', 'accounts', 'installments'].includes(tab) && !anyOverlay} />
+          More
+        </button>
+      </nav>
+
+      {cyclePrompt && (
+        <div className="modal-backdrop" onClick={() => setCyclePrompt(null)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Adjust This Cycle?</span>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>
+                This income landed on <strong>{cyclePrompt.txDateLabel}</strong>, not {cyclePrompt.predictedLabel} where your budget cycle currently expects it to start. Start this cycle from {cyclePrompt.txDateLabel} instead?
+              </p>
+              <p className="hint" style={{ marginBottom: 16 }}>
+                This only adjusts this one cycle — next cycle goes back to predicting automatically.
+              </p>
+              <button
+                onClick={confirmCycleCorrection}
+                style={{ width: '100%', padding: '12px', borderRadius: 10, background: 'var(--blue)', color: '#fff', fontWeight: 600, marginBottom: 8 }}
+              >
+                Yes, start from {cyclePrompt.txDateLabel}
+              </button>
+              <button onClick={() => setCyclePrompt(null)} className="text-button" style={{ width: '100%', padding: '12px', textAlign: 'center' }}>
+                No, keep the prediction
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
