@@ -190,6 +190,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
       <span className="section-heading">Tools</span>
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 16 }}>
         {[
+          { tab: 'insights', icon: '💡', label: 'Insights' },
           { tab: 'import', icon: '📷', label: 'Import Statement (Photo)' },
           { tab: 'monthlyrecap', icon: '📅', label: 'Month in Review' },
           { tab: 'budgetplanner', icon: '🧮', label: 'Total Budget Planner' },

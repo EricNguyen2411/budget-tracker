@@ -22,6 +22,7 @@ import DuplicateCheck from './pages/DuplicateCheck'
 import HealthCheck from './pages/HealthCheck'
 import CategoryDetail from './pages/CategoryDetail'
 import CategoryTrendPage from './pages/CategoryTrendPage'
+import Insights from './pages/Insights'
 import CustomRangeReport from './pages/CustomRangeReport'
 import MerchantRules from './pages/MerchantRules'
 import TypedTransactions, { type StatKind } from './pages/TypedTransactions'
@@ -38,7 +39,7 @@ import AccountsScreen from './pages/AccountsScreen'
 import AccountDetail from './pages/AccountDetail'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts' | 'installments'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts' | 'installments' | 'insights'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -356,6 +357,7 @@ export default function App() {
       )}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} accounts={accounts} />}
       {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
+      {tab === 'insights' && <Insights categories={categories} transactions={transactions} accounts={accounts} recurring={recurring} onBack={() => setTab('more')} />}
       {tab === 'tags' && (
         <TagsScreen
           categories={categories}
