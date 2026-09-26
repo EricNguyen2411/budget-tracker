@@ -5,7 +5,7 @@ import {
   getRecurring, saveRecurring, getShoppingLists, performAutoBackupIfNeeded, syncReimbursementCategoriesOnce,
   getAccounts, getInstallmentPlans, saveInstallmentPlan, recordNetWorthSnapshot, createTransfer
 } from './db'
-import { processDueRecurring } from './recurring'
+import { processDueRecurring, addInterval } from './recurring'
 import { processDueInstallments } from './installments'
 import { getSettings, isCustomCycle, getCycleConfig, predictedCycleFor, setCycleOverride } from './budgetPeriod'
 import { localDateInputValue, findTransferPair, findFundingPair, netWorthTotal, formatCurrency } from './calculations'
@@ -173,8 +173,35 @@ export default function App() {
     for (const [accountId, amountStr] of paydaySplitPrompt.amounts.entries()) {
       const amount = parseFloat(amountStr)
       if (!amount || amount <= 0) continue
-      await createTransfer({ fromAccountId: paydaySplitPrompt.sourceAccountId, toAccountId: accountId, amount, date: paydaySplitPrompt.sourceDate })
+      // Confirmed via direct testing this needed to be explicit, not
+      // left to createTransfer's own default note ("Transfer from
+      // [source]"): the new savings reserve (see
+      // monthlyEquivalentRecurringSavingsContributions) recognizes a
+      // planned contribution as fulfilled by matching a real
+      // transaction's note against the recurring item's own note — a
+      // generic transfer note never matches that, so the reserve kept
+      // counting the full amount as still-pending even after this real
+      // transfer already moved it, double-counting the same $400 twice
+      // in Safe to Spend. Reusing the matching recurring item's exact
+      // note here, when one exists for this destination, is what makes
+      // the two features actually recognize each other.
+      const matchingRecurringItem = recurring.find((r) => r.isActive && !r.isExpense && r.accountId === accountId)
+      await createTransfer({ fromAccountId: paydaySplitPrompt.sourceAccountId, toAccountId: accountId, amount, date: paydaySplitPrompt.sourceDate, note: matchingRecurringItem?.note })
       recordPaydayAmount(accountId, amount)
+      // Advances the recurring item's own schedule forward too, the
+      // same one step processDueRecurring itself would take — without
+      // this, the recurring item stays due at its old date, genuinely
+      // unaware this cycle's contribution just happened manually, and
+      // would generate a second, real, duplicate transaction into the
+      // same account the next time the app catches up on due items.
+      // Reuses processDueRecurring's own date-advancement logic
+      // (addInterval) rather than a second, separately-written version
+      // of the same rule that could quietly disagree with it.
+      if (matchingRecurringItem) {
+        const anchorDay = matchingRecurringItem.anchorDay ?? new Date(matchingRecurringItem.nextDueDate).getDate()
+        const advanced = addInterval(new Date(matchingRecurringItem.nextDueDate), matchingRecurringItem.frequency, anchorDay)
+        await saveRecurring({ ...matchingRecurringItem, nextDueDate: advanced.toISOString(), anchorDay })
+      }
     }
     setPaydaySplitPrompt(null)
     await reload()

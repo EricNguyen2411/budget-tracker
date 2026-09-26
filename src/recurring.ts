@@ -73,7 +73,7 @@ function addMonthsToAnchor(date: Date, months: number, anchorDay: number): Date 
   return new Date(targetYear, targetMonth, day, date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds())
 }
 
-function addInterval(date: Date, frequency: RecurrenceFrequency, anchorDay: number = date.getDate()): Date {
+export function addInterval(date: Date, frequency: RecurrenceFrequency, anchorDay: number = date.getDate()): Date {
   if (frequency === 'weekly') { const d = new Date(date); d.setDate(d.getDate() + 7); return d }
   if (frequency === 'monthly') return addMonthsToAnchor(date, 1, anchorDay)
   if (frequency === 'yearly') return addMonthsToAnchor(date, 12, anchorDay)
