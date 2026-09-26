@@ -346,6 +346,48 @@ export function monthlyEquivalentRecurringExpenses(recurring: RecurringTransacti
     }, 0)
 }
 
+/** The savings-side counterpart to monthlyEquivalentRecurringExpenses —
+ * confirmed directly this gap was real and asymmetric: a recurring
+ * BILL that hasn't been paid yet already reduces Safe to Spend
+ * pre-emptively (the whole point of that reserve), but a recurring
+ * INCOME-direction item feeding a savings account got no such
+ * treatment — Safe to Spend only reflected it once the real transfer
+ * actually posted, making money someone had already committed to
+ * moving look fully available to spend until the moment it moved.
+ * Same exact structure and the same double-counting guard as the
+ * expense version (paidOccurrencesThisPeriod is already direction-
+ * agnostic, so it's reused as-is rather than duplicated): once the
+ * real contribution posts this period, the reserve drops to 0 and the
+ * real transaction's own effect on the account balance is what counts
+ * instead, never both. Scoped to items actually pointed at a savings
+ * account — a recurring income item aimed at an ordinary bank account
+ * is just regular income, not a planned contribution to set aside. */
+export function monthlyEquivalentRecurringSavingsContributions(recurring: RecurringTransaction[], accounts: Account[], transactions: Transaction[] = [], referenceDate: Date = new Date()): number {
+  return recurring
+    .filter((r) => {
+      if (!r.isActive || r.isExpense || !r.accountId) return false
+      const account = accounts.find((a) => a.id === r.accountId)
+      return !!account && isSavingsAccount(account)
+    })
+    .reduce((sum, r) => {
+      if (r.frequency === 'monthly') {
+        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
+        return paid > 0 ? sum : sum + r.amount
+      }
+      if (r.frequency === 'yearly') {
+        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
+        return paid > 0 ? sum : sum + r.amount / 12
+      }
+      if (r.frequency === 'weekly') {
+        const fullReserve = (r.amount * 52) / 12
+        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
+        const alreadyCovered = Math.min(fullReserve, paid * r.amount)
+        return sum + Math.max(0, fullReserve - alreadyCovered)
+      }
+      return sum
+    }, 0)
+}
+
 export function computeDashboardTotals(categories: Category[], transactions: Transaction[], referenceDate: Date, recurring: RecurringTransaction[] = [], accounts: Account[] = []): DashboardTotals {
   const topLevel = categories.filter((c) => !c.parentId)
   const thisMonth = transactions.filter((t) => isInSamePeriod(new Date(t.date), referenceDate))
@@ -357,7 +399,14 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
   const spent = topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
 
   const goalAccounts = accounts.filter((a) => isSavingsAccount(a))
-  const saved = goalAccounts.reduce((sum, a) => sum + Math.max(0, goalAccountChangeInPeriod(a, transactions, referenceDate)), 0)
+  const actualSavedThisPeriod = goalAccounts.reduce((sum, a) => sum + Math.max(0, goalAccountChangeInPeriod(a, transactions, referenceDate)), 0)
+  // Reserves for a committed contribution that hasn't actually landed
+  // yet this period, the same way the bills reserve below reserves for
+  // an unpaid bill — without this, money already earmarked via an
+  // active recurring item looked fully spendable right up until the
+  // moment it actually moved.
+  const committedSavingsReserve = monthlyEquivalentRecurringSavingsContributions(recurring, accounts, transactions, referenceDate)
+  const saved = actualSavedThisPeriod + committedSavingsReserve
 
   const unlinkedIncome = thisMonth.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
   const excessFromLinked = thisMonth
