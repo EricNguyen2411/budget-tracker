@@ -378,15 +378,18 @@ function AccountEditorModal({ account, onClose, onSaved }: { account: Account | 
   const [type, setType] = useState<AccountType>(account?.type ?? 'bank')
   const [openingBalance, setOpeningBalance] = useState(account ? String(account.openingBalance) : '')
   const [interestRate, setInterestRate] = useState(account?.interestRate ? String(account.interestRate) : '')
+  const [monthlyContribution, setMonthlyContribution] = useState(account?.monthlyContribution ? String(account.monthlyContribution) : '')
   const [showTypePicker, setShowTypePicker] = useState(false)
 
   async function handleSave() {
     const parsed = parseFloat(openingBalance) || 0
     const parsedRate = parseFloat(interestRate)
     const rate = interestRate.trim() && !isNaN(parsedRate) ? parsedRate : null
+    const parsedContribution = parseFloat(monthlyContribution)
+    const contribution = monthlyContribution.trim() && !isNaN(parsedContribution) ? parsedContribution : undefined
     if (!name.trim()) return
     if (account) {
-      await saveAccount({ ...account, name: name.trim(), type, interestRate: rate })
+      await saveAccount({ ...account, name: name.trim(), type, interestRate: rate, monthlyContribution: contribution })
     } else {
       await createAccount({
         name: name.trim(),
@@ -397,7 +400,8 @@ function AccountEditorModal({ account, onClose, onSaved }: { account: Account | 
         openingDate: new Date().toISOString(),
         sortOrder: 999,
         isArchived: false,
-        interestRate: rate
+        interestRate: rate,
+        monthlyContribution: contribution
       })
     }
     onSaved()
@@ -435,6 +439,16 @@ function AccountEditorModal({ account, onClose, onSaved }: { account: Account | 
               <input type="number" inputMode="decimal" placeholder="0.00" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} className="amount-input" />
               <p className="hint" style={{ marginTop: 6 }}>
                 What your bank app shows right now — everything is calculated forward from this starting point.
+              </p>
+            </>
+          )}
+
+          {type === 'savings' && (
+            <>
+              <label className="field-label" style={{ marginTop: 16 }}>Monthly Contribution (optional)</label>
+              <input type="number" inputMode="decimal" placeholder="e.g. 400" value={monthlyContribution} onChange={(e) => setMonthlyContribution(e.target.value)} className="amount-input" />
+              <p className="hint" style={{ marginTop: 6 }}>
+                Shows as its own line in Total Budget, the same way a category's budget does — independent of any target amount, so an open-ended savings pool can still have a real monthly plan.
               </p>
             </>
           )}

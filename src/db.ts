@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
-import type { Category, Transaction, RecurringTransaction, ShoppingList, Account, InstallmentPlan, TransactionAllocation } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, Account, InstallmentPlan, TransactionAllocation, NetWorthSnapshot } from './types'
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
@@ -22,13 +22,14 @@ interface BudgetDB extends DBSchema {
   autoBackups: { key: string; value: AutoBackupEntry }
   accounts: { key: string; value: Account }
   installmentPlans: { key: string; value: InstallmentPlan }
+  netWorthSnapshots: { key: string; value: NetWorthSnapshot }
 }
 
 let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 10, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 11, {
       async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -173,6 +174,9 @@ function getDB() {
           // for anyone who already went through the v9 migration before
           // this fix existed.
           await migrateOrphanedCategoryReferences(transaction)
+        }
+        if (oldVersion < 11) {
+          db.createObjectStore('netWorthSnapshots', { keyPath: 'date' })
         }
       }
     })
@@ -686,6 +690,27 @@ export async function getAccounts(): Promise<Account[]> {
   return all.filter((a) => !a.isArchived).sort((a, b) => a.sortOrder - b.sortOrder)
 }
 
+/** Records today's net worth once — called on app open, not on every
+ * render, since it only needs to exist once per calendar day for a
+ * trend to be meaningful. Overwrites the same day's existing entry
+ * rather than skipping if one exists, so opening the app again later
+ * the same day after adding more transactions reflects the day's most
+ * up-to-date figure rather than freezing at whatever it was this
+ * morning. */
+export async function recordNetWorthSnapshot(netWorth: number, referenceDate: Date = new Date()): Promise<void> {
+  const db = await getDB()
+  const y = referenceDate.getFullYear()
+  const m = String(referenceDate.getMonth() + 1).padStart(2, '0')
+  const d = String(referenceDate.getDate()).padStart(2, '0')
+  await db.put('netWorthSnapshots', { date: `${y}-${m}-${d}`, netWorth })
+}
+
+export async function getNetWorthSnapshots(): Promise<NetWorthSnapshot[]> {
+  const db = await getDB()
+  const all = await db.getAll('netWorthSnapshots')
+  return all.sort((a, b) => a.date.localeCompare(b.date))
+}
+
 export async function getAllAccountsIncludingArchived(): Promise<Account[]> {
   const db = await getDB()
   const all = await db.getAll('accounts')
@@ -1041,7 +1066,8 @@ const BACKED_UP_LOCAL_STORAGE_KEYS = [
   'budget-tracker-dashboard-widgets', // hidden dashboard widgets
   'budget-tracker-dashboard-widget-order', // dashboard widget ordering
   'budget-tracker-import-account-mapping', // which account NAB/Westpac/Beem imports default to
-  'budget-tracker-reimbursement-contacts' // recently-used reimbursement note quick-picks
+  'budget-tracker-reimbursement-contacts', // recently-used reimbursement note quick-picks
+  'budget-tracker-payday-targets' // payday routine — which accounts to offer transferring to, and how much last time
 ]
 
 function collectLocalSettings(): Record<string, string> {

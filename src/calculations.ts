@@ -1189,6 +1189,25 @@ export function accountBalance(account: Account, transactions: Transaction[]): n
  * for the benefit of a feature that doesn't need that function touched
  * at all. Same underlying logic, applied with an inclusive upper bound
  * instead of none. */
+
+/** All accounts combined into one figure — credit card balances
+ * subtracted rather than added, since accountBalance deliberately
+ * returns a credit card's balance as a positive "amount owed" (see its
+ * own comments), correct for that account's own page but silently
+ * wrong here if just summed in directly. The single shared source for
+ * this: Dashboard's own net-worth line and the Insights screen's net
+ * worth answer both build on this rather than each computing it
+ * themselves, after finding they'd drifted into two separately
+ * hand-written copies of the same formula. */
+export function netWorthTotal(accounts: Account[], transactions: Transaction[]): number {
+  let total = 0
+  for (const a of accounts) {
+    const balance = accountBalance(a, transactions)
+    total += a.type === 'credit_card' ? -balance : balance
+  }
+  return total
+}
+
 export function accountBalanceAsOf(account: Account, transactions: Transaction[], asOfDate: Date): number {
   const openingMidnight = new Date(account.openingDate)
   openingMidnight.setHours(0, 0, 0, 0)

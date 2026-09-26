@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, RecurringTransaction, Account, InstallmentPlan } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements, accountBalance } from '../calculations'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements, accountBalance, netWorthTotal } from '../calculations'
+import { biggestCategoryChange } from '../insightQueries'
 import { installmentProgress } from '../installments'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
 import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
@@ -699,14 +700,23 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
                 <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Net Worth</span>
                 <span className="amount" style={{ fontSize: 14, fontWeight: 700 }}>
-                  {formatCurrency(
-                    accounts.filter((a) => a.type !== 'credit_card').reduce((sum, a) => sum + accountBalance(a, transactions), 0)
-                    - accounts.filter((a) => a.type === 'credit_card').reduce((sum, a) => sum + accountBalance(a, transactions), 0)
-                  )}
+                  {formatCurrency(netWorthTotal(accounts, transactions))}
                 </span>
               </div>
             </button>
-          )
+          ),
+
+          biggestChange: (() => {
+            const change = biggestCategoryChange(categories, transactions, now)
+            return (
+              <div className="card" style={{ marginTop: 16 }}>
+                <span className="section-heading" style={{ display: 'block', marginBottom: 8 }}>Biggest Change</span>
+                <p style={{ fontSize: 14, color: change.sentiment === 'warning' ? 'var(--red)' : change.sentiment === 'positive' ? 'var(--green)' : 'var(--text)' }}>
+                  {change.text}
+                </p>
+              </div>
+            )
+          })()
         }
 
         return getWidgetOrder()

@@ -149,6 +149,15 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
   }
 
   const totalAllocated = topLevel.reduce((sum, c) => sum + actualContribution(c.id), 0)
+  // Savings accounts with a monthly contribution set — the same real
+  // line item a savings CATEGORY's own budget used to be, restored
+  // here as its account-based equivalent. Included directly in the
+  // total this screen tracks against income, the same as every
+  // category above it, rather than shown as a separate, easy-to-miss
+  // figure off to the side.
+  const savingsAccounts = accounts.filter((a) => a.type === 'savings' && (a.monthlyContribution ?? 0) > 0)
+  const savingsContributionTotal = savingsAccounts.reduce((sum, a) => sum + (a.monthlyContribution ?? 0), 0)
+  const totalAllocatedWithSavings = totalAllocated + savingsContributionTotal
 
   /** Splits a suggested total evenly across a category's subcategories
    * as whole dollars, giving any leftover cent-of-a-dollar to the first
@@ -335,10 +344,25 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
         })}
       </div>
 
+      {savingsAccounts.length > 0 && (
+        <>
+          <span className="section-heading" style={{ marginTop: 16, display: 'block' }}>Savings Contributions</span>
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {savingsAccounts.map((a) => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
+                <span style={{ flex: 1, fontSize: 14 }}>{a.icon} {a.name}</span>
+                <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(a.monthlyContribution ?? 0)}</span>
+              </div>
+            ))}
+            <p className="hint" style={{ marginTop: 4 }}>Set on each account's own editor, not here — included in Total Allocated below.</p>
+          </div>
+        </>
+      )}
+
       <div className="card" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between' }}>
         <span style={{ fontSize: 14 }}>Total Allocated</span>
-        <span className="amount" style={{ fontWeight: 600, color: effectiveTotalBudget > 0 && totalAllocated > effectiveTotalBudget ? 'var(--red)' : 'var(--text)' }}>
-          {formatCurrency(totalAllocated)}{effectiveTotalBudget > 0 ? ` / ${formatCurrency(effectiveTotalBudget)}` : ''}
+        <span className="amount" style={{ fontWeight: 600, color: effectiveTotalBudget > 0 && totalAllocatedWithSavings > effectiveTotalBudget ? 'var(--red)' : 'var(--text)' }}>
+          {formatCurrency(totalAllocatedWithSavings)}{effectiveTotalBudget > 0 ? ` / ${formatCurrency(effectiveTotalBudget)}` : ''}
         </span>
       </div>
 

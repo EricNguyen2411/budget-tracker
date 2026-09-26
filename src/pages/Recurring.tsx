@@ -154,7 +154,7 @@ export default function RecurringPage({ categories, transactions, recurring, onC
                 nextDueDate: data.nextDueDate ?? new Date().toISOString(),
                 categoryId: data.categoryId ?? null,
                 accountId: data.accountId ?? null,
-                isExpense: true,
+                isExpense: data.isExpense ?? true,
                 isActive: true
               })
             }
@@ -176,6 +176,7 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
 }) {
   const [note, setNote] = useState(item?.note ?? '')
   const [amount, setAmount] = useState(item ? String(item.amount) : '')
+  const [isExpense, setIsExpense] = useState(item?.isExpense ?? true)
   const [frequency, setFrequency] = useState<RecurrenceFrequency>(item?.frequency ?? 'monthly')
   const [nextDueDate, setNextDueDate] = useState(localDateInputValue(item ? new Date(item.nextDueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))
   const [categoryId, setCategoryId] = useState<string | null>(item?.categoryId ?? null)
@@ -195,6 +196,7 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
     onSave({
       note: note.trim(),
       amount: parsed,
+      isExpense,
       frequency,
       nextDueDate: new Date(y, m - 1, d).toISOString(),
       // Always re-derived from whatever date is actually picked here,
@@ -202,7 +204,12 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
       // also re-anchors which day-of-month future cycles target,
       // rather than leaving a stale anchor from before the edit.
       anchorDay: d,
-      categoryId,
+      // Income doesn't get a spending category the same way an
+      // expense does elsewhere in the app (a category is "what did
+      // this cost go toward," which a paycheck doesn't have an answer
+      // to) — cleared rather than left stale if the toggle was
+      // switched to Income after a category had already been picked.
+      categoryId: isExpense ? categoryId : null,
       accountId
     })
     requestClose()
@@ -218,7 +225,12 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
         </div>
         <div className="modal-body">
           <label className="field-label">Note</label>
-          <input type="text" value={note} onChange={(e) => setNote(e.target.value)} />
+          <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder={isExpense ? 'e.g. Netflix, Rent' : 'e.g. Salary, Freelance payment'} />
+
+          <div className="segmented" style={{ marginTop: 12 }}>
+            <button className={isExpense ? 'segmented-active' : ''} onClick={() => setIsExpense(true)}>Expense</button>
+            <button className={!isExpense ? 'segmented-active' : ''} onClick={() => setIsExpense(false)}>Income</button>
+          </div>
 
           <label className="field-label">Amount</label>
           <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -233,11 +245,21 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
           <label className="field-label">Next Due Date</label>
           <input type="date" value={nextDueDate} onChange={(e) => setNextDueDate(e.target.value)} />
 
-          <label className="field-label">Category</label>
-          <button className="picker-row" onClick={() => setShowCategoryPicker(true)}>
-            <span>{category ? `${category.icon} ${category.name}` : 'None'}</span>
-            <span className="chevron">›</span>
-          </button>
+          {isExpense && (
+            <>
+              <label className="field-label">Category</label>
+              <button className="picker-row" onClick={() => setShowCategoryPicker(true)}>
+                <span>{category ? `${category.icon} ${category.name}` : 'None'}</span>
+                <span className="chevron">›</span>
+              </button>
+            </>
+          )}
+
+          {!isExpense && (
+            <p className="hint" style={{ marginTop: 6 }}>
+              Setting this up as Income — like your salary — lets Insights find your real payday automatically for the cash-flow projection, instead of estimating one from past deposits.
+            </p>
+          )}
 
           {accounts.length > 0 && (
             <>

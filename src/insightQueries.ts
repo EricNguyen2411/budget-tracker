@@ -11,7 +11,7 @@
  * they mean.
  */
 import type { Category, Transaction, Account, RecurringTransaction } from './types'
-import { computeDashboardTotals, netSpentForCategory, effectiveBudget, reimbursementBreakdown, formatCurrency, accountBalance, topMerchantsThisMonth, type MerchantTotal } from './calculations'
+import { computeDashboardTotals, netSpentForCategory, effectiveBudget, reimbursementBreakdown, formatCurrency, netWorthTotal, topMerchantsThisMonth, isUnlinkedIncome, type MerchantTotal } from './calculations'
 import { referenceDateOffsetBy } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
 
@@ -146,14 +146,84 @@ export function needsWantsSplit(categories: Category[], transactions: Transactio
  * would be silently wrong here, inflating net worth by the exact
  * amount actually owed on it. */
 export function netWorth(accounts: Account[], transactions: Transaction[]): Answer {
-  let total = 0
-  for (const a of accounts) {
-    const balance = accountBalance(a, transactions)
-    total += a.type === 'credit_card' ? -balance : balance
-  }
+  const total = netWorthTotal(accounts, transactions)
   return {
     text: `Net worth across all accounts: ${formatCurrency(total)}.`,
     sentiment: total >= 0 ? 'positive' : 'warning'
+  }
+}
+
+export interface CashFlowProjection {
+  daysUntilPayday: number
+  perDayAmount: number
+  source: 'known' | 'estimated'
+  paydayDate: string
+}
+
+/** "Will I make it to payday" — deliberately conservative about how it
+ * finds the next payday, since a confidently-wrong date here is worse
+ * than not showing this at all. Prefers a real, explicitly-configured
+ * recurring income item (something the person themselves set up and
+ * therefore actually knows the date of) over guessing from history.
+ * Only falls back to inferring a pattern from past unlinked income
+ * transactions — averaging the gaps between them, projecting one more
+ * gap forward — when no such recurring item exists, and always labels
+ * which one it used, since an estimate should never be presented with
+ * the same confidence as a real, known date. Returns null rather than
+ * a guess when there's truly nothing to go on (fewer than 2 historical
+ * income transactions and no recurring income item) — an estimate from
+ * one data point isn't a pattern, it's a coincidence. */
+export function cashFlowProjection(categories: Category[], transactions: Transaction[], accounts: Account[], recurring: RecurringTransaction[], referenceDate: Date): CashFlowProjection | null {
+  const dash = computeDashboardTotals(categories, transactions, referenceDate, recurring, accounts)
+  const safeToSpend = Math.max(0, dash.safeToSpend)
+
+  const knownIncome = recurring.find((r) => r.isActive && !r.isExpense)
+  if (knownIncome) {
+    const paydayDate = new Date(knownIncome.nextDueDate)
+    const days = Math.max(1, Math.ceil((paydayDate.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24)))
+    return { daysUntilPayday: days, perDayAmount: safeToSpend / days, source: 'known', paydayDate: knownIncome.nextDueDate }
+  }
+
+  const incomeHistory = transactions
+    .filter((t) => isUnlinkedIncome(t) && t.amount > 0)
+    .sort((a, b) => a.date.localeCompare(b.date))
+  if (incomeHistory.length < 2) return null
+
+  const gaps: number[] = []
+  for (let i = 1; i < incomeHistory.length; i++) {
+    const gapDays = (new Date(incomeHistory[i].date).getTime() - new Date(incomeHistory[i - 1].date).getTime()) / (1000 * 60 * 60 * 24)
+    if (gapDays > 0) gaps.push(gapDays)
+  }
+  if (gaps.length === 0) return null
+  const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length
+
+  const lastIncomeDate = new Date(incomeHistory[incomeHistory.length - 1].date)
+  // Projects forward by the average gap repeatedly, not just once —
+  // confirmed via direct testing this was a real edge case: if the
+  // most recent recorded income is old enough that one gap lands
+  // before referenceDate (income hasn't been logged in a while, say),
+  // a single-step projection would land in the past, and clamping the
+  // day count to a minimum of 1 then made it look like payday was
+  // "tomorrow" when it had actually already passed — misleading in
+  // exactly the way an estimate can't afford to be.
+  let projectedPayday = new Date(lastIncomeDate.getTime() + avgGap * 24 * 60 * 60 * 1000)
+  let safety = 0
+  while (projectedPayday.getTime() <= referenceDate.getTime() && safety < 1000) {
+    projectedPayday = new Date(projectedPayday.getTime() + avgGap * 24 * 60 * 60 * 1000)
+    safety++
+  }
+  const days = Math.max(1, Math.ceil((projectedPayday.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24)))
+  return { daysUntilPayday: days, perDayAmount: safeToSpend / days, source: 'estimated', paydayDate: projectedPayday.toISOString() }
+}
+
+export function cashFlowAnswer(categories: Category[], transactions: Transaction[], accounts: Account[], recurring: RecurringTransaction[], referenceDate: Date): Answer | null {
+  const projection = cashFlowProjection(categories, transactions, accounts, recurring, referenceDate)
+  if (!projection) return null
+  const dateLabel = new Date(projection.paydayDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
+  const sourceNote = projection.source === 'estimated' ? ' (estimated from your past income pattern)' : ''
+  return {
+    text: `${formatCurrency(projection.perDayAmount)}/day safe to spend until your next payday (${dateLabel}, ${projection.daysUntilPayday} day${projection.daysUntilPayday === 1 ? '' : 's'} away)${sourceNote}.`,
+    sentiment: projection.perDayAmount > 0 ? 'neutral' : 'warning'
   }
 }
 
@@ -192,4 +262,82 @@ export function subscriptionCreep(recurring: RecurringTransaction[], transaction
     results.push({ recurringNote: r.note, previousAmount: mostRecent.amount, currentAmount: r.amount })
   }
   return results
+}
+
+/** Weekday vs weekend, over the last 30 days rather than the current
+ * budget period — a period can be as short as a few days right after
+ * it starts, which isn't enough of either bucket to say anything
+ * meaningful; a rolling 30-day window always has a real sample of
+ * both. */
+export function weekdayWeekendSplit(transactions: Transaction[], referenceDate: Date): Answer {
+  const cutoff = new Date(referenceDate.getTime() - 30 * 24 * 60 * 60 * 1000)
+  const recent = transactions.filter((t) => t.isExpense && t.categoryId && new Date(t.date) >= cutoff && new Date(t.date) <= referenceDate)
+  let weekday = 0
+  let weekdayDays = new Set<string>()
+  let weekend = 0
+  let weekendDays = new Set<string>()
+  for (const t of recent) {
+    const d = new Date(t.date)
+    const dayKey = d.toDateString()
+    const isWeekend = d.getDay() === 0 || d.getDay() === 6
+    if (isWeekend) { weekend += t.amount; weekendDays.add(dayKey) } else { weekday += t.amount; weekdayDays.add(dayKey) }
+  }
+  if (weekday === 0 && weekend === 0) return { text: 'Not enough spending in the last 30 days to compare weekdays and weekends.', sentiment: 'neutral' }
+
+  const perWeekdayDay = weekdayDays.size > 0 ? weekday / weekdayDays.size : 0
+  const perWeekendDay = weekendDays.size > 0 ? weekend / weekendDays.size : 0
+  if (perWeekdayDay === 0 || perWeekendDay === 0) {
+    return { text: `Last 30 days: ${formatCurrency(weekday)} on weekdays, ${formatCurrency(weekend)} on weekends.`, sentiment: 'neutral' }
+  }
+  const higher = perWeekendDay > perWeekdayDay ? 'weekends' : 'weekdays'
+  const ratio = Math.max(perWeekdayDay, perWeekendDay) / Math.min(perWeekdayDay, perWeekendDay)
+  return {
+    text: `You spend ${ratio.toFixed(1)}x more per day on ${higher} — ${formatCurrency(perWeekendDay)}/day on weekends vs ${formatCurrency(perWeekdayDay)}/day on weekdays, over the last 30 days.`,
+    sentiment: 'neutral'
+  }
+}
+
+export interface MerchantCreepItem {
+  merchant: string
+  recentAvg: number
+  earlierAvg: number
+}
+
+/** The non-recurring counterpart to subscriptionCreep — a merchant you
+ * pay irregularly (no fixed schedule, so it can't be caught by
+ * comparing against a configured recurring amount) whose typical
+ * transaction size has crept up over the last three periods compared
+ * to the three before that. Deliberately requires at least 2
+ * transactions in EACH window before comparing — one expensive trip to
+ * a normally-cheap place is a coincidence, not a trend, and comparing
+ * single transactions would flag ordinary variation constantly. Also
+ * requires a real, meaningful rise (over 20%) before flagging, so
+ * everyday price noise doesn't read as "creep." */
+export function merchantSpendingCreep(transactions: Transaction[], referenceDate: Date): MerchantCreepItem[] {
+  const recentStart = new Date(referenceDate.getTime() - 90 * 24 * 60 * 60 * 1000)
+  const earlierStart = new Date(referenceDate.getTime() - 180 * 24 * 60 * 60 * 1000)
+
+  const byMerchant = new Map<string, { recent: number[]; earlier: number[] }>()
+  for (const t of transactions) {
+    if (!t.isExpense || !t.note.trim()) continue
+    const date = new Date(t.date)
+    if (date > referenceDate || date < earlierStart) continue
+    const key = t.note.trim().toLowerCase()
+    const entry = byMerchant.get(key) ?? { recent: [], earlier: [] }
+    if (date >= recentStart) entry.recent.push(t.amount)
+    else entry.earlier.push(t.amount)
+    byMerchant.set(key, entry)
+  }
+
+  const results: MerchantCreepItem[] = []
+  for (const [merchant, { recent, earlier }] of byMerchant.entries()) {
+    if (recent.length < 2 || earlier.length < 2) continue
+    const recentAvg = recent.reduce((s, a) => s + a, 0) / recent.length
+    const earlierAvg = earlier.reduce((s, a) => s + a, 0) / earlier.length
+    if (earlierAvg <= 0) continue
+    if ((recentAvg - earlierAvg) / earlierAvg > 0.2) {
+      results.push({ merchant, recentAvg, earlierAvg })
+    }
+  }
+  return results.sort((a, b) => (b.recentAvg - b.earlierAvg) - (a.recentAvg - a.earlierAvg))
 }

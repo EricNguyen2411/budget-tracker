@@ -95,6 +95,18 @@ export interface Account {
   goalTargetDate?: string | null // ISO date
   goalStartDate?: string | null // progress counts contributions from here forward, not the account's entire history — lets a goal restart cleanly without needing a whole new account
   goalRecurring?: boolean // for annual expenses (insurance, registration) — once reached, offers a one-tap renewal into next year's cycle rather than staying a one-time target
+  // A separate, explicit number from the pace-based projection that
+  // goalTargetAmount/goalTargetDate already produce — that projection
+  // answers "at this rate, when will I hit the target," useful but not
+  // the same question as "how much do I intend to budget toward this
+  // every month," which needs its own real line in Total Budget the
+  // same way a category's monthlyBudget already does. Categories lost
+  // this exact line when savings moved from being a category to being
+  // an account; this is what puts it back. Independent of whether a
+  // target is even set — an open-ended savings pool can still have a
+  // real monthly contribution plan without needing a target amount to
+  // derive one from.
+  monthlyContribution?: number
 }
 
 export type RecurrenceFrequency = 'weekly' | 'monthly' | 'yearly'
@@ -150,6 +162,11 @@ export interface AppSettings {
   budgetCycleStartDay: number // 1-28, meaningful only when budgetCycleMode is 'fixedDay'; 1 = calendar month
   dismissedRecurringSuggestions: string[]
   lastOpenedAt: string | null
+}
+
+export interface NetWorthSnapshot {
+  date: string // YYYY-MM-DD, one entry per calendar day — a later snapshot the same day overwrites rather than accumulating
+  netWorth: number
 }
 
 export const DEFAULT_CATEGORIES: Omit<Category, 'id'>[] = [

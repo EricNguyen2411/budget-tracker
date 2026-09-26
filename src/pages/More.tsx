@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
 import { exportBackup, importBackup, exportCSV, recordManualBackup, daysSinceLastManualBackup } from '../db'
 import { getSettings, updateSettings, isCustomCycle, getCycleOverrides, clearCycleOverride, type CycleMode } from '../budgetPeriod'
+import { getPaydayTargets, addPaydayTarget, removePaydayTarget } from '../paydayRoutine'
+import { formatCurrency } from '../calculations'
 import DashboardSettings from './DashboardSettings'
 
 function ordinal(n: number): string {
@@ -22,6 +24,8 @@ export default function More({ categories, transactions, onCategoriesChanged, on
   const [status, setStatus] = useState<string | null>(null)
   const [settings, setSettings] = useState(getSettings())
   const [overrides, setOverrides] = useState(getCycleOverrides())
+  const [paydayTargets, setPaydayTargets] = useState(getPaydayTargets())
+  const [showAddPaydayTarget, setShowAddPaydayTarget] = useState(false)
   const [showDashboardSettings, setShowDashboardSettings] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
@@ -184,6 +188,50 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           </div>
           <p className="hint" style={{ marginTop: -8, marginBottom: 16 }}>Confirmed from a payslip that landed on a different date than predicted — each only affects its own cycle. Remove one to go back to the automatic prediction for that month.</p>
         </>
+      )}
+
+      <span className="section-heading">Payday Routine</span>
+      <div className="card" style={{ marginBottom: 16 }}>
+        {paydayTargets.length === 0 && (
+          <p className="hint" style={{ margin: 0 }}>Not set up yet — add an account below, and logging a payslip will offer to transfer money there right away, remembering the amount from last time.</p>
+        )}
+        {paydayTargets.map((t) => {
+          const account = accounts.find((a) => a.id === t.accountId)
+          if (!account) return null
+          return (
+            <div key={t.accountId} className="transaction-row" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+              <div className="tx-info">
+                <span className="tx-note">{account.icon} {account.name}</span>
+                {t.lastAmount > 0 && <span className="tx-category">Last time: {formatCurrency(t.lastAmount)}</span>}
+              </div>
+              <button onClick={() => { removePaydayTarget(t.accountId); setPaydayTargets(getPaydayTargets()) }} style={{ color: 'var(--red)', fontSize: 12 }}>Remove</button>
+            </div>
+          )
+        })}
+        {accounts.filter((a) => !paydayTargets.some((t) => t.accountId === a.id)).length > 0 && (
+          <button className="list-button" style={{ marginTop: paydayTargets.length > 0 ? 8 : 0, color: 'var(--blue)', fontSize: 13 }} onClick={() => setShowAddPaydayTarget(true)}>
+            + Add an account
+          </button>
+        )}
+        <p className="hint" style={{ marginTop: 8, marginBottom: 0 }}>Works alongside Custom budget cycle above, but doesn't need it — this only needs a payslip transaction over the same threshold that triggers cycle corrections.</p>
+      </div>
+
+      {showAddPaydayTarget && (
+        <div className="modal-backdrop" onClick={() => setShowAddPaydayTarget(false)}>
+          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Add Payday Target</span>
+              <button onClick={() => setShowAddPaydayTarget(false)} className="text-button text-button-primary">Done</button>
+            </div>
+            <div className="modal-body">
+              {accounts.filter((a) => !paydayTargets.some((t) => t.accountId === a.id)).map((a) => (
+                <button key={a.id} className="picker-row" onClick={() => { addPaydayTarget(a.id); setPaydayTargets(getPaydayTargets()); setShowAddPaydayTarget(false) }}>
+                  <span>{a.icon} {a.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Tools — things you actively do or analyze */}
