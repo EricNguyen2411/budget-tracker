@@ -8,15 +8,49 @@
  */
 
 import type { Category } from './types'
+import { STOP_WORDS } from './duplicates'
 
 export function normalizeMerchantKey(note: string): string {
   let key = note.toLowerCase().trim()
   key = key.replace(/^eftpos\s+/, '')
+  // Merged into the word, not split on — consistent with
+  // significantTokens' own "Hi-Fi" -> "hifi" handling in duplicates.ts,
+  // for the same reason: splitting "JB Hi-Fi" on its hyphen leaves
+  // fragments too short to be useful on their own.
+  key = key.replace(/[-']/g, '')
   key = key.replace(/\b\d+\b/g, ' ') // strip pure digit sequences (reference numbers)
   key = key.replace(/[^a-z\s]/g, ' ') // strip punctuation/backslashes/hex fragments
   key = key.replace(/\s+/g, ' ').trim()
-  const words = key.split(' ').filter(Boolean).slice(0, 3)
-  return words.join(' ')
+  const words = key.split(' ').filter((w) => w.length >= 3 && !STOP_WORDS.has(w))
+  if (words.length === 0) return ''
+  return reduceToIdentityWords(words)
+}
+
+/** A sufficiently long first word is almost always the chain/brand
+ * itself (mcdonalds, woolworths, bunnings) with everything after it a
+ * location or branch qualifier that shouldn't be part of the learned
+ * identity — confirmed this was a real, significant gap: without this,
+ * "MCDONALDS SYDNEY" and "MCDONALDS PARRAMATTA" normalized to two
+ * completely different keys, so categorizing a purchase at one taught
+ * the app nothing about the other, defeating the entire point of
+ * "learn this merchant" for exactly the kind of multi-location chain
+ * it matters most for. A short first word is more likely ambiguous
+ * alone — "bank" from "Bank of Queensland" vs "Bank of Melbourne" —
+ * so a second significant word is kept for those instead, to avoid
+ * merging genuinely different businesses together. Deliberately a
+ * standalone, pure function of already-filtered words (not folded
+ * into normalizeMerchantKey's body) so the migration below can apply
+ * this exact same rule to an old stored key's own words, without
+ * needing the original note text that produced it. */
+function reduceToIdentityWords(words: string[]): string {
+  // 5, not 6 — confirmed against a real backup this mattered concretely:
+  // "coles" is exactly 5 characters, a major and entirely unambiguous
+  // AU grocery chain, and sat just under the original threshold, so
+  // "Coles Fairfield" and "Coles Burwood" would still have normalized
+  // to two different keys. "bank"/"shop" (4) still correctly fall back
+  // to keeping a second word.
+  if (words[0].length >= 5) return words[0]
+  return words.slice(0, 2).join(' ')
 }
 
 const MERCHANT_RULES_KEY = 'budget-tracker-merchant-rules'
@@ -35,10 +69,47 @@ function readRules(): MerchantRule[] {
     // Migrate any rule saved before frequency-counting existed — treat
     // its single prior categoryId as one observed count, rather than
     // discarding it.
-    return parsed.map((r) => r.counts ? r : { ...r, counts: { [r.categoryId]: 1 } })
+    const withCounts = parsed.map((r) => r.counts ? r : { ...r, counts: { [r.categoryId]: 1 } })
+    return migrateToIdentityKeys(withCounts)
   } catch {
     return []
   }
+}
+
+/** Re-keys every rule stored under the OLD up-to-3-raw-words scheme
+ * (from before reduceToIdentityWords existed) onto the new, shorter
+ * identity key — and merges counts together wherever that collapses
+ * several old per-location rules into one, rather than letting
+ * whichever happens to be read last silently win. The old key is
+ * already lowercase, alpha-only, space-separated words (the same
+ * cleanup normalizeMerchantKey always did), so reduceToIdentityWords
+ * can be applied straight to its own words without needing the
+ * original note text, which was never stored. Safe to run on every
+ * read, not just once: applying this same reduction to an
+ * already-migrated key reliably produces that identical key back, so
+ * there's no risk of a second pass doing anything beyond confirming
+ * nothing changed. */
+function migrateToIdentityKeys(rules: MerchantRule[]): MerchantRule[] {
+  const byKey = new Map<string, MerchantRule>()
+  let changed = false
+  for (const rule of rules) {
+    const words = rule.key.split(' ').filter(Boolean)
+    const newKey = words.length > 0 ? reduceToIdentityWords(words) : rule.key
+    if (newKey !== rule.key) changed = true
+    const existing = byKey.get(newKey)
+    if (existing) {
+      for (const [categoryId, count] of Object.entries(rule.counts)) {
+        existing.counts[categoryId] = (existing.counts[categoryId] ?? 0) + count
+      }
+      existing.categoryId = topCategory(existing.counts)
+      changed = true
+    } else {
+      byKey.set(newKey, { ...rule, key: newKey })
+    }
+  }
+  const result = [...byKey.values()]
+  if (changed) writeRules(result)
+  return result
 }
 
 function writeRules(rules: MerchantRule[]) {
@@ -121,7 +192,13 @@ function editDistance(a: string, b: string, max: number): number {
 const SEED_RULES: { pattern: RegExp; categoryName: string }[] = [
   { pattern: /\b(woolworths|coles|aldi|iga\b|foodland|harris farm|farmers market)\b/i, categoryName: 'Groceries' },
   { pattern: /\b(mcdonalds|kfc|hungry jacks|subway|uber\s*eats|menulog|doordash|deliveroo|guzman|grill'?d|nandos|dominos|pizza hut|starbucks|gloria jean|boost juice|zambrero)\b/i, categoryName: 'Dining Out' },
-  { pattern: /\b(uber(?!\s*eats)|opal|myki|go\s*card|translink|13cabs|didi|ola\b|bp\b|shell|caltex|ampol|linkt|e-?toll|nrma|parking)\b/i, categoryName: 'Transport' },
+  // transportnsw/transport nsw added after checking a real backup —
+  // it was the single most common merchant by far (37+ occurrences
+  // across OCR variants like "TRANSPORTFORNSW TAP SYDNEY" and
+  // "TRANSPORT NSW ETOLL") and wasn't covered at all, despite NSW
+  // being Australia's most populous state. zipby (a Sydney toll
+  // operator) was in the same real data and missing too.
+  { pattern: /\b(uber(?!\s*eats)|opal|myki|go\s*card|translink|transport\s*(for\s*)?nsw|ptv\b|transperth|adelaide\s*metro|13cabs|didi|ola\b|bp\b|shell|caltex|ampol|linkt|zipby|e-?toll|nrma|parking)\b/i, categoryName: 'Transport' },
   { pattern: /\b(agl|origin energy|energyaustralia|red energy|telstra|optus|vodafone|tpg|iinet|belong|aussie broadband|sydney water|internet|electricity)\b/i, categoryName: 'Utilities' },
   { pattern: /\b(netflix|spotify|disney\+?|stan\b|binge|amazon prime|kayo|youtube premium|apple music|hoyts|event cinemas|village cinemas)\b/i, categoryName: 'Entertainment' },
   { pattern: /\b(amazon(?!\s*prime)|ebay|kmart|target|big\s*w|jb hi-?fi|officeworks|bunnings|myer|david jones|ikea)\b/i, categoryName: 'Shopping' },
@@ -211,6 +288,30 @@ export function suggestCategoryId(note: string, categories: Category[] = []): st
 
 export function getAllMerchantRules(): MerchantRule[] {
   return readRules()
+}
+
+/** Bulk-learns from every already-categorized expense at once, rather
+ * than only ever building this up one transaction at a time going
+ * forward — directly answers "can the app just learn from everything
+ * I've already categorized" rather than needing months of new
+ * purchases to rebuild the same picture. Safe to run repeatedly (it's
+ * exactly learnMerchant, called many times), and safe to run on a
+ * second import later too — a transaction already reflected here
+ * before just reinforces the same count again rather than double
+ * counting anything meaningfully, the same as re-categorizing
+ * something the same way twice always has. Returns how many distinct
+ * merchants it actually learned something from, for a honest "here's
+ * what that did" confirmation rather than a silent no-feedback action. */
+export function learnFromHistory(transactions: { note: string; categoryId: string | null; isExpense: boolean }[]): number {
+  const learnedKeys = new Set<string>()
+  for (const t of transactions) {
+    if (!t.isExpense || !t.categoryId || !t.note.trim()) continue
+    const key = normalizeMerchantKey(t.note)
+    if (!key) continue
+    learnMerchant(t.note, t.categoryId)
+    learnedKeys.add(key)
+  }
+  return learnedKeys.size
 }
 
 export function deleteMerchantRule(key: string) {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Category, Transaction, Account } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
-import { isLikelyDuplicate, significantTokens, genericTokens, isLikelyTransitFare, findPendingFareMatch } from '../duplicates'
+import { isLikelyDuplicate, isLikelyInstallmentDuplicate, significantTokens, genericTokens, isLikelyTransitFare, findPendingFareMatch } from '../duplicates'
 import { formatCurrency } from '../calculations'
 import { allTagsFrom } from '../tags'
 import TagEditor from '../components/TagEditor'
@@ -117,10 +117,27 @@ export default function StatementImport({ categories, existingTransactions, onBa
   )
 
   function matchingExisting(r: ParsedTransaction): Transaction[] {
-    return existingTransactions.filter((t) => isLikelyDuplicate(t, r, 3, importGeneric))
+    return existingTransactions.filter((t) => isLikelyDuplicate(t, r, 3, importGeneric) || isLikelyInstallmentDuplicate(t, r))
   }
 
-  const duplicateIds = new Set(results.filter((r) => matchingExisting(r).length > 0).map((r) => r.id))
+  // The companion to matchingExisting, but for rows that duplicate each
+  // other WITHIN the same scan rather than something already saved —
+  // confirmed this was a real, separate gap: scanning several photos in
+  // one go, with some visual overlap between shots (scrolling up a
+  // little before the next screenshot, easy to do without noticing),
+  // can genuinely capture the same real transaction twice, once per
+  // photo, and neither existed in the database yet for matchingExisting
+  // to catch. Only rows earlier in the batch count as "the original" a
+  // later one can duplicate — comparing every row against every other
+  // row symmetrically would flag both halves of a real pair with
+  // nothing to say which one is the extra.
+  function matchingWithinBatch(r: ParsedTransaction, batch: ParsedTransaction[]): ParsedTransaction[] {
+    const index = batch.findIndex((x) => x.id === r.id)
+    if (index === -1) return []
+    return batch.filter((other, i) => i < index && isLikelyDuplicate(other, r, 3, importGeneric))
+  }
+
+  const duplicateIds = new Set(results.filter((r) => matchingExisting(r).length > 0 || matchingWithinBatch(r, results).length > 0).map((r) => r.id))
 
   // Maps an incoming row to the existing stale $1.00 placeholder it
   // should update instead of being imported as a new transaction —
@@ -201,7 +218,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
       setResults(transactions)
       setSkippedRows(skipped)
       setFormatsSeen(new Set())
-      setIncluded(new Set(transactions.filter((r) => matchingExisting(r).length === 0).map((r) => r.id)))
+      setIncluded(new Set(transactions.filter((r) => matchingExisting(r).length === 0 && matchingWithinBatch(r, transactions).length === 0).map((r) => r.id)))
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setSkippedRows([`Couldn't read that PDF — error: ${message}`])
@@ -250,7 +267,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
     if (sparsePhotoCount > 0) {
       setSparseScanWarning(`${sparsePhotoCount} photo${sparsePhotoCount === 1 ? '' : 's'} returned surprisingly little text for ${sparsePhotoCount === 1 ? 'a' : ''} recognized screenshot${sparsePhotoCount === 1 ? '' : 's'} — if you can see more transactions in ${sparsePhotoCount === 1 ? 'it' : 'them'} than showed up below, try rescanning in better light or at a higher resolution.`)
     }
-    setIncluded(new Set(allResults.filter((r) => matchingExisting(r).length === 0).map((r) => r.id)))
+    setIncluded(new Set(allResults.filter((r) => matchingExisting(r).length === 0 && matchingWithinBatch(r, allResults).length === 0).map((r) => r.id)))
     // A best-effort starting point, not a silent decision — confirmed
     // this stays fully editable via the account picker shown on the
     // review screen below, since guessing wrong here would mean money
@@ -355,14 +372,27 @@ export default function StatementImport({ categories, existingTransactions, onBa
     if (categoryId === null) return
     const source = results.find((r) => r.id === id)
     if (!source || /beem/i.test(source.note)) return
-    const sourceTokens = significantTokens(source.note)
+    // Generic tokens filtered out here the same way duplicate
+    // detection already filters them — confirmed this was a real,
+    // live gap: this "apply to similar" matching used raw
+    // significantTokens with no such filtering, so ANY single shared
+    // word was enough to call two rows "similar," including words
+    // that recur across many unrelated merchants in the same scan
+    // (OCR boilerplate like "payment"/"purchase", a shared suburb
+    // name, a bank's own note template) without being distinctive
+    // merchant identity at all. importGeneric already exists for
+    // exactly this purpose for the duplicate check just above —
+    // reused here rather than a second, looser standard for what
+    // counts as "the same kind of transaction."
+    const sourceTokens = new Set([...significantTokens(source.note)].filter((t) => !importGeneric.has(t)))
     if (sourceTokens.size === 0) return
 
     const matches = results.filter((r) => {
       if (r.id === id) return false
       if (/beem/i.test(r.note)) return false
       if (categoryFor(r) === categoryId) return false
-      const overlaps = [...significantTokens(r.note)].some((tok) => sourceTokens.has(tok))
+      const rTokens = new Set([...significantTokens(r.note)].filter((t) => !importGeneric.has(t)))
+      const overlaps = [...rTokens].some((tok) => sourceTokens.has(tok))
       return overlaps
     })
 
@@ -832,6 +862,20 @@ export default function StatementImport({ categories, existingTransactions, onBa
                   <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{t.isExpense ? '-' : '+'}{formatCurrency(t.amount)}</div>
                 </div>
               ))}
+              {matchingWithinBatch(viewingDuplicateFor, results).length > 0 && (
+                <>
+                  <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
+                    Also looks like {matchingWithinBatch(viewingDuplicateFor, results).length === 1 ? 'a row' : 'rows'} from another photo in this same scan — possibly the same real transaction caught twice if the photos overlapped:
+                  </p>
+                  {matchingWithinBatch(viewingDuplicateFor, results).map((r) => (
+                    <div className="card" key={r.id} style={{ marginBottom: 8, borderLeft: '3px solid var(--amber)' }}>
+                      <div style={{ fontSize: 14 }}>{r.note || 'Uncategorized'}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>{new Date(r.date).toLocaleDateString('en-AU')}</div>
+                      <div className="amount" style={{ marginTop: 6, fontSize: 15 }}>{r.isExpense ? '-' : '+'}{formatCurrency(r.amount)}</div>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         </div>

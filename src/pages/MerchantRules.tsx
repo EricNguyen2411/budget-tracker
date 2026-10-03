@@ -1,22 +1,30 @@
 import { useState } from 'react'
-import type { Category } from '../types'
-import { getAllMerchantRules, deleteMerchantRule, pinManualRule } from '../merchantRules'
+import type { Category, Transaction } from '../types'
+import { getAllMerchantRules, deleteMerchantRule, pinManualRule, learnFromHistory } from '../merchantRules'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
+  transactions: Transaction[]
   onBack: () => void
 }
 
-export default function MerchantRules({ categories, onBack }: Props) {
+export default function MerchantRules({ categories, transactions, onBack }: Props) {
   useSwipeBack(onBack)
   const [rules, setRules] = useState(getAllMerchantRules())
   const [showAdd, setShowAdd] = useState(false)
   const addClose = useModalClose(() => setShowAdd(false))
   const [newKeyword, setNewKeyword] = useState('')
   const [newCategoryId, setNewCategoryId] = useState<string | null>(null)
+  const [learnResult, setLearnResult] = useState<number | null>(null)
   const catById = new Map(categories.map((c) => [c.id, c]))
+
+  function handleLearnFromHistory() {
+    const count = learnFromHistory(transactions)
+    setRules(getAllMerchantRules())
+    setLearnResult(count)
+  }
 
   function remove(key: string) {
     deleteMerchantRule(key)
@@ -43,6 +51,17 @@ export default function MerchantRules({ categories, onBack }: Props) {
       <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
         Auto-suggests a category when you type a note matching one of these — built automatically as you categorize transactions, or add one directly below. Beem is deliberately never learned, since it normalizes to the same generic key regardless of what a payment is actually for. A few common Australian merchants (Woolworths, Uber, Netflix, and similar) are suggested automatically even before anything's been learned.
       </p>
+
+      <button className="list-button" style={{ color: 'var(--blue)', fontSize: 13, marginBottom: 8 }} onClick={handleLearnFromHistory}>
+        🧠 Learn from everything I've already categorized
+      </button>
+      {learnResult !== null && (
+        <p className="hint" style={{ marginBottom: 16 }}>
+          {learnResult > 0
+            ? `Learned from ${learnResult} distinct merchant${learnResult === 1 ? '' : 's'} across your past transactions.`
+            : "Nothing new to learn — either there's no categorized history yet, or it's all already been learned."}
+        </p>
+      )}
 
       {rules.length === 0 && <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', marginTop: 20 }}>None learned yet.</p>}
 

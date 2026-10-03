@@ -421,7 +421,7 @@ export default function App() {
         />
       )}
       {tab === 'report' && <CustomRangeReport categories={categories} transactions={transactions} onSave={handleSaveTransaction} onBack={() => setTab('more')} onChanged={reload} accounts={accounts} />}
-      {tab === 'merchants' && <MerchantRules categories={categories} onBack={() => setTab('more')} />}
+      {tab === 'merchants' && <MerchantRules categories={categories} transactions={transactions} onBack={() => setTab('more')} />}
       {tab === 'insights' && <Insights categories={categories} transactions={transactions} accounts={accounts} recurring={recurring} onBack={() => setTab('more')} />}
       {tab === 'tags' && (
         <TagsScreen
