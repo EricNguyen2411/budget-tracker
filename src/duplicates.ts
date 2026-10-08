@@ -112,6 +112,31 @@ function isDisjoint(a: Set<string>, b: Set<string>): boolean {
   return true
 }
 
+/** The generic-token filter exists to ignore words that recur across many
+ * UNRELATED merchants (a shared suburb name, OCR boilerplate like
+ * "payment"). It backfires for a merchant whose only identifying word is
+ * itself common across that merchant's OWN repeat transactions — "amazon"
+ * or "paypal" racks up several DISTINCT note-text variants over time
+ * purely from OCR noise (a differently garbled leading icon-glyph each
+ * scan: "a Amazon", "nA Amazon", "_— PayPal (Pay in 4)", "pron, PAYPAL
+ * (Pay in 4)") and genericTokens() reads that variant count as evidence
+ * the word isn't merchant-specific, exactly like it would for a suburb
+ * name. Confirmed directly this was a real, live gap: once "amazon" is
+ * filtered as generic, BOTH sides of a real duplicate comparison are left
+ * with zero tokens, isDisjoint(empty, empty) trivially returns true, and
+ * two actually-identical Amazon or PayPal charges a day apart stop being
+ * recognized as duplicates — silently, for exactly the repeat merchants
+ * most likely to generate real duplicate imports. Falling back to the
+ * unfiltered token set whenever filtering would leave a side with
+ * nothing left preserves the original purpose (still prefer the filtered,
+ * more specific comparison whenever it leaves something to compare) while
+ * no longer destroying matching entirely in this case. */
+function tokensForMatching(note: string, generic: Set<string>): Set<string> {
+  const raw = significantTokens(note)
+  const filtered = new Set([...raw].filter((t) => !generic.has(t)))
+  return filtered.size > 0 ? filtered : raw
+}
+
 /** Whether two transactions look like the same real-world event —
  * requires an exact same day, OR a shared significant name token AND
  * being within a reasonable date window. A name match alone is NOT
@@ -141,8 +166,8 @@ export function isLikelyDuplicate(a: DuplicateCandidate, b: DuplicateCandidate, 
   const withinWindow = dayDiffMs <= windowDays * 24 * 60 * 60 * 1000
   if (!withinWindow) return false
 
-  const aTokens = new Set([...significantTokens(a.note)].filter((t) => !generic.has(t)))
-  const bTokens = new Set([...significantTokens(b.note)].filter((t) => !generic.has(t)))
+  const aTokens = tokensForMatching(a.note, generic)
+  const bTokens = tokensForMatching(b.note, generic)
   return !isDisjoint(aTokens, bTokens)
 }
 
@@ -194,7 +219,7 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
   for (let i = 0; i < sorted.length; i++) {
     const anchor = sorted[i]
     if (used.has(anchor.id)) continue
-    const anchorTokens = new Set([...significantTokens(anchor.note)].filter((t) => !generic.has(t)))
+    const anchorTokens = tokensForMatching(anchor.note, generic)
     const cluster = [anchor]
     let hasSharedToken = false
 
@@ -204,7 +229,7 @@ export function findDuplicates(transactions: Transaction[], windowDays = 3): Pot
       if (toCents(candidate.amount) !== toCents(anchor.amount)) break
       if (!isLikelyDuplicate(anchor, candidate, windowDays, generic)) continue
 
-      const candidateTokens = new Set([...significantTokens(candidate.note)].filter((t) => !generic.has(t)))
+      const candidateTokens = tokensForMatching(candidate.note, generic)
       const sharesToken = !isDisjoint(anchorTokens, candidateTokens)
       cluster.push(candidate)
       if (sharesToken) hasSharedToken = true
