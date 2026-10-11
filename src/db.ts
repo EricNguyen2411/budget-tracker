@@ -1,12 +1,11 @@
 import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction, type StoreNames } from 'idb'
-import type { Category, Transaction, RecurringTransaction, ShoppingList, Account, InstallmentPlan, TransactionAllocation, NetWorthSnapshot } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, InstallmentPlan, TransactionAllocation } from './types'
 import { DEFAULT_CATEGORIES } from './types'
 import { isNativeBackupFormat, translateNativeBackup } from './nativeImport'
 import { learnMerchant, removeCategoryFromMerchantRules, mergeCategoryInMerchantRules } from './merchantRules'
-import { getSettings, updateSettings } from './budgetPeriod'
-import { getImportAccountMapping, saveImportAccountMapping } from './importSettings'
 import { normalizeTag, dedupeTags } from './tags'
-import { localDateInputValue } from './calculations'
+import { localDateInputValue, savingsBalance } from './calculations'
+import { convertAccountsToSavingsCategories, type LegacyAccount, type LegacyData, type LegacyTransaction, type LegacyRecurring, type LegacyPlan } from './accountsMigration'
 
 interface AutoBackupEntry {
   id: string
@@ -20,16 +19,27 @@ interface BudgetDB extends DBSchema {
   recurring: { key: string; value: RecurringTransaction }
   shoppingLists: { key: string; value: ShoppingList }
   autoBackups: { key: string; value: AutoBackupEntry }
-  accounts: { key: string; value: Account }
   installmentPlans: { key: string; value: InstallmentPlan }
-  netWorthSnapshots: { key: string; value: NetWorthSnapshot }
 }
+
+// The stores that existed before accounts were removed (schema v12).
+// Only the upgrade below ever touches these — it reads them once, converts
+// everything, then deletes them.
+interface LegacyBudgetDB extends BudgetDB {
+  accounts: { key: string; value: LegacyAccount }
+  netWorthSnapshots: { key: string; value: { date: string; netWorth: number } }
+}
+
+/** localStorage key holding a one-time summary of what the accounts →
+ * savings categories conversion did, so the app can show it once after
+ * the update instead of changing the person's numbers silently. */
+export const ACCOUNTS_MIGRATION_REPORT_KEY = 'budget-tracker-accounts-migration-report'
 
 let dbPromise: Promise<IDBPDatabase<BudgetDB>> | null = null
 
 function getDB() {
   if (!dbPromise) {
-    dbPromise = openDB<BudgetDB>('budget-tracker', 11, {
+    dbPromise = openDB<BudgetDB>('budget-tracker', 12, {
       async upgrade(db, oldVersion, _newVersion, transaction) {
         if (oldVersion < 1) {
           db.createObjectStore('categories', { keyPath: 'id' })
@@ -51,132 +61,33 @@ function getDB() {
           // that forgets the guard doesn't silently crash on old data.
           await migrateMissingTags(transaction)
         }
-        if (oldVersion < 5) {
-          db.createObjectStore('accounts', { keyPath: 'id' })
-          // Same reasoning as the tags backfill above — every
-          // transaction saved before accounts existed is missing
-          // accountId entirely at runtime, not just "null" as the type
-          // would suggest.
-          await migrateMissingAccountId(transaction)
-        }
+        // (v5 created the accounts store, v11 net worth snapshots, and
+        // v7–v9 repaired/converted account data — all superseded by v12
+        // below, which converts accounts away entirely, so a fresh install
+        // never needs to create them at all.)
         if (oldVersion < 6) {
           db.createObjectStore('installmentPlans', { keyPath: 'id' })
-          // installmentPlanId is optional on Transaction (unlike
-          // accountId), so no backfill migration needed here — a
-          // missing field and an explicit null read identically
-          // everywhere this gets checked.
+          // installmentPlanId is optional on Transaction, so no backfill
+          // migration needed here — a missing field and an explicit null
+          // read identically everywhere this gets checked.
         }
-        if (oldVersion < 7) {
-          // Repairs data corrupted by a real bug (fixed alongside this
-          // migration): editing a balance-adjustment transaction through
-          // the regular transaction editor silently dropped its
-          // isBalanceAdjustment flag on save, since the editor rebuilt
-          // the record from only its own form fields and saveTransaction
-          // fully replaces the stored record rather than merging into
-          // it. Confirmed via a real screenshot: a reconciliation entry
-          // that should have been excluded from the Income total instead
-          // counted as ordinary income once its flag was gone.
-          //
-          // Re-running this is safe and a no-op for anyone unaffected —
-          // it only touches transactions that still carry the exact
-          // note text and null category the reconcile flow always
-          // writes, and only when the flag isn't already true, so a
-          // transaction a person genuinely renamed away from "Balance
-          // adjustment" is left alone.
-          await migrateMissingBalanceAdjustmentFlag(transaction)
-        }
-        if (oldVersion < 8) {
-          // Repairs data corrupted by a real bug (fixed alongside this
-          // migration): the bulk "Fund from Savings" action let a real
-          // account be picked for the resulting transaction, same as
-          // the bulk friend-reimbursement action beside it — but unlike
-          // a friend's repayment, which genuinely does add money to
-          // wherever it lands, a savings draw-down needs to be recorded
-          // as income (isExpense: false) purely so its
-          // reimbursesExpenseId/multiAllocations link works, and income
-          // on a real account means "balance went up." The real money
-          // was leaving that account, not arriving — so tying this to
-          // an account made its tracked balance rise by exactly what
-          // was actually spent, confirmed directly via a real
-          // screenshot showing a Travel Savings account $1,109.76
-          // higher than it should have been. The single-expense
-          // version of this action never had the bug (it never set an
-          // account); this backfill brings bulk-created transactions
-          // already saved with one into line with that always-correct
-          // behavior. Doesn't touch a genuine account Transfer's income
-          // side, which this same shape could otherwise resemble — a
-          // transfer always has categoryId null, while every
-          // transaction this migration targets has a real (savings)
-          // category, which is exactly what the fixed create-flow now
-          // guarantees can never coincide with a set accountId. Not
-          // touched here, and left for the person to review themselves:
-          // any Balance Adjustment they created trying to manually
-          // correct the resulting mismatch — that's a judgment call
-          // this migration has no reliable way to make safely.
-          await migrateSavingsFundingAccountId(transaction)
-        }
-        if (oldVersion < 9) {
-          // The big one: savings goals move from being a special kind
-          // of category to being a property of a real account —
-          // confirmed with the person directly this was worth doing,
-          // since for the ordinary case (one goal, one dedicated
-          // account) the category was just a second number tracked in
-          // parallel with the account's own real balance, kept in sync
-          // only by convention, never usefully able to disagree on
-          // purpose. Every savings category becomes (or is merged
-          // into, if it already had a linkedAccountId from the
-          // previous fix) a real account carrying the goal's target/
-          // date/recurring fields, seeded with a snapshot of whatever
-          // its cumulative progress already was so nobody's progress
-          // resets to zero. Every transaction that referenced the old
-          // category is re-pointed: its categoryId clears (the
-          // category itself is being deleted), and if it was the
-          // income-direction "offset" half of funding an expense from
-          // this goal, it picks up fundedFromAccountId pointing at the
-          // new account — the new signal that replaced checking a
-          // transaction's category for isSavingsCategory everywhere in
-          // the app.
-          await migrateSavingsCategoriesToGoalAccounts(transaction)
-          // The "What Changed" screen explains a Safe to Spend move by
-          // diffing against a snapshot saved locally the last time the
-          // dashboard was open — and it only tracks CATEGORIZED
-          // transactions (see safeToSpendHistory.ts), which is exactly
-          // what every transaction that used to belong to a savings
-          // category just stopped being, now re-pointed onto its new
-          // account instead. Left alone, the very next open would
-          // report a wall of confusing "Removed" lines for things that
-          // didn't actually disappear — real money and progress both
-          // carried over correctly, only the category-based bookkeeping
-          // that snapshot happens to track changed shape. Clearing it
-          // here means that comparison starts fresh after this update,
-          // rather than being made once, confusingly, against a
-          // structure that no longer exists.
-          try {
-            localStorage.removeItem('budget-tracker-safe-to-spend-snapshot')
-          } catch {
-            // Storage unavailable — not worth failing the migration over.
-          }
-        }
-        if (oldVersion < 10) {
-          // Cleans up a real gap in the v9 migration above: it deleted
-          // savings categories directly, re-pointing every transaction
-          // that referenced one, but never checked recurring items,
-          // shopping lists, or installment plans for the same thing —
-          // unlike deleteCategory (the ordinary, everyday path for
-          // removing a category), which already handles all four.
-          // Confirmed via a real backup: a recurring "Travel Savings"
-          // contribution was left pointing at a categoryId that no
-          // longer existed, which would render broken (or crash) in
-          // any screen that looks up that category to show its
-          // icon/name. Clearing the dangling reference here is exactly
-          // what deleteCategory already does for a category removed the
-          // ordinary way — this just closes the same gap retroactively
-          // for anyone who already went through the v9 migration before
-          // this fix existed.
+        if (oldVersion >= 5 && oldVersion < 10) {
+          // Same fix v10 originally applied (a real gap in the old
+          // category→account conversion left recurring items, shopping
+          // lists and plans pointing at deleted categories); harmless and
+          // still correct for anyone upgrading from an older version.
           await migrateOrphanedCategoryReferences(transaction)
         }
-        if (oldVersion < 11) {
-          db.createObjectStore('netWorthSnapshots', { keyPath: 'date' })
+        if (oldVersion < 12) {
+          // Accounts are removed: every savings account becomes a savings
+          // category with its balance carried over exactly, transfers
+          // between accounts are converted or dropped, and net worth goes
+          // away. See accountsMigration.ts for the full rules and the
+          // balance-preservation guarantee.
+          await migrateAccountsToSavingsCategories(
+            db as unknown as IDBPDatabase<LegacyBudgetDB>,
+            transaction as unknown as IDBPTransaction<LegacyBudgetDB, StoreNames<LegacyBudgetDB>[], 'versionchange'>
+          )
         }
       }
     })
@@ -184,124 +95,52 @@ function getDB() {
   return dbPromise
 }
 
-async function migrateMissingBalanceAdjustmentFlag(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
-  const store = transaction.objectStore('transactions')
-  let cursor = await store.openCursor()
-  while (cursor) {
-    const t = cursor.value as Transaction
-    if (t.note === 'Balance adjustment' && t.categoryId === null && t.isBalanceAdjustment !== true) {
-      await cursor.update({ ...t, isBalanceAdjustment: true })
-    }
-    cursor = await cursor.continue()
-  }
-}
-
-// The stored shape of a category from before savings goals moved onto
-// accounts — IndexedDB doesn't enforce the current TypeScript type, so
-// a record saved by an old version of the app still has these fields
-// at runtime even though Category no longer declares them. Migrations
-// reading old data need this to type-check; nothing else should.
-interface LegacyCategoryFields {
-  isSavingsCategory?: boolean
-  goalTargetAmount?: number
-  goalTargetDate?: string | null
-  goalStartDate?: string | null
-  goalRecurring?: boolean
-  linkedAccountId?: string | null
-}
-
-async function migrateSavingsFundingAccountId(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
+async function migrateAccountsToSavingsCategories(
+  db: IDBPDatabase<LegacyBudgetDB>,
+  transaction: IDBPTransaction<LegacyBudgetDB, StoreNames<LegacyBudgetDB>[], 'versionchange'>
+) {
+  const hasAccounts = db.objectStoreNames.contains('accounts')
   const categoryStore = transaction.objectStore('categories')
-  const allCategories = (await categoryStore.getAll()) as (Category & LegacyCategoryFields)[]
-  const savingsCategoryIds = new Set(allCategories.filter((c) => c.isSavingsCategory).map((c) => c.id))
-  const store = transaction.objectStore('transactions')
-  let cursor = await store.openCursor()
-  while (cursor) {
-    const t = cursor.value as Transaction
-    const isSavingsOffset = !t.isExpense && !!t.categoryId && savingsCategoryIds.has(t.categoryId) && (!!t.reimbursesExpenseId || !!(t.multiAllocations && t.multiAllocations.length > 0))
-    if (isSavingsOffset && t.accountId !== null) {
-      await cursor.update({ ...t, accountId: null })
-    }
-    cursor = await cursor.continue()
-  }
-}
-
-async function migrateSavingsCategoriesToGoalAccounts(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
-  const categoryStore = transaction.objectStore('categories')
-  const accountStore = transaction.objectStore('accounts')
   const txStore = transaction.objectStore('transactions')
+  const recurringStore = transaction.objectStore('recurring')
+  const planStore = transaction.objectStore('installmentPlans')
 
-  const allCategories = (await categoryStore.getAll()) as (Category & LegacyCategoryFields)[]
-  const allTransactions = await txStore.getAll()
-  const allAccounts = await accountStore.getAll()
-  const savingsCategories = allCategories.filter((c) => c.isSavingsCategory)
-
-  for (const cat of savingsCategories) {
-    const own = allTransactions.filter((t) => t.categoryId === cat.id)
-    // A snapshot of cumulative progress under the old formula
-    // (contributions minus withdrawals) — not pixel-perfect against
-    // every edge case netAmount would have handled, but a sensible,
-    // real starting balance for the new account rather than resetting
-    // anyone's progress to zero.
-    const contributions = own.filter((t) => t.isExpense).reduce((sum, t) => sum + t.amount, 0)
-    const withdrawals = own.filter((t) => !t.isExpense).reduce((sum, t) => sum + t.amount, 0)
-    const progressSnapshot = Math.max(0, Math.round((contributions - withdrawals) * 100) / 100)
-
-    const existingLinked = cat.linkedAccountId ? allAccounts.find((a) => a.id === cat.linkedAccountId) : null
-    let targetAccountId: string
-
-    if (existingLinked) {
-      targetAccountId = existingLinked.id
-      await accountStore.put({
-        ...existingLinked,
-        goalTargetAmount: cat.goalTargetAmount ?? 0,
-        goalTargetDate: cat.goalTargetDate ?? null,
-        goalStartDate: cat.goalStartDate ?? null,
-        goalRecurring: cat.goalRecurring ?? false
-      })
-    } else {
-      targetAccountId = uuid()
-      const newAccount: Account = {
-        id: targetAccountId,
-        name: cat.name,
-        icon: cat.icon,
-        color: cat.color,
-        type: 'savings',
-        openingBalance: progressSnapshot,
-        openingDate: new Date().toISOString(),
-        sortOrder: 999,
-        isArchived: false,
-        goalTargetAmount: cat.goalTargetAmount ?? 0,
-        goalTargetDate: cat.goalTargetDate ?? null,
-        goalStartDate: cat.goalStartDate ?? null,
-        goalRecurring: cat.goalRecurring ?? false
-      }
-      await accountStore.put(newAccount)
-    }
-
-    for (const t of own) {
-      const isOffset = !t.isExpense && (!!t.reimbursesExpenseId || !!(t.multiAllocations && t.multiAllocations.length > 0))
-      await txStore.put({
-        ...t,
-        categoryId: null,
-        fundedFromAccountId: isOffset ? targetAccountId : (t as Transaction).fundedFromAccountId ?? null
-      })
-    }
-
-    await categoryStore.delete(cat.id)
+  const data: LegacyData = {
+    accounts: hasAccounts ? await transaction.objectStore('accounts').getAll() : [],
+    categories: await categoryStore.getAll(),
+    transactions: (await txStore.getAll()) as LegacyTransaction[],
+    recurring: (await recurringStore.getAll()) as LegacyRecurring[],
+    installmentPlans: (await planStore.getAll()) as LegacyPlan[]
   }
 
-  // Any category that was never a savings category still needs its
-  // now-nonexistent-in-the-type legacy fields (isSavingsCategory:
-  // false, an empty goalTargetAmount, etc.) cleared out of the actual
-  // stored record, or they'd sit there as harmless but permanent dead
-  // weight in every future read.
-  const remaining = (await categoryStore.getAll()) as (Category & LegacyCategoryFields)[]
-  for (const c of remaining) {
-    if ('isSavingsCategory' in c) {
-      const clean: Category = { id: c.id, name: c.name, icon: c.icon, color: c.color, monthlyBudget: c.monthlyBudget, sortOrder: c.sortOrder, parentId: c.parentId, needWantType: c.needWantType }
-      await categoryStore.put(clean)
+  const result = convertAccountsToSavingsCategories(data, () => crypto.randomUUID())
+
+  await categoryStore.clear()
+  for (const c of result.categories) await categoryStore.put(c)
+  await txStore.clear()
+  for (const t of result.transactions) await txStore.put(t)
+  await recurringStore.clear()
+  for (const r of result.recurring) await recurringStore.put(r)
+  await planStore.clear()
+  for (const p of result.installmentPlans) await planStore.put(p)
+
+  if (hasAccounts) db.deleteObjectStore('accounts')
+  if (db.objectStoreNames.contains('netWorthSnapshots')) db.deleteObjectStore('netWorthSnapshots')
+
+  try {
+    // The "What Changed" screen diffs against a locally cached snapshot
+    // of categorized transactions — categories just changed shape, so
+    // that comparison starts fresh instead of reporting a wall of
+    // confusing "Removed" lines for things that didn't disappear.
+    localStorage.removeItem('budget-tracker-safe-to-spend-snapshot')
+    // Settings that only made sense with accounts.
+    localStorage.removeItem('budget-tracker-payday-targets')
+    localStorage.removeItem('budget-tracker-import-account-mapping')
+    if (hasAccounts && data.accounts.length > 0) {
+      localStorage.setItem(ACCOUNTS_MIGRATION_REPORT_KEY, JSON.stringify(result.report))
     }
+  } catch {
+    // Storage unavailable — not worth failing the migration over.
   }
 }
 
@@ -333,18 +172,6 @@ async function migrateMissingTags(transaction: IDBPTransaction<BudgetDB, StoreNa
   }
 }
 
-async function migrateMissingAccountId(transaction: IDBPTransaction<BudgetDB, StoreNames<BudgetDB>[], 'versionchange'>) {
-  const store = transaction.objectStore('transactions')
-  let cursor = await store.openCursor()
-  while (cursor) {
-    const raw = cursor.value as unknown as Record<string, unknown>
-    if (!('accountId' in raw)) {
-      await cursor.update({ ...(cursor.value as Transaction), accountId: null })
-    }
-    cursor = await cursor.continue()
-  }
-}
-
 function uuid() {
   return crypto.randomUUID()
 }
@@ -368,7 +195,21 @@ export async function getCategories(): Promise<Category[]> {
 
 export async function saveCategory(category: Category) {
   const db = await getDB()
+  const before = await db.get('categories', category.id)
   await db.put('categories', category)
+  // A plain category that has just become a savings category: money already
+  // logged against it as income-direction (refunds, pay-backs) would sit
+  // there as ordinary income with no marker. Marked as takings-out so it
+  // leaves the balance and stops counting as Income, exactly as the
+  // accounts conversion treats the same shape.
+  if (category.isSavingsCategory && !before?.isSavingsCategory) {
+    const all = await db.getAll('transactions')
+    for (const t of all) {
+      if (t.categoryId === category.id && !t.isExpense && !t.fundedFromCategoryId && !t.reimbursesExpenseId && !(t.multiAllocations && t.multiAllocations.length > 0)) {
+        await db.put('transactions', { ...t, fundedFromCategoryId: category.id })
+      }
+    }
+  }
 }
 
 /** Rolls a recurring annual goal (insurance, car registration, etc.)
@@ -378,16 +219,16 @@ export async function saveCategory(category: Category) {
  * this year's target. Deliberately a one-tap action the person
  * triggers, not silent — the premium may have changed, and they should
  * see that happen rather than have it quietly roll over unnoticed. */
-export async function renewRecurringGoal(account: Account): Promise<Account> {
-  if (!account.goalTargetDate) return account
-  const oldTarget = new Date(account.goalTargetDate)
+export async function renewRecurringGoal(category: Category): Promise<Category> {
+  if (!category.goalTargetDate) return category
+  const oldTarget = new Date(category.goalTargetDate)
   const newTarget = new Date(oldTarget.getFullYear() + 1, oldTarget.getMonth(), oldTarget.getDate())
-  const updated: Account = {
-    ...account,
+  const updated: Category = {
+    ...category,
     goalTargetDate: newTarget.toISOString(),
     goalStartDate: new Date().toISOString()
   }
-  await saveAccount(updated)
+  await saveCategory(updated)
   return updated
 }
 
@@ -442,10 +283,29 @@ export async function mergeCategoryInto(sourceId: string, targetId: string): Pro
   let movedCount = 0
   const transactions = await tx.objectStore('transactions').getAll()
   for (const t of transactions) {
-    if (t.categoryId === sourceId) {
-      await tx.objectStore('transactions').put({ ...t, categoryId: targetId })
-      movedCount++
+    const moveCategory = t.categoryId === sourceId
+    const moveMarker = t.fundedFromCategoryId === sourceId
+    if (moveCategory || moveMarker) {
+      await tx.objectStore('transactions').put({
+        ...t,
+        categoryId: moveCategory ? targetId : t.categoryId,
+        // A withdrawal out of the savings category being merged away now
+        // comes out of the one it's merged into.
+        fundedFromCategoryId: moveMarker ? targetId : t.fundedFromCategoryId
+      })
+      if (moveCategory) movedCount++
     }
+  }
+  // Merging one savings category into another also carries over what it
+  // started with — otherwise the merged balance would silently shrink by
+  // that amount.
+  const source = await tx.objectStore('categories').get(sourceId)
+  const target = await tx.objectStore('categories').get(targetId)
+  if (source?.isSavingsCategory && target?.isSavingsCategory) {
+    await tx.objectStore('categories').put({
+      ...target,
+      savingsOpeningBalance: Math.round(((target.savingsOpeningBalance ?? 0) + (source.savingsOpeningBalance ?? 0)) * 100) / 100
+    })
   }
   const recurring = await tx.objectStore('recurring').getAll()
   for (const r of recurring) {
@@ -483,6 +343,50 @@ export async function createTransaction(data: Omit<Transaction, 'id'>): Promise<
 export async function saveTransaction(transaction: Transaction) {
   const db = await getDB()
   await db.put('transactions', transaction)
+  await reconcileFundingForExpense(transaction.id)
+}
+
+/** Keeps savings funding honest after an expense is edited. A funding
+ * record covers a specific expense, so if that expense was turned into
+ * income, or its amount lowered below what is now covered, the surplus
+ * can't stay taken out of savings (it would otherwise show up as phantom
+ * Income). The extra is removed from the most recent funding first, and
+ * the money goes back to the savings category. Genuine reimbursements from
+ * other people are never touched here. */
+export async function reconcileFundingForExpense(expenseId: string) {
+  const db = await getDB()
+  const all = await db.getAll('transactions')
+  const expense = all.find((t) => t.id === expenseId)
+  if (!expense) return
+  const covering = all
+    .filter((t) => !t.isExpense && !!t.fundedFromCategoryId && (t.reimbursesExpenseId === expenseId || t.multiAllocations?.some((a) => a.expenseId === expenseId)))
+  if (covering.length === 0) return
+  const allocOf = (t: Transaction) => t.multiAllocations?.find((a) => a.expenseId === expenseId)?.amount ?? t.amount
+  const fundedTotal = covering.reduce((sum, t) => sum + allocOf(t), 0)
+  const others = all
+    .filter((t) => !t.isExpense && !t.fundedFromCategoryId && (t.reimbursesExpenseId === expenseId || t.multiAllocations?.some((a) => a.expenseId === expenseId)))
+    .reduce((sum, t) => sum + allocOf(t), 0)
+  const allowed = expense.isExpense ? Math.max(0, expense.amount - others) : 0
+  let cut = Math.round((fundedTotal - allowed) * 100) / 100
+  if (cut <= 0.005) return
+  for (const t of [...covering].sort((a, b) => b.date.localeCompare(a.date))) {
+    if (cut <= 0.005) break
+    const have = allocOf(t)
+    const reduceBy = Math.min(have, cut)
+    cut = Math.round((cut - reduceBy) * 100) / 100
+    if (t.multiAllocations && t.multiAllocations.length > 0) {
+      const remaining = t.multiAllocations
+        .map((a) => (a.expenseId === expenseId ? { ...a, amount: Math.round((a.amount - reduceBy) * 100) / 100 } : a))
+        .filter((a) => a.amount > 0.005)
+      if (remaining.length === 0) await db.delete('transactions', t.id)
+      else if (remaining.length === 1) await db.put('transactions', { ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount })
+      else await db.put('transactions', { ...t, multiAllocations: remaining, amount: Math.round(remaining.reduce((sum, a) => sum + a.amount, 0) * 100) / 100 })
+    } else {
+      const left = Math.round((t.amount - reduceBy) * 100) / 100
+      if (left <= 0.005) await db.delete('transactions', t.id)
+      else await db.put('transactions', { ...t, amount: left })
+    }
+  }
 }
 
 /** Applies a planSavingsGiveback plan (calculations.ts) — the one place
@@ -567,9 +471,8 @@ export async function mergeTransactions(keepId: string, discardId: string): Prom
     tags: dedupeTags([...keep.tags, ...discard.tags]),
     reimbursesExpenseId: keep.reimbursesExpenseId ?? discard.reimbursesExpenseId,
     multiAllocations: keep.multiAllocations ?? discard.multiAllocations,
-    fundedFromAccountId: keep.fundedFromAccountId ?? discard.fundedFromAccountId,
-    installmentPlanId: keep.installmentPlanId ?? discard.installmentPlanId,
-    isBalanceAdjustment: keep.isBalanceAdjustment || discard.isBalanceAdjustment
+    fundedFromCategoryId: keep.fundedFromCategoryId ?? discard.fundedFromCategoryId,
+    installmentPlanId: keep.installmentPlanId ?? discard.installmentPlanId
   }
 
   const all = await store.getAll()
@@ -596,7 +499,15 @@ export async function deleteTransaction(id: string) {
 
   const orphaned = all.filter((t) => t.reimbursesExpenseId === id)
   for (const t of orphaned) {
-    await db.put('transactions', { ...t, reimbursesExpenseId: null })
+    if (t.fundedFromCategoryId) {
+      // The funding record for an expense that no longer exists has nothing
+      // left to fund — leaving it behind would turn it into a stray
+      // take-out and silently keep the money out of savings. Removing it
+      // puts the money back, which is what deleting the expense means.
+      await db.delete('transactions', t.id)
+    } else {
+      await db.put('transactions', { ...t, reimbursesExpenseId: null })
+    }
   }
 
   // Same orphan-safety, extended to multi-allocation transactions — if
@@ -610,7 +521,9 @@ export async function deleteTransaction(id: string) {
   const multiLinked = all.filter((t) => t.multiAllocations?.some((a) => a.expenseId === id))
   for (const t of multiLinked) {
     const remaining = t.multiAllocations!.filter((a) => a.expenseId !== id)
-    if (remaining.length === 0) {
+    if (remaining.length === 0 && t.fundedFromCategoryId) {
+      await db.delete('transactions', t.id)
+    } else if (remaining.length === 0) {
       await db.put('transactions', { ...t, multiAllocations: null, reimbursesExpenseId: null })
     } else if (remaining.length === 1) {
       await db.put('transactions', { ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount })
@@ -684,309 +597,110 @@ export async function deleteRecurring(id: string) {
   await db.delete('recurring', id)
 }
 
-export async function getAccounts(): Promise<Account[]> {
-  const db = await getDB()
-  const all = await db.getAll('accounts')
-  return all.filter((a) => !a.isArchived).sort((a, b) => a.sortOrder - b.sortOrder)
-}
-
-/** Records today's net worth once — called on app open, not on every
- * render, since it only needs to exist once per calendar day for a
- * trend to be meaningful. Overwrites the same day's existing entry
- * rather than skipping if one exists, so opening the app again later
- * the same day after adding more transactions reflects the day's most
- * up-to-date figure rather than freezing at whatever it was this
- * morning. */
-export async function recordNetWorthSnapshot(netWorth: number, referenceDate: Date = new Date()): Promise<void> {
-  const db = await getDB()
-  const y = referenceDate.getFullYear()
-  const m = String(referenceDate.getMonth() + 1).padStart(2, '0')
-  const d = String(referenceDate.getDate()).padStart(2, '0')
-  await db.put('netWorthSnapshots', { date: `${y}-${m}-${d}`, netWorth })
-}
-
-export async function getNetWorthSnapshots(): Promise<NetWorthSnapshot[]> {
-  const db = await getDB()
-  const all = await db.getAll('netWorthSnapshots')
-  return all.sort((a, b) => a.date.localeCompare(b.date))
-}
-
-export async function getAllAccountsIncludingArchived(): Promise<Account[]> {
-  const db = await getDB()
-  const all = await db.getAll('accounts')
-  return all.sort((a, b) => a.sortOrder - b.sortOrder)
-}
-
-export async function saveAccount(account: Account) {
-  const db = await getDB()
-  await db.put('accounts', account)
-}
-
-export async function createAccount(data: Omit<Account, 'id'>): Promise<Account> {
-  const db = await getDB()
-  const account: Account = { ...data, id: uuid() }
-  await db.put('accounts', account)
-  return account
-}
-
-/** Moving money between two of the person's own tracked accounts —
- * paying off a credit card from a bank account, moving savings into
- * everyday spending, etc. Creates both halves as a single atomic write
- * (one succeeds, both do) rather than two separate createTransaction
- * calls, so a failure partway through can't leave one side of a
- * transfer existing without its pair.
- *
- * Deliberately reuses reimbursesExpenseId as the link between the two
- * halves — the exact same mechanism Fund From Savings already uses —
- * rather than a new field: it means a transfer automatically gets the
- * same safe-deletion handling (deleteTransaction already clears a
- * stale reimbursesExpenseId rather than orphaning it) and is already
- * excluded from the Income stat (computeDashboardTotals's unlinkedIncome
- * explicitly excludes anything with reimbursesExpenseId set) with zero
- * new calculation code needed. isAccountTransferLink in calculations.ts
- * is what later recognizes this pattern to label it "transferred" rather
- * than the generic "reimbursed" — both sides having a different
- * accountId is the signal, which is exactly what's set here. */
-export async function createTransfer(params: {
-  fromAccountId: string
-  toAccountId: string
+/** Puts money into a savings category — a contribution is just an
+ * expense-direction transaction in that category, so it also shows up
+ * in the ordinary transaction list and in imports. */
+export async function contributeToSavings(params: {
+  categoryId: string
   amount: number
   date: string
   note?: string
-}): Promise<{ expense: Transaction; income: Transaction }> {
-  const { fromAccountId, toAccountId, amount, date, note } = params
+}): Promise<Transaction> {
+  const { categoryId, amount, date, note } = params
   const db = await getDB()
-  const accounts = await db.getAll('accounts')
-  const fromAccount = accounts.find((a) => a.id === fromAccountId)
-  const toAccount = accounts.find((a) => a.id === toAccountId)
-
-  const expenseId = uuid()
-  const expense: Transaction = {
-    id: expenseId,
-    amount,
-    note: note?.trim() || `Transfer to ${toAccount?.name ?? 'another account'}`,
-    date,
-    isExpense: true,
-    categoryId: null,
-    reimbursesExpenseId: null,
-    tags: [],
-    accountId: fromAccountId
-  }
-  const income: Transaction = {
+  const category = await db.get('categories', categoryId)
+  const transaction: Transaction = {
     id: uuid(),
     amount,
-    note: note?.trim() || `Transfer from ${fromAccount?.name ?? 'another account'}`,
+    note: note?.trim() || `Added to ${category?.name ?? 'savings'}`,
     date,
-    isExpense: false,
-    categoryId: null,
-    reimbursesExpenseId: expenseId,
-    tags: [],
-    accountId: toAccountId
+    isExpense: true,
+    categoryId,
+    reimbursesExpenseId: null,
+    tags: []
   }
-
-  const tx = db.transaction('transactions', 'readwrite')
-  await tx.store.put(expense)
-  await tx.store.put(income)
-  await tx.done
-
-  return { expense, income }
+  await db.put('transactions', transaction)
+  return transaction
 }
 
-/** Funds one or more expenses from a real account — the account-based
- * replacement for the old category-based Fund From Savings link.
- * Deliberately two transactions, not one, mirroring createTransfer's
- * own shape: a genuine withdrawal (isExpense: true) on the funding
- * account, so its real balance correctly goes down, paired with an
- * income-direction "offset" transaction that carries the actual
- * reimbursesExpenseId/multiAllocations link (never tied to any
- * account itself, so it can't affect a real balance) plus
- * fundedFromAccountId pointing back at the withdrawal's account — the
- * signal that replaced checking a transaction's category for
- * isSavingsCategory everywhere in the app. Single expense or several
- * at once (a bulk trip-funding action) both go through the same
- * `allocations` list; a lone entry is exactly the single-expense case. */
-export async function fundExpensesFromAccount(params: {
-  fromAccountId: string
+/** Takes money back out of a savings category without covering any
+ * particular expense. An income-direction transaction carrying
+ * fundedFromCategoryId — that marker is what keeps it from being counted
+ * as income and what the category's balance subtracts. */
+export async function withdrawFromSavings(params: {
+  categoryId: string
+  amount: number
+  date: string
+  note?: string
+}): Promise<Transaction> {
+  const { categoryId, amount, date, note } = params
+  const db = await getDB()
+  const category = await db.get('categories', categoryId)
+  const transaction: Transaction = {
+    id: uuid(),
+    amount,
+    note: note?.trim() || `Taken out of ${category?.name ?? 'savings'}`,
+    date,
+    isExpense: false,
+    categoryId,
+    reimbursesExpenseId: null,
+    tags: [],
+    fundedFromCategoryId: categoryId
+  }
+  await db.put('transactions', transaction)
+  return transaction
+}
+
+/** Funds one or more expenses from a savings category. A single
+ * income-direction "offset" transaction carries the link to the expense
+ * (reimbursesExpenseId for one, multiAllocations for several) plus
+ * fundedFromCategoryId — the marker that tells a self-funded draw-down
+ * apart from a friend's repayment, and the thing the category's balance
+ * subtracts. One record, not two: nothing separate to keep in sync, and
+ * deleting it gives the money straight back to the category. */
+export async function fundExpensesFromSavings(params: {
+  categoryId: string
   allocations: TransactionAllocation[]
   date: string
   note?: string
-}): Promise<{ withdrawal: Transaction; offset: Transaction }> {
-  const { fromAccountId, allocations, date, note } = params
+}): Promise<Transaction> {
+  const { categoryId, allocations, date, note } = params
   const db = await getDB()
-  const account = (await db.getAll('accounts')).find((a) => a.id === fromAccountId)
+  const category = await db.get('categories', categoryId)
   const totalAmount = Math.round(allocations.reduce((sum, a) => sum + a.amount, 0) * 100) / 100
-  const defaultNote = `Funded from ${account?.name ?? 'savings'}`
-
-  const withdrawal: Transaction = {
-    id: uuid(),
-    amount: totalAmount,
-    note: note?.trim() || defaultNote,
-    date,
-    isExpense: true,
-    categoryId: null,
-    reimbursesExpenseId: null,
-    tags: [],
-    accountId: fromAccountId
-  }
   const offset: Transaction = {
     id: uuid(),
     amount: totalAmount,
-    note: note?.trim() || defaultNote,
+    note: note?.trim() || `Funded from ${category?.name ?? 'savings'}`,
     date,
     isExpense: false,
-    categoryId: null,
+    categoryId,
     reimbursesExpenseId: allocations.length === 1 ? allocations[0].expenseId : null,
     multiAllocations: allocations.length > 1 ? allocations : null,
     tags: [],
-    accountId: null,
-    fundedFromAccountId: fromAccountId
+    fundedFromCategoryId: categoryId
   }
-
-  const tx = db.transaction('transactions', 'readwrite')
-  await tx.store.put(withdrawal)
-  await tx.store.put(offset)
-  await tx.done
-
-  return { withdrawal, offset }
+  await db.put('transactions', offset)
+  return offset
 }
 
-/** Updates both halves of an existing transfer together, preserving
- * their ids and their link to each other — the whole point being that
- * a transfer is edited as one thing, so a corrected amount (or a
- * changed From/To account) can't end up applied to only one side while
- * the other silently keeps the old, now-wrong value. */
-export async function updateTransfer(
-  expenseId: string,
-  incomeId: string,
-  params: { fromAccountId: string; toAccountId: string; amount: number; date: string; note?: string }
-): Promise<{ expense: Transaction; income: Transaction }> {
-  const { fromAccountId, toAccountId, amount, date, note } = params
+/** Sets a savings category's balance to a number the person types — the
+ * "this doesn't match what I actually have" correction. Adjusts the
+ * category's opening balance by exactly the difference rather than
+ * writing a fake transaction, so it can never show up as income or
+ * spending and never appears as a period's worth of saving. */
+export async function setSavingsBalance(categoryId: string, targetBalance: number): Promise<void> {
   const db = await getDB()
-  const [existingExpense, existingIncome, accounts] = await Promise.all([
-    db.get('transactions', expenseId),
-    db.get('transactions', incomeId),
-    db.getAll('accounts')
-  ])
-  if (!existingExpense || !existingIncome) throw new Error('That transfer could no longer be found.')
-  const fromAccount = accounts.find((a) => a.id === fromAccountId)
-  const toAccount = accounts.find((a) => a.id === toAccountId)
-
-  const expense: Transaction = {
-    ...existingExpense,
-    amount,
-    date,
-    accountId: fromAccountId,
-    note: note?.trim() || `Transfer to ${toAccount?.name ?? 'another account'}`
-  }
-  const income: Transaction = {
-    ...existingIncome,
-    amount,
-    date,
-    accountId: toAccountId,
-    note: note?.trim() || `Transfer from ${fromAccount?.name ?? 'another account'}`
-  }
-
-  const tx = db.transaction('transactions', 'readwrite')
-  await tx.store.put(expense)
-  await tx.store.put(income)
-  await tx.done
-
-  return { expense, income }
-}
-
-/** Deletes both halves of a transfer together — the safe-unlink
- * behaviour in deleteTransaction handles a single side being removed
- * without crashing or losing money from view, but a transfer someone
- * is deliberately removing should disappear from both accounts, not
- * leave a stray half sitting in one of them looking like a real,
- * unrelated transaction. */
-export async function deleteTransfer(expenseId: string, incomeId: string) {
-  const db = await getDB()
-  const tx = db.transaction('transactions', 'readwrite')
-  // Same orphan-safety as deleteTransaction — if anything else somehow
-  // ended up linked to either half (an edge case, but not an impossible
-  // one), that link is cleared rather than left pointing at a
-  // transaction that's about to stop existing.
-  const all = await tx.store.getAll()
-  for (const t of all) {
-    if (t.reimbursesExpenseId === expenseId || t.reimbursesExpenseId === incomeId) {
-      await tx.store.put({ ...t, reimbursesExpenseId: null })
-    }
-    if (t.multiAllocations?.some((a) => a.expenseId === expenseId || a.expenseId === incomeId)) {
-      const remaining = t.multiAllocations.filter((a) => a.expenseId !== expenseId && a.expenseId !== incomeId)
-      if (remaining.length === 0) {
-        await tx.store.put({ ...t, multiAllocations: null })
-      } else if (remaining.length === 1) {
-        await tx.store.put({ ...t, multiAllocations: null, reimbursesExpenseId: remaining[0].expenseId, amount: remaining[0].amount })
-      } else {
-        await tx.store.put({ ...t, multiAllocations: remaining, amount: remaining.reduce((sum, a) => sum + a.amount, 0) })
-      }
-    }
-  }
-  await tx.store.delete(expenseId)
-  await tx.store.delete(incomeId)
-  await tx.done
-}
-
-/** Archives rather than deletes by default — transactions already
- * linked to this account keep their history and keep contributing to
- * account-scoped totals elsewhere (Tag Detail-style reports, CSV
- * export) even after the account itself is hidden from pickers and
- * widgets. A hard delete is offered separately for a genuine mistake
- * (an account that was never real), which does clear the link on any
- * transactions pointing at it — same orphan-safety reasoning as
- * deleteTransaction and deleteCategory. */
-export async function archiveAccount(id: string) {
-  const db = await getDB()
-  const account = await db.get('accounts', id)
-  if (!account) return
-  await db.put('accounts', { ...account, isArchived: true })
-}
-
-/** Deleting an account leaves stale accountId references all over the
- * app otherwise — not just on plain transactions (already handled
- * below), but anywhere else an account can be picked: the Default
- * Account used for Quick Add and completed shopping trips, the NAB/
- * Westpac/Beem Import Defaults mapping, every recurring bill pointed at
- * it, and every installment plan pointed at it. Left alone, each of
- * these would keep silently creating new transactions tagged with an
- * account id that no longer resolves to anything — not a crash, just
- * money quietly falling out of every account balance calculation
- * without any visible sign why. Cleared to null/None here rather than
- * left dangling, matching the same orphan-safety pattern already used
- * for transfers and reimbursements elsewhere in this file. */
-export async function deleteAccountPermanently(id: string) {
-  const db = await getDB()
-  const tx = db.transaction(['accounts', 'transactions', 'recurring', 'installmentPlans'], 'readwrite')
-  await tx.objectStore('accounts').delete(id)
-
-  const transactions = await tx.objectStore('transactions').getAll()
-  for (const t of transactions) {
-    if (t.accountId === id) await tx.objectStore('transactions').put({ ...t, accountId: null })
-  }
-
-  const recurringItems = await tx.objectStore('recurring').getAll()
-  for (const r of recurringItems) {
-    if (r.accountId === id) await tx.objectStore('recurring').put({ ...r, accountId: null })
-  }
-
-  const plans = await tx.objectStore('installmentPlans').getAll()
-  for (const p of plans) {
-    if (p.accountId === id) await tx.objectStore('installmentPlans').put({ ...p, accountId: null })
-  }
-
-  await tx.done
-
-  const settings = getSettings()
-  if (settings.defaultAccountId === id) updateSettings({ defaultAccountId: null })
-
-  const importMapping = getImportAccountMapping()
-  const nextMapping = { ...importMapping }
-  let importMappingChanged = false
-  for (const source of ['nab', 'westpac', 'beem'] as const) {
-    if (nextMapping[source] === id) { nextMapping[source] = null; importMappingChanged = true }
-  }
-  if (importMappingChanged) saveImportAccountMapping(nextMapping)
+  const category = await db.get('categories', categoryId)
+  if (!category) return
+  const transactions = await db.getAll('transactions')
+  const current = savingsBalance(category, transactions)
+  const delta = Math.round((targetBalance - current) * 100) / 100
+  if (Math.abs(delta) < 0.005) return
+  await db.put('categories', {
+    ...category,
+    savingsOpeningBalance: Math.round(((category.savingsOpeningBalance ?? 0) + delta) * 100) / 100
+  })
 }
 
 export async function getInstallmentPlans(): Promise<InstallmentPlan[]> {
@@ -1065,9 +779,7 @@ const BACKED_UP_LOCAL_STORAGE_KEYS = [
   'budget-tracker-merchant-rules', // learned + manually pinned category suggestions
   'budget-tracker-dashboard-widgets', // hidden dashboard widgets
   'budget-tracker-dashboard-widget-order', // dashboard widget ordering
-  'budget-tracker-import-account-mapping', // which account NAB/Westpac/Beem imports default to
-  'budget-tracker-reimbursement-contacts', // recently-used reimbursement note quick-picks
-  'budget-tracker-payday-targets' // payday routine — which accounts to offer transferring to, and how much last time
+  'budget-tracker-reimbursement-contacts' // recently-used reimbursement note quick-picks
 ]
 
 function collectLocalSettings(): Record<string, string> {
@@ -1085,10 +797,9 @@ export async function exportBackup(): Promise<string> {
   const transactions = await db.getAll('transactions')
   const recurring = await db.getAll('recurring')
   const shoppingLists = await db.getAll('shoppingLists')
-  const accounts = await db.getAll('accounts')
   const installmentPlans = await db.getAll('installmentPlans')
   const localSettings = collectLocalSettings()
-  return JSON.stringify({ formatVersion: 4, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, accounts, installmentPlans, localSettings }, null, 2)
+  return JSON.stringify({ formatVersion: 5, exportedAt: new Date().toISOString(), categories, transactions, recurring, shoppingLists, installmentPlans, localSettings }, null, 2)
 }
 
 export async function importBackup(json: string): Promise<{ categoriesCount: number; transactionsCount: number }> {
@@ -1103,7 +814,6 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   let transactions: Transaction[]
   let recurring: RecurringTransaction[] = []
   let shoppingLists: ShoppingList[] = []
-  let accounts: Account[] = []
   let merchantRulesToImport: { key: string; categoryId: string }[] = []
   let localSettings: Record<string, string> = {}
   let installmentPlans: InstallmentPlan[] = []
@@ -1111,7 +821,6 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   if (isNativeBackupFormat(parsed)) {
     const translated = translateNativeBackup(parsed)
     categories = translated.categories
-    accounts = translated.accounts
     transactions = translated.transactions
     recurring = translated.recurring
     shoppingLists = translated.shoppingLists
@@ -1122,7 +831,7 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
       transactions?: Transaction[]
       recurring?: RecurringTransaction[]
       shoppingLists?: ShoppingList[]
-      accounts?: Account[]
+      accounts?: LegacyAccount[]
       installmentPlans?: InstallmentPlan[]
       localSettings?: Record<string, string>
     }
@@ -1133,17 +842,36 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
     transactions = data.transactions
     recurring = data.recurring ?? []
     shoppingLists = data.shoppingLists ?? []
-    // Absent entirely in backups made before accounts existed — nothing
-    // to restore in that case, transactionsToWrite below falls back to
-    // accountId: null for all of them either way.
-    accounts = data.accounts ?? []
     // Written back by their own stable id, not reconciled by name the
-    // way accounts/categories are — a plan doesn't have a name
-    // guaranteed unique the way "Everyday Account" effectively is (two
-    // genuinely different purchases could both be named "Laptop"), so
-    // matching by id and letting a repeat import of the same backup
-    // simply overwrite the same record is the safer default here.
+    // way categories are — a plan doesn't have a name guaranteed
+    // unique (two genuinely different purchases could both be named
+    // "Laptop"), so matching by id and letting a repeat import of the
+    // same backup simply overwrite the same record is the safer default.
     installmentPlans = data.installmentPlans ?? []
+    // A backup made while accounts existed (formatVersion 4 or earlier,
+    // or anything carrying account links) goes through the exact same
+    // conversion an upgraded local database gets, so restoring an old
+    // file lands on the same savings categories with the same balances.
+    const legacyTransactions = transactions as LegacyTransaction[]
+    const isLegacy =
+      (data.accounts?.length ?? 0) > 0 ||
+      legacyTransactions.some((t) => t.accountId || t.fundedFromAccountId || t.isBalanceAdjustment)
+    if (isLegacy) {
+      const converted = convertAccountsToSavingsCategories(
+        {
+          accounts: data.accounts ?? [],
+          categories,
+          transactions: legacyTransactions,
+          recurring: recurring as LegacyRecurring[],
+          installmentPlans: installmentPlans as LegacyPlan[]
+        },
+        () => crypto.randomUUID()
+      )
+      categories = converted.categories
+      transactions = converted.transactions
+      recurring = converted.recurring
+      installmentPlans = converted.installmentPlans
+    }
     // Absent entirely in backups made before this existed — nothing to
     // restore in that case, which is fine, current settings are simply
     // left as they are rather than being cleared out.
@@ -1176,8 +904,27 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
       // don't overwrite settings you may have already configured), but
       // if the existing one has no budget set and the incoming one
       // does, that's worth carrying over rather than discarding.
-      if (existing.monthlyBudget === 0 && c.monthlyBudget > 0) {
-        categoriesToWrite.push({ ...existing, monthlyBudget: c.monthlyBudget })
+      const takeBudget = existing.monthlyBudget === 0 && c.monthlyBudget > 0
+      // A plain category here that's a savings category in the backup
+      // (e.g. "Travel Savings" converted from an account) becomes one
+      // here too — otherwise the restored balance and goal would have
+      // nowhere to live. An existing savings category is left alone.
+      const takeSavings = !!c.isSavingsCategory && !existing.isSavingsCategory
+      if (takeBudget || takeSavings) {
+        categoriesToWrite.push({
+          ...existing,
+          monthlyBudget: takeBudget ? c.monthlyBudget : existing.monthlyBudget,
+          ...(takeSavings
+            ? {
+                isSavingsCategory: true,
+                goalTargetAmount: c.goalTargetAmount,
+                goalTargetDate: c.goalTargetDate,
+                goalStartDate: c.goalStartDate,
+                goalRecurring: c.goalRecurring,
+                savingsOpeningBalance: c.savingsOpeningBalance
+              }
+            : {})
+        })
       }
     } else {
       categoriesToWrite.push(c)
@@ -1201,27 +948,6 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
   function remapCategoryId(id: string | null): string | null {
     if (!id) return null
     return idRemap.get(id) ?? id
-  }
-
-  // Same by-name reconciliation as categories above, and for the same
-  // reason — an imported account's id is always freshly generated, so
-  // matching by id would create a duplicate "Everyday Account" every
-  // single time the same backup (or an auto-backup) gets restored.
-  const existingAccounts = await db.getAll('accounts')
-  const existingAccountsByName = new Map(existingAccounts.map((a) => [a.name.toLowerCase(), a]))
-  const accountIdRemap = new Map<string, string>()
-  const accountsToWrite: Account[] = []
-  for (const a of accounts) {
-    const existing = existingAccountsByName.get(a.name.toLowerCase())
-    if (existing) {
-      accountIdRemap.set(a.id, existing.id)
-    } else {
-      accountsToWrite.push(a)
-    }
-  }
-  function remapAccountId(id: string | null): string | null {
-    if (!id) return null
-    return accountIdRemap.get(id) ?? id
   }
 
   const transactionsToWrite = transactions.map((t) => {
@@ -1253,19 +979,18 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
       date,
       tags: Array.isArray(t.tags) ? t.tags : [],
       categoryId: remapCategoryId(t.categoryId),
-      accountId: remapAccountId((t as Transaction).accountId ?? null)
+      fundedFromCategoryId: remapCategoryId(t.fundedFromCategoryId ?? null) ?? undefined
     }
   })
   const recurringToWrite = recurring.map((r) => ({ ...r, categoryId: remapCategoryId(r.categoryId) }))
   const shoppingListsToWrite = shoppingLists.map((s) => ({ ...s, categoryId: remapCategoryId(s.categoryId) }))
-  const installmentPlansToWrite = installmentPlans.map((p) => ({ ...p, categoryId: remapCategoryId(p.categoryId), accountId: remapAccountId(p.accountId) }))
+  const installmentPlansToWrite = installmentPlans.map((p) => ({ ...p, categoryId: remapCategoryId(p.categoryId) }))
 
-  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'accounts', 'installmentPlans'], 'readwrite')
+  const tx = db.transaction(['categories', 'transactions', 'recurring', 'shoppingLists', 'installmentPlans'], 'readwrite')
   for (const c of categoriesToWrite) await tx.objectStore('categories').put(c)
   for (const t of transactionsToWrite) await tx.objectStore('transactions').put(t)
   for (const r of recurringToWrite) await tx.objectStore('recurring').put(r)
   for (const s of shoppingListsToWrite) await tx.objectStore('shoppingLists').put(s)
-  for (const a of accountsToWrite) await tx.objectStore('accounts').put(a)
   for (const p of installmentPlansToWrite) await tx.objectStore('installmentPlans').put(p)
   await tx.done
 
@@ -1301,15 +1026,31 @@ export async function importBackup(json: string): Promise<{ categoriesCount: num
           return result
         }
         const rules = JSON.parse(value) as { key: string; categoryId: string; counts?: Record<string, number> }[]
-        const remapped = rules.map((r) => ({
-          ...r,
-          categoryId: remapCategoryId(r.categoryId) ?? r.categoryId,
-          counts: remapCounts(r.counts)
-        }))
+        // A rule whose category isn't in this backup (it was deleted on the
+        // source device) could never suggest anything and only shows up as
+        // "Unknown category" — dropped rather than restored.
+        const validIds = new Set([...existingCategories.map((c) => c.id), ...categoriesToWrite.map((c) => c.id)])
+        const remapped = rules
+          .map((r) => ({
+            ...r,
+            categoryId: remapCategoryId(r.categoryId) ?? r.categoryId,
+            counts: remapCounts(r.counts)
+          }))
+          .filter((r) => validIds.has(r.categoryId))
         localStorage.setItem(key, JSON.stringify(remapped))
       } catch {
         // Malformed value in the backup — skip this one key rather than
         // failing the whole restore over it.
+      }
+    } else if (key === 'budget-tracker-settings') {
+      // Older backups carry a default-account id for a feature that no
+      // longer exists — left out so it doesn't linger in storage.
+      try {
+        const parsedSettings = JSON.parse(value) as Record<string, unknown>
+        delete parsedSettings.defaultAccountId
+        localStorage.setItem(key, JSON.stringify(parsedSettings))
+      } catch {
+        localStorage.setItem(key, value)
       }
     } else {
       localStorage.setItem(key, value)
@@ -1402,7 +1143,7 @@ export async function syncReimbursementCategoriesOnce(): Promise<number> {
 
   const tx = db.transaction('transactions', 'readwrite')
   for (const t of all) {
-    if (t.isExpense || !t.reimbursesExpenseId) continue
+    if (t.isExpense || !t.reimbursesExpenseId || t.fundedFromCategoryId) continue
     const expense = byId.get(t.reimbursesExpenseId)
     if (!expense || !expense.categoryId) continue
     if (t.categoryId === expense.categoryId) continue
@@ -1415,11 +1156,10 @@ export async function syncReimbursementCategoriesOnce(): Promise<number> {
   return updated
 }
 
-export function exportCSV(transactions: Transaction[], categories: Category[], accounts: Account[] = []): string {
+export function exportCSV(transactions: Transaction[], categories: Category[]): string {
   const catById = new Map(categories.map((c) => [c.id, c.name]))
-  const acctById = new Map(accounts.map((a) => [a.id, a.name]))
   const txById = new Map(transactions.map((t) => [t.id, t]))
-  const header = 'Date,Note,Category,Account,Type,Amount,Tags,Reimburses\n'
+  const header = 'Date,Note,Category,Type,Amount,Tags,Reimburses\n'
   const rows = transactions.map((t) => {
     // Same UTC-shift issue documented elsewhere in this app:
     // .toISOString() converts to UTC first, which silently shows the
@@ -1430,12 +1170,11 @@ export function exportCSV(transactions: Transaction[], categories: Category[], a
     const date = localDateInputValue(new Date(t.date))
     const note = `"${t.note.replace(/"/g, '""')}"`
     const category = catById.get(t.categoryId ?? '') ?? 'Uncategorized'
-    const account = acctById.get(t.accountId ?? '') ?? ''
     const type = t.isExpense ? 'Expense' : 'Income'
     const tags = `"${(t.tags ?? []).join(', ').replace(/"/g, '""')}"`
     const reimbursedExpense = t.reimbursesExpenseId ? txById.get(t.reimbursesExpenseId) : null
     const reimburses = `"${(reimbursedExpense?.note ?? '').replace(/"/g, '""')}"`
-    return `${date},${note},${category},${account},${type},${t.amount.toFixed(2)},${tags},${reimburses}`
+    return `${date},${note},${category},${type},${t.amount.toFixed(2)},${tags},${reimburses}`
   })
   return header + rows.join('\n')
 }

@@ -1,6 +1,6 @@
 const WIDGETS_KEY = 'budget-tracker-dashboard-widgets'
 
-export type WidgetId = 'safeToSpend' | 'stats' | 'insights' | 'goals' | 'budgetVsActual' | 'categoryPie' | 'last14Days' | 'monthlyTrend' | 'netSavingsTrend' | 'topMerchants' | 'monthRecap' | 'unallocatedFunds' | 'upcomingBills' | 'needsWantsRatio' | 'topTags' | 'outstandingReimbursements' | 'accounts' | 'upcomingInstallments' | 'biggestChange'
+export type WidgetId = 'safeToSpend' | 'stats' | 'insights' | 'goals' | 'budgetVsActual' | 'categoryPie' | 'last14Days' | 'monthlyTrend' | 'netSavingsTrend' | 'topMerchants' | 'monthRecap' | 'unallocatedFunds' | 'upcomingBills' | 'needsWantsRatio' | 'topTags' | 'outstandingReimbursements' | 'upcomingInstallments' | 'biggestChange'
 
 export const WIDGET_LABELS: Record<WidgetId, string> = {
   safeToSpend: 'Safe to Spend',
@@ -19,12 +19,11 @@ export const WIDGET_LABELS: Record<WidgetId, string> = {
   needsWantsRatio: 'Needs vs Wants',
   topTags: 'Top Tags This Month',
   outstandingReimbursements: 'Money Owed to You',
-  accounts: 'Accounts & Net Worth',
   upcomingInstallments: 'Upcoming Installments',
   biggestChange: 'Biggest Category Change'
 }
 
-const ALL_WIDGETS: WidgetId[] = ['safeToSpend', 'stats', 'insights', 'goals', 'budgetVsActual', 'categoryPie', 'last14Days', 'monthlyTrend', 'netSavingsTrend', 'topMerchants', 'monthRecap', 'unallocatedFunds', 'upcomingBills', 'needsWantsRatio', 'topTags', 'outstandingReimbursements', 'accounts', 'upcomingInstallments', 'biggestChange']
+const ALL_WIDGETS: WidgetId[] = ['safeToSpend', 'stats', 'insights', 'goals', 'budgetVsActual', 'categoryPie', 'last14Days', 'monthlyTrend', 'netSavingsTrend', 'topMerchants', 'monthRecap', 'unallocatedFunds', 'upcomingBills', 'needsWantsRatio', 'topTags', 'outstandingReimbursements', 'upcomingInstallments', 'biggestChange']
 
 // safeToSpend and stats are core to the dashboard and always shown —
 // not offered as hideable, same as the native app treats them.

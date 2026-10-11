@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, repaysNote, excessForReimbursement, localDateInputValue, isUnlinkedIncome, isLinkedReimbursement, totalExcessReimbursement } from '../calculations'
+import type { Category, Transaction } from '../types'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, localDateInputValue, isIncomeReceipt, isLinkedReimbursement, totalExcessReimbursement, savingsCategoryIds } from '../calculations'
 import { periodOffsetBy, getCycleConfig, getSettings, isCustomCycle } from '../budgetPeriod'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -13,10 +13,9 @@ interface Props {
   initialStart?: string
   initialEnd?: string
   onChanged: () => void
-  accounts?: Account[]
 }
 
-export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd, onChanged, accounts = [] }: Props) {
+export default function CustomRangeReport({ categories, transactions, onSave, onBack, initialStart, initialEnd, onChanged }: Props) {
   useSwipeBack(onBack)
   const now = new Date()
   const [start, setStart] = useState(initialStart ?? localDateInputValue(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29)))
@@ -81,7 +80,10 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
     // deliberately NOT subtracted again here — its effect is already
     // folded into the linked expense's own netAmount, so treating it as
     // a second, separate offset would double count it.
-    for (const t of rangeTransactions.filter((t) => t.categoryId)) {
+    // Savings categories are money set aside, not spending — left out of
+    // every spend total here, same as the Dashboard.
+    const savingsIds = savingsCategoryIds(categories)
+    for (const t of rangeTransactions.filter((t) => t.categoryId && !savingsIds.has(t.categoryId))) {
       const delta = t.isExpense ? netAmount(t, transactions) : (t.reimbursesExpenseId ? 0 : -t.amount)
       map.set(t.categoryId!, (map.get(t.categoryId!) ?? 0) + delta)
     }
@@ -95,7 +97,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
     // whenever an expense in range had been reimbursed for more than it cost
     // — silently breaking the "must match when the range lines up with the
     // current period" guarantee the comment above already promises.
-    for (const t of rangeTransactions.filter((t) => t.isExpense && t.categoryId)) {
+    for (const t of rangeTransactions.filter((t) => t.isExpense && t.categoryId && !savingsIds.has(t.categoryId))) {
       const excess = totalExcessReimbursement(t, transactions)
       if (excess > 0) map.set(t.categoryId!, (map.get(t.categoryId!) ?? 0) - excess)
     }
@@ -113,7 +115,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
   // exactly whenever this report's range lines up with the current
   // period.
   const totalSpent = categoryTotals.reduce((s, x) => s + x.amount, 0)
-  const unlinkedIncome = rangeTransactions.filter((t) => isUnlinkedIncome(t)).reduce((s, t) => s + t.amount, 0)
+  const unlinkedIncome = rangeTransactions.filter((t) => isIncomeReceipt(t)).reduce((s, t) => s + t.amount, 0)
   const excessFromLinked = rangeTransactions
     .filter((t) => isLinkedReimbursement(t))
     .reduce((s, t) => s + excessForReimbursement(t, transactions), 0)
@@ -201,7 +203,7 @@ export default function CustomRangeReport({ categories, transactions, onSave, on
           <button key={t.id} className="transaction-row" style={{ borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }} onClick={() => setEditing(t)}>
             <div className="tx-info">
               <span className="tx-note">{t.note || 'Uncategorized'}</span>
-              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, accounts) && ` · ${repaysNote(t, transactions, accounts)}`}</span>
+              <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories) && ` · ${repaysNote(t, transactions, categories)}`}</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
               {netAmount(t, transactions) !== t.amount && (

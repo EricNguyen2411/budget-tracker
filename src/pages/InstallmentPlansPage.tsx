@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Category, InstallmentPlan, InstallmentFrequency, Transaction, Account } from '../types'
+import type { Category, InstallmentPlan, InstallmentFrequency, Transaction } from '../types'
 import { installmentProgress, installmentAmounts, installmentDueDates } from '../installments'
 import { formatCurrency, localDateInputValue } from '../calculations'
 import { createInstallmentPlan, saveInstallmentPlan, deleteInstallmentPlan, saveTransaction } from '../db'
@@ -13,7 +13,6 @@ interface Props {
   installmentPlans: InstallmentPlan[]
   onChanged: () => void
   onBack: () => void
-  accounts?: Account[]
 }
 
 const FREQUENCY_LABELS: Record<InstallmentFrequency, string> = {
@@ -24,7 +23,7 @@ const FREQUENCY_LABELS: Record<InstallmentFrequency, string> = {
 
 const COMMON_PROVIDERS = ['Afterpay', 'Zip', 'PayPal Pay in 4', 'Klarna']
 
-export default function InstallmentPlansPage({ categories, transactions, installmentPlans, onChanged, onBack, accounts = [] }: Props) {
+export default function InstallmentPlansPage({ categories, transactions, installmentPlans, onChanged, onBack }: Props) {
   useSwipeBack(onBack)
   const [editingPlan, setEditingPlan] = useState<InstallmentPlan | null>(null)
   const [creatingNew, setCreatingNew] = useState(false)
@@ -101,7 +100,6 @@ export default function InstallmentPlansPage({ categories, transactions, install
         <InstallmentPlanEditor
           plan={editingPlan}
           categories={categories}
-          accounts={accounts}
           transactions={transactions}
           hasPayments={editingPlan ? transactions.some((t) => t.installmentPlanId === editingPlan.id) : false}
           onSave={async (data, linkedFirstPaymentId) => {
@@ -116,7 +114,6 @@ export default function InstallmentPlansPage({ categories, transactions, install
                 frequency: data.frequency ?? 'fortnightly',
                 firstDueDate: data.firstDueDate ?? new Date().toISOString(),
                 categoryId: data.categoryId ?? null,
-                accountId: data.accountId ?? null,
                 isActive: true,
                 nextInstallmentIndex: 0
               })
@@ -140,10 +137,9 @@ export default function InstallmentPlansPage({ categories, transactions, install
   )
 }
 
-function InstallmentPlanEditor({ plan, categories, accounts, transactions, hasPayments, onSave, onClose }: {
+function InstallmentPlanEditor({ plan, categories, transactions, hasPayments, onSave, onClose }: {
   plan: InstallmentPlan | null
   categories: Category[]
-  accounts: Account[]
   transactions: Transaction[]
   hasPayments: boolean
   onSave: (data: Partial<InstallmentPlan>, linkedFirstPaymentId: string | null) => void
@@ -157,17 +153,13 @@ function InstallmentPlanEditor({ plan, categories, accounts, transactions, hasPa
   const [frequency, setFrequency] = useState<InstallmentFrequency>(plan?.frequency ?? 'fortnightly')
   const [firstDueDate, setFirstDueDate] = useState(localDateInputValue(plan ? new Date(plan.firstDueDate) : new Date()))
   const [categoryId, setCategoryId] = useState<string | null>(plan?.categoryId ?? null)
-  const [accountId, setAccountId] = useState<string | null>(plan?.accountId ?? null)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
-  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const [linkedFirstPaymentId, setLinkedFirstPaymentId] = useState<string | null>(null)
   const [showFirstPaymentPicker, setShowFirstPaymentPicker] = useState(false)
   const categoryPickerClose = useModalClose(() => setShowCategoryPicker(false))
-  const accountPickerClose = useModalClose(() => setShowAccountPicker(false))
   const firstPaymentPickerClose = useModalClose(() => setShowFirstPaymentPicker(false))
 
   const category = categories.find((c) => c.id === categoryId)
-  const account = accounts.find((a) => a.id === accountId)
   const linkedTransaction = transactions.find((t) => t.id === linkedFirstPaymentId)
 
   const parsedTotal = parseFloat(totalAmount)
@@ -207,8 +199,7 @@ function InstallmentPlanEditor({ plan, categories, accounts, transactions, hasPa
       numberOfInstallments: parsedCount,
       frequency,
       firstDueDate: new Date(y, m - 1, d).toISOString(),
-      categoryId,
-      accountId
+      categoryId
     }, linkedFirstPaymentId)
     requestClose()
   }
@@ -261,16 +252,6 @@ function InstallmentPlanEditor({ plan, categories, accounts, transactions, hasPa
             <span>{category ? `${category.icon} ${category.name}` : 'None'}</span>
             <span className="chevron">›</span>
           </button>
-
-          {accounts.length > 0 && (
-            <>
-              <label className="field-label" style={{ marginTop: 16 }}>Account</label>
-              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
-                <span>{account ? `${account.icon} ${account.name}` : 'None (optional)'}</span>
-                <span className="chevron">›</span>
-              </button>
-            </>
-          )}
 
           {canSave && previewAmounts.length > 0 && (
             <div className="card" style={{ marginTop: 20 }}>
@@ -364,32 +345,6 @@ function InstallmentPlanEditor({ plan, categories, accounts, transactions, hasPa
           )
         })()}
 
-        {showAccountPicker && (() => {
-          const { closing: ac, requestClose: rac } = accountPickerClose
-          function pick(id: string | null) { rac(() => { setAccountId(id); setShowAccountPicker(false) }) }
-          return (
-            <div className={`modal-backdrop${ac ? ' modal-closing' : ''}`} onClick={() => rac(() => setShowAccountPicker(false))}>
-              <div className={`modal-sheet${ac ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
-                <div className="modal-header">
-                  <span className="modal-title">Account</span>
-                  <button onClick={() => rac(() => setShowAccountPicker(false))} className="text-button text-button-primary">Done</button>
-                </div>
-                <div className="modal-body">
-                  <button className="picker-row" onClick={() => pick(null)}>
-                    <span>None (optional)</span>
-                    {!accountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                  </button>
-                  {accounts.map((a) => (
-                    <button key={a.id} className="picker-row" onClick={() => pick(a.id)}>
-                      <span>{a.icon} {a.name}</span>
-                      {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )
-        })()}
       </div>
     </div>
   )

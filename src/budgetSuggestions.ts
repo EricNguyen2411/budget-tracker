@@ -1,4 +1,4 @@
-import type { Category, Transaction, Account } from './types'
+import type { Category, Transaction } from './types'
 import { goalProgress } from './calculations'
 
 // Relative weights for spending categories, grounded in the ABS
@@ -34,7 +34,7 @@ export interface BudgetSuggestion {
 }
 
 export interface AccountGoalSuggestion {
-  accountId: string
+  categoryId: string
   suggestedAmount: number
   explanation: string
 }
@@ -43,7 +43,7 @@ export interface AccountGoalSuggestion {
  * target date — the actual gap divided by the actual months remaining,
  * not a generic percentage. A goal with no target date just gets a
  * flat share of whatever's left in the savings pool instead. */
-function monthlyContributionNeeded(account: Account, transactions: Transaction[], referenceDate: Date): number | null {
+function monthlyContributionNeeded(account: Category, transactions: Transaction[], referenceDate: Date): number | null {
   const target = account.goalTargetAmount ?? 0
   if (!account.goalTargetDate || target <= 0) return null
   const remaining = target - goalProgress(account, transactions, referenceDate)
@@ -62,12 +62,10 @@ function monthlyContributionNeeded(account: Account, transactions: Transaction[]
  * get their pace-based need first; anything left in the savings pool
  * splits evenly across the rest. Spending categories then split
  * whatever's left of income after savings, weighted by the
- * ABS-grounded proportions above. Categories no longer carry a savings
- * concept themselves, so every one of them is a spending category here
- * — the split against goal accounts happens entirely separately. */
-export function suggestBudgets(categories: Category[], accounts: Account[], totalMonthlyIncome: number, savingsAmount: number, transactions: Transaction[] = [], referenceDate: Date = new Date()): { categorySuggestions: BudgetSuggestion[]; accountSuggestions: AccountGoalSuggestion[] } {
-  const topLevel = categories.filter((c) => !c.parentId)
-  const goalAccounts = accounts.filter((a) => (a.goalTargetAmount ?? 0) > 0)
+ * ABS-grounded proportions above. Savings categories are excluded from the spending split — the split against savings goals happens entirely separately. */
+export function suggestBudgets(categories: Category[], totalMonthlyIncome: number, savingsAmount: number, transactions: Transaction[] = [], referenceDate: Date = new Date()): { categorySuggestions: BudgetSuggestion[]; accountSuggestions: AccountGoalSuggestion[] } {
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
+  const goalAccounts = categories.filter((c) => c.isSavingsCategory && (c.goalTargetAmount ?? 0) > 0)
 
   const accountSuggestions: AccountGoalSuggestion[] = []
 
@@ -79,13 +77,13 @@ export function suggestBudgets(categories: Category[], accounts: Account[], tota
   for (const { account, need } of withPace) {
     if (need !== null) {
       accountSuggestions.push({
-        accountId: account.id,
+        categoryId: account.id,
         suggestedAmount: Math.round(need),
         explanation: `pace needed to reach ${account.goalTargetDate ? new Date(account.goalTargetDate).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' }) : 'its target'}`
       })
     } else {
       const share = unpacedCount > 0 ? leftoverForUnpaced / unpacedCount : 0
-      accountSuggestions.push({ accountId: account.id, suggestedAmount: Math.round(share), explanation: 'even share of remaining savings — no target date set' })
+      accountSuggestions.push({ categoryId: account.id, suggestedAmount: Math.round(share), explanation: 'even share of remaining savings — no target date set' })
     }
   }
 

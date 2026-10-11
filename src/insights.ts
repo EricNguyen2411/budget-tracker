@@ -1,4 +1,4 @@
-import type { Category, Transaction, Account } from './types'
+import type { Category, Transaction } from './types'
 import { netSpentForCategory, effectiveBudget, formatCurrency, isGoal, goalProgressFraction, projectedGoalCompletionDate, categoryAndDescendantIds } from './calculations'
 import { periodContaining, referenceDateOffsetBy, isInSamePeriod } from './budgetPeriod'
 
@@ -12,7 +12,7 @@ function categoryComparisons(categories: Category[], transactions: Transaction[]
   const lastPeriodRef = referenceDateOffsetBy(-1, referenceDate)
   const results: Insight[] = []
 
-  for (const category of categories.filter((c) => !c.parentId)) {
+  for (const category of categories.filter((c) => !c.parentId && !c.isSavingsCategory)) {
     const thisPeriod = netSpentForCategory(category, categories, transactions, referenceDate)
     const lastPeriod = netSpentForCategory(category, categories, transactions, lastPeriodRef)
     if (lastPeriod <= 0 || thisPeriod <= 0) continue
@@ -56,7 +56,7 @@ function budgetProjections(categories: Category[], transactions: Transaction[], 
   if (daysElapsed < 5) return []
 
   const results: Insight[] = []
-  for (const category of categories.filter((c) => !c.parentId)) {
+  for (const category of categories.filter((c) => !c.parentId && !c.isSavingsCategory)) {
     const budget = effectiveBudget(category, categories)
     if (budget <= 0) continue
     const spentSoFar = netSpentForCategory(category, categories, transactions, referenceDate)
@@ -103,9 +103,9 @@ function budgetProjections(categories: Category[], transactions: Transaction[], 
   return results
 }
 
-function goalInsights(accounts: Account[], transactions: Transaction[], referenceDate: Date): Insight[] {
+function goalInsights(categories: Category[], transactions: Transaction[], referenceDate: Date): Insight[] {
   const results: Insight[] = []
-  for (const account of accounts.filter((a) => isGoal(a))) {
+  for (const account of categories.filter((a) => isGoal(a))) {
     if (goalProgressFraction(account, transactions, referenceDate) >= 1) {
       results.push({
         icon: '✅',
@@ -133,9 +133,9 @@ function goalInsights(accounts: Account[], transactions: Transaction[], referenc
   return results
 }
 
-export function generateInsights(categories: Category[], transactions: Transaction[], accounts: Account[] = [], referenceDate: Date = new Date()): Insight[] {
+export function generateInsights(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): Insight[] {
   return [
-    ...goalInsights(accounts, transactions, referenceDate),
+    ...goalInsights(categories, transactions, referenceDate),
     ...budgetProjections(categories, transactions, referenceDate),
     ...categoryComparisons(categories, transactions, referenceDate)
   ].slice(0, 4)

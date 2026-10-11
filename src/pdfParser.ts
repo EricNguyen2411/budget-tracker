@@ -105,7 +105,7 @@ export async function parsePdfStatement(file: File, categories: Category[] = [])
     }
     if (currentBlock) blocks.push(currentBlock.join(' '))
 
-    interface Draft { amount: number; note: string; date: Date; textIsExpense: boolean; balance: number | null; balanceIsDr: boolean }
+    interface Draft { amount: number; note: string; date: Date; textIsExpense: boolean; hasSignMarker: boolean; balance: number | null; balanceIsDr: boolean }
     const drafts: Draft[] = []
 
     for (const blockText of blocks) {
@@ -144,7 +144,8 @@ export async function parsePdfStatement(file: File, categories: Category[] = [])
         .trim()
       if (!note) note = 'Transaction'
 
-      drafts.push({ amount, note, date, textIsExpense, balance, balanceIsDr })
+      const hasSignMarker = !!amountMatch[1] || !!amountMatch[3]
+      drafts.push({ amount, note, date, textIsExpense, hasSignMarker, balance, balanceIsDr })
     }
 
     // Confirmed different banks order their statements differently —
@@ -177,6 +178,13 @@ export async function parsePdfStatement(file: File, categories: Category[] = [])
         // default here than the unreliable text-based sign, which
         // regularly finds no marker at all on either side.
         isExpense = true
+      } else if (!draft.hasSignMarker) {
+        // Same edge case on an ordinary bank account (the oldest or newest
+        // row has no neighbouring balance to compare, and the amount
+        // carries no +/-/CR/DR): a bare number would otherwise always be
+        // read as income. Most rows are spending, so default to expense
+        // unless the description itself says money came in.
+        isExpense = !/\b(deposit|salary|wages?|pay(?:roll)?|refund|interest|transfer from|credit|reversal|received)\b/i.test(draft.note)
       }
       transactions.push({
         id: uuid(),

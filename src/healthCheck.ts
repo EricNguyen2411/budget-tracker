@@ -1,6 +1,6 @@
-import type { Transaction, RecurringTransaction, Category, Account } from './types'
+import type { Transaction, RecurringTransaction, Category } from './types'
 import { findDuplicates, isLikelyTransitFare } from './duplicates'
-import { goalProgress, projectedGoalCompletionDate, netSpentForCategory, findTransferPair, isGoal } from './calculations'
+import { goalProgress, projectedGoalCompletionDate, netSpentForCategory, isGoal, savingsCategoryIds, inSavingsCategory } from './calculations'
 import { detectRecurring } from './recurring'
 import { getSettings } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
@@ -11,18 +11,17 @@ export interface HealthFinding {
   detail: string
   severity: 'info' | 'warning'
   transactions: Transaction[]
-  renewableAccountIds?: string[]
-  fixableRecurringIds?: string[]
+  renewableCategoryIds?: string[]
 }
 
 export function runHealthCheck(
   transactions: Transaction[],
   recurring: RecurringTransaction[],
   categories: Category[],
-  referenceDate: Date = new Date(),
-  accounts: Account[] = []
+  referenceDate: Date = new Date()
 ): HealthFinding[] {
   const findings: HealthFinding[] = []
+  const savingsIds = savingsCategoryIds(categories)
 
   const dupGroups = findDuplicates(transactions)
   if (dupGroups.length > 0) {
@@ -58,36 +57,7 @@ export function runHealthCheck(
     })
   }
 
-  // Interest is deliberately a manual "calculate and add" action rather
-  // than something that happens on its own in the background — every
-  // other money-creating action in this app works the same way, always
-  // shown and confirmed rather than silent. The trade-off is that
-  // nothing reminds a person to actually come back and do it, so an
-  // interest-earning account can easily go months without its balance
-  // reflecting interest it's genuinely already earned. Flagged at 45
-  // days specifically because monthly is the normal real-world credit
-  // cadence, and 45 gives real slack before nagging about something
-  // that's merely a few days into a new month.
-  const accountsNeedingInterest = accounts.filter((a) => {
-    if (!a.interestRate || a.isArchived || a.type === 'credit_card') return false
-    const ownInterestTx = transactions.filter((t) => t.accountId === a.id && !t.isExpense && t.note === 'Interest earned')
-    const lastDate = ownInterestTx.length > 0
-      ? new Date(Math.max(...ownInterestTx.map((t) => new Date(t.date).getTime())))
-      : new Date(a.openingDate)
-    const daysSince = (referenceDate.getTime() - lastDate.getTime()) / (24 * 60 * 60 * 1000)
-    return daysSince > 45
-  })
-  if (accountsNeedingInterest.length > 0) {
-    findings.push({
-      icon: '💰',
-      title: `${accountsNeedingInterest.length} account${accountsNeedingInterest.length === 1 ? '' : 's'} may be missing recent interest`,
-      detail: `${accountsNeedingInterest.map((a) => a.name).join(', ')} — has a rate set but hasn't had interest added in over 45 days. Add it from the account's own screen.`,
-      severity: 'info',
-      transactions: []
-    })
-  }
-
-  const expenseAmounts = transactions.filter((t) => t.isExpense).map((t) => t.amount).sort((a, b) => a - b)
+  const expenseAmounts = transactions.filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds)).map((t) => t.amount).sort((a, b) => a - b)
   if (expenseAmounts.length >= 10) {
     const median = expenseAmounts[Math.floor(expenseAmounts.length / 2)]
     if (median > 0) {
@@ -104,14 +74,9 @@ export function runHealthCheck(
       // spending.
       const outliers = transactions.filter((t) => {
         if (!t.isExpense || t.amount <= Math.max(median * 10, 300)) return false
-        // A transfer is a deliberate, self-typed amount — created by
-        // entering a number directly into the Transfer form, not parsed
-        // from an OCR'd screenshot or an imported statement — so it
-        // doesn't carry the same "could be a misread/typo" risk this
-        // check exists to catch. A large one-off transfer (paying off a
-        // big credit card bill) is a normal, explicable reason to be
-        // large, the same way a recurring bill is.
-        if (findTransferPair(t, transactions)) return false
+        // Money set aside into a savings category is a deliberate, self-typed
+        // amount, not spending that could be a misread or typo.
+        if (inSavingsCategory(t, savingsIds)) return false
         const key = normalizeMerchantKey(t.note)
         if (!key) return true
         const recurs = transactions.some((other) =>
@@ -210,7 +175,7 @@ export function runHealthCheck(
   // reached, or on a pace that won't get there in time — surfaced here
   // since Month in Review only shows this for the current month, and
   // it's easy to lose track of a goal you're not actively looking at.
-  const goalsOffPace = accounts.filter((a) => {
+  const goalsOffPace = categories.filter((a) => {
     if (!isGoal(a) || !a.goalTargetDate) return false
     if (goalProgress(a, transactions, referenceDate) >= (a.goalTargetAmount ?? 0)) return false
     const target = new Date(a.goalTargetDate)
@@ -232,7 +197,7 @@ export function runHealthCheck(
   // either been fully funded or reached their target date — either way
   // it's time to renew into next year's cycle, since the bill is
   // presumably due now regardless of whether the full amount was saved.
-  const goalsReadyToRenew = accounts.filter((a) => {
+  const goalsReadyToRenew = categories.filter((a) => {
     if (!isGoal(a) || !a.goalRecurring || !a.goalTargetDate) return false
     const reached = goalProgress(a, transactions, referenceDate) >= (a.goalTargetAmount ?? 0)
     const dueDatePassed = new Date(a.goalTargetDate) <= referenceDate
@@ -245,42 +210,7 @@ export function runHealthCheck(
       detail: goalsReadyToRenew.map((a) => a.name).join(', ') + ' \u2014 funded or due. Tap to roll each into next year\u2019s cycle (target date +1 year, progress tracking restarts fresh).',
       severity: 'info',
       transactions: [],
-      renewableAccountIds: goalsReadyToRenew.map((a) => a.id)
-    })
-  }
-
-  // A recurring item tied to a savings account, set to Expense
-  // direction, whose own note is essentially that account's name — the
-  // strong, specific signal that someone set up a recurring
-  // CONTRIBUTION (meant to add to the balance) but left it on Expense,
-  // which actually withdraws instead. Confirmed against a real backup:
-  // a recurring "Travel Savings" item pointed straight at the Travel
-  // Savings account, set to Expense, due to fire again within days —
-  // it would have driven that account's real balance negative the
-  // moment it generated, the opposite of what someone naming a
-  // recurring item after the very account it funds almost certainly
-  // intends. Deliberately narrow (name must closely match the
-  // account, not just any expense that happens to be paid from a
-  // savings account) — a genuine recurring withdrawal FROM savings
-  // (an insurance premium funded from an emergency fund, say) is a
-  // completely legitimate pattern and would carry its own name, not
-  // the account's.
-  const misdirectedContributions = recurring.filter((r) => {
-    if (!r.isExpense || !r.isActive || !r.accountId) return false
-    const account = accounts.find((a) => a.id === r.accountId)
-    if (!account || account.type !== 'savings') return false
-    const noteKey = r.note.trim().toLowerCase()
-    const accountKey = account.name.trim().toLowerCase()
-    return noteKey === accountKey || noteKey.includes(accountKey) || accountKey.includes(noteKey)
-  })
-  if (misdirectedContributions.length > 0) {
-    findings.push({
-      icon: '⚠️',
-      title: `${misdirectedContributions.length} recurring item${misdirectedContributions.length === 1 ? '' : 's'} may be set up backwards`,
-      detail: misdirectedContributions.map((r) => `"${r.note}"`).join(', ') + ' \u2014 named after the savings account it\u2019s tied to, but set to Expense. If this is meant to be a monthly contribution, it should be Income instead — as Expense, it will withdraw from that account\u2019s balance rather than add to it.',
-      severity: 'warning',
-      transactions: [],
-      fixableRecurringIds: misdirectedContributions.map((r) => r.id)
+      renewableCategoryIds: goalsReadyToRenew.map((a) => a.id)
     })
   }
 
@@ -288,7 +218,7 @@ export function runHealthCheck(
   // easy to miss since Budgets only shows categories that already have
   // one, so a forgotten category never surfaces there on its own.
   const unbudgeted = categories.filter((c) => {
-    if (c.parentId || c.monthlyBudget > 0) return false
+    if (c.parentId || c.isSavingsCategory || c.monthlyBudget > 0) return false
     return netSpentForCategory(c, categories, transactions, referenceDate) > 0
   })
   if (unbudgeted.length > 0) {

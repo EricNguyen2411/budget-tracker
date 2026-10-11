@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import type { Category, RecurringTransaction, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote, findTransferPair } from '../calculations'
+import type { Category, RecurringTransaction, Transaction } from '../types'
+import { formatCurrency, netAmount, reimbursementNote, excessIncomeNote, repaysNote } from '../calculations'
 import { transactionsWithSimilarName } from '../duplicates'
 import { normalizeTag, dedupeTags, allTagsFrom } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
@@ -18,7 +18,6 @@ interface Props {
   onTransactionCreated?: (t: Transaction) => void
   initialSearch?: string
   recurring?: RecurringTransaction[]
-  accounts?: Account[]
 }
 
 function dayLabel(date: Date): string {
@@ -33,7 +32,7 @@ function dayLabel(date: Date): string {
   return date.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: sameYear ? undefined : 'numeric' })
 }
 
-export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated, recurring = [], accounts = [] }: Props) {
+export default function TransactionsPage({ categories, transactions, onSave, onDelete, onChanged, initialSearch, onTransactionCreated, recurring = [] }: Props) {
   const [search, setSearch] = useState(initialSearch ?? '')
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
@@ -101,21 +100,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
   }
 
   async function bulkDelete() {
-    // Expands the selection to include the OTHER half of any transfer
-    // caught up in it — confirmed directly that deleting just one side
-    // through bulk-select leaves the other behind looking like a plain,
-    // unrelated income transaction (and incorrectly counting toward the
-    // Income stat, since its link to the deleted expense is gone too).
-    // The dedicated transfer editor already treats a transfer as one
-    // thing for deletion; this keeps bulk-select consistent with that
-    // rather than being a second, less careful way to delete one.
     const expanded = new Set(selectedIds)
-    for (const id of selectedIds) {
-      const t = transactions.find((tx) => tx.id === id)
-      if (!t) continue
-      const pair = findTransferPair(t, transactions)
-      if (pair) expanded.add(pair.id)
-    }
     if (!confirm(`Delete ${expanded.size} transaction${expanded.size === 1 ? '' : 's'}? This can't be undone.`)) return
     for (const id of expanded) await onDelete(id)
     exitSelectMode()
@@ -205,7 +190,7 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
               const amount = netAmount(t, transactions, true)
               const reimbursedNote = reimbursementNote(t, transactions)
               const excessNote = excessIncomeNote(t, transactions)
-              const repayNote = repaysNote(t, transactions, accounts)
+              const repayNote = repaysNote(t, transactions, categories)
               return (
                 <SwipeableRow key={t.id} disabled={selectMode} onDelete={() => onDelete(t.id)}>
                   <button
@@ -297,7 +282,6 @@ export default function TransactionsPage({ categories, transactions, onSave, onD
           onClose={() => { setEditing(null); setCreating(false) }}
           onChanged={onChanged}
           recurring={recurring}
-          accounts={accounts}
         />
       )}
 

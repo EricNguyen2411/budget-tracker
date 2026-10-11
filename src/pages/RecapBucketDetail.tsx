@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, excessForReimbursement, effectiveBudget, isUnlinkedIncome, isSavingsAccount, goalAccountChangeInPeriod } from '../calculations'
+import type { Category, Transaction } from '../types'
+import { formatCurrency, netAmount, excessForReimbursement, effectiveBudget, isIncomeReceipt, savingsCategoryIds, inSavingsCategory, netSavedThisPeriod } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import { directSpentForCategory } from '../monthlyRecap'
 import { useSwipeBack } from '../useSwipeBack'
@@ -14,7 +14,6 @@ interface Props {
   referenceDate: Date
   categories: Category[]
   transactions: Transaction[]
-  accounts: Account[]
   classify: (c: Category, allCategories?: Category[]) => 'need' | 'want' | 'unknown'
   onBack: () => void
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
@@ -30,10 +29,11 @@ const BUCKET_TITLES: Record<RecapBucket, string> = {
   saved: 'Saved'
 }
 
-export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, categories, transactions, accounts, classify, onBack, onSave, onDelete, onOpenCategory, onChanged }: Props) {
+export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, categories, transactions, classify, onBack, onSave, onDelete, onOpenCategory, onChanged }: Props) {
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Transaction | null>(null)
 
+  const savingsIds = savingsCategoryIds(categories)
   const periodTx = transactions.filter((t) => isInSamePeriod(new Date(t.date), referenceDate))
 
   if (bucket === 'needs' || bucket === 'wants') {
@@ -49,7 +49,7 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
     // need counting too — an earlier leaf-only version of this silently
     // dropped those entirely.
     const rows = categories
-      .filter((c) => classify(c, categories) === wanted)
+      .filter((c) => !c.isSavingsCategory && classify(c, categories) === wanted)
       .map((c) => ({
         category: c,
         parent: c.parentId ? categories.find((p) => p.id === c.parentId) : null,
@@ -92,28 +92,23 @@ export default function RecapBucketDetail({ bucket, monthLabel, referenceDate, c
   // income / saved — transaction-level detail
   const rows = periodTx.filter((t) => {
     if (bucket === 'saved') {
-      // A deposit into a goal account — the account-based equivalent of
-      // what used to be an expense-direction transaction in a savings
-      // category. Doesn't include a goal's withdrawal offset (that's
-      // never tied to an account at all, see fundedFromAccountId) or
-      // the real withdrawal itself (isExpense: true but reduces the
-      // goal, not builds it).
-      if (!t.isExpense || !t.accountId) return false
-      const account = accounts.find((a) => a.id === t.accountId)
-      return !!account && isSavingsAccount(account) && !t.reimbursesExpenseId
+      // Money put into a savings category. A withdrawal (income-direction,
+      // carrying fundedFromCategoryId) reduces a category rather than
+      // building it, so it isn't listed here.
+      return t.isExpense && !t.reimbursesExpenseId && inSavingsCategory(t, savingsIds)
     }
     // income: unlinked income in full, plus the excess portion of any reimbursement
     if (t.isExpense) return false
-    if (isUnlinkedIncome(t)) return true
+    if (isIncomeReceipt(t)) return true
     return excessForReimbursement(t, transactions) > 0
   })
   // For "saved" specifically, the total is the actual net change across
-  // every goal account this period (deposits minus withdrawals) rather
+  // every savings category this period (deposits minus withdrawals) rather
   // than just summing the deposit rows above — matching exactly what
   // computeDashboardTotals' own Saved figure does, so this drill-down
   // can't disagree with the stat it was opened from.
   const total = bucket === 'saved'
-    ? accounts.filter((a) => isSavingsAccount(a)).reduce((sum, a) => sum + Math.max(0, goalAccountChangeInPeriod(a, transactions, referenceDate)), 0)
+    ? netSavedThisPeriod(categories, transactions, referenceDate)
     : rows.reduce((sum, t) => {
         if (bucket === 'income' && t.reimbursesExpenseId) return sum + excessForReimbursement(t, transactions)
         return sum + netAmount(t, transactions)

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
+import type { Category, Transaction } from '../types'
 import { suggestBudgets } from '../budgetSuggestions'
-import { formatCurrency, goalProgress, computeDashboardTotals, isUnlinkedIncome } from '../calculations'
+import { formatCurrency, goalProgress, computeDashboardTotals, isIncomeReceipt } from '../calculations'
 import { referenceDateOffsetBy } from '../budgetPeriod'
 import { saveCategory } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
@@ -10,12 +10,11 @@ import { useModalClose } from '../useModalClose'
 interface Props {
   categories: Category[]
   transactions: Transaction[]
-  accounts: Account[]
   onBack: () => void
   onChanged: () => void
 }
 
-export default function TotalBudgetPlanner({ categories, transactions, accounts, onBack, onChanged }: Props) {
+export default function TotalBudgetPlanner({ categories, transactions, onBack, onChanged }: Props) {
   useSwipeBack(onBack)
   const [income, setIncome] = useState('')
   const [incomeTouched, setIncomeTouched] = useState(false)
@@ -32,7 +31,7 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
   // friend paying back their share of dinner. Most recent first, since
   // the payslip being looked for is almost always a recent one.
   const incomeCandidates = useMemo(
-    () => transactions.filter((t) => isUnlinkedIncome(t)).sort((a, b) => b.date.localeCompare(a.date)),
+    () => transactions.filter((t) => isIncomeReceipt(t)).sort((a, b) => b.date.localeCompare(a.date)),
     [transactions]
   )
 
@@ -65,7 +64,7 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
   // suggestions below are always the actual previous cycle, not
   // sometimes a cycle further back.
   const lastMonth = useMemo(() => referenceDateOffsetBy(-1, now), [])
-  const lastMonthTotals = useMemo(() => computeDashboardTotals(categories, transactions, lastMonth, [], accounts), [categories, transactions, lastMonth, accounts])
+  const lastMonthTotals = useMemo(() => computeDashboardTotals(categories, transactions, lastMonth, []), [categories, transactions, lastMonth])
   const suggestedIncome = lastMonthTotals.income
 
   const effectiveIncome = incomeTouched ? (parseFloat(income) || 0) : suggestedIncome
@@ -77,7 +76,7 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
   // Falls back to what you actually saved last month if there's no
   // goal with a target date to calculate a pace from at all.
   const goalPaceSavings = useMemo(() => {
-    const goalAccounts = accounts.filter((a) => (a.goalTargetAmount ?? 0) > 0 && a.goalTargetDate)
+    const goalAccounts = categories.filter((a) => a.isSavingsCategory && (a.goalTargetAmount ?? 0) > 0 && a.goalTargetDate)
     return goalAccounts.reduce((sum, a) => {
       const remaining = (a.goalTargetAmount ?? 0) - goalProgress(a, transactions)
       if (remaining <= 0) return sum
@@ -85,17 +84,17 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
       const monthsLeft = Math.max(1, (target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth()))
       return sum + remaining / monthsLeft
     }, 0)
-  }, [accounts, transactions])
+  }, [categories, transactions])
   const suggestedSavings = goalPaceSavings > 0 ? goalPaceSavings : lastMonthTotals.saved
 
 
   const effectiveSavings = savingsTouched ? (parseFloat(savings) || 0) : suggestedSavings
   const { categorySuggestions } = parsedIncome > 0
-    ? suggestBudgets(categories, accounts, parsedIncome, effectiveSavings, transactions, now)
+    ? suggestBudgets(categories, parsedIncome, effectiveSavings, transactions, now)
     : { categorySuggestions: [] as ReturnType<typeof suggestBudgets>['categorySuggestions'] }
   const suggestionByCategory = new Map(categorySuggestions.map((s) => [s.categoryId, s]))
 
-  const topLevel = categories.filter((c) => !c.parentId).sort((a, b) => a.sortOrder - b.sortOrder)
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory).sort((a, b) => a.sortOrder - b.sortOrder)
   // "Other" is the catch-all — whatever's left of the total budget once
   // every other category has its own number set, computed fresh on
   // every render rather than stored and kept in sync by hand, so it can
@@ -149,14 +148,12 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
   }
 
   const totalAllocated = topLevel.reduce((sum, c) => sum + actualContribution(c.id), 0)
-  // Savings accounts with a monthly contribution set — the same real
-  // line item a savings CATEGORY's own budget used to be, restored
-  // here as its account-based equivalent. Included directly in the
-  // total this screen tracks against income, the same as every
-  // category above it, rather than shown as a separate, easy-to-miss
-  // figure off to the side.
-  const savingsAccounts = accounts.filter((a) => a.type === 'savings' && (a.monthlyContribution ?? 0) > 0)
-  const savingsContributionTotal = savingsAccounts.reduce((sum, a) => sum + (a.monthlyContribution ?? 0), 0)
+  // Savings categories with a monthly amount set — a planned
+  // contribution, included directly in the total this screen tracks
+  // against income, the same as every category above it, rather than
+  // shown as a separate, easy-to-miss figure off to the side.
+  const savingsAccounts = categories.filter((c) => c.isSavingsCategory && !c.parentId && c.monthlyBudget > 0)
+  const savingsContributionTotal = savingsAccounts.reduce((sum, a) => sum + a.monthlyBudget, 0)
   const totalAllocatedWithSavings = totalAllocated + savingsContributionTotal
 
   /** Splits a suggested total evenly across a category's subcategories
@@ -351,10 +348,10 @@ export default function TotalBudgetPlanner({ categories, transactions, accounts,
             {savingsAccounts.map((a) => (
               <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0' }}>
                 <span style={{ flex: 1, fontSize: 14 }}>{a.icon} {a.name}</span>
-                <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(a.monthlyContribution ?? 0)}</span>
+                <span className="amount" style={{ fontSize: 14 }}>{formatCurrency(a.monthlyBudget)}</span>
               </div>
             ))}
-            <p className="hint" style={{ marginTop: 4 }}>Set on each account's own editor, not here — included in Total Allocated below.</p>
+            <p className="hint" style={{ marginTop: 4 }}>Set in each savings category's own editor, not here — included in Total Allocated below.</p>
           </div>
         </>
       )}

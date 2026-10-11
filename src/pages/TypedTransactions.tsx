@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isLinkedReimbursement, isGenuineReimbursement, coveredExpenseIds, orderedReimbursements, isSavingsAccount, goalAccountChangeInPeriod } from '../calculations'
+import type { Category, Transaction } from '../types'
+import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isIncomeReceipt, isLinkedReimbursement, isGenuineReimbursement, coveredExpenseIds, orderedReimbursements, savingsCategoryIds, inSavingsCategory, netSavedThisPeriod } from '../calculations'
 import { isInSamePeriod } from '../budgetPeriod'
 import { normalizeTag } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
@@ -17,7 +17,6 @@ interface Props {
   onSave: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDelete: (id: string) => void
   onChanged: () => void
-  accounts?: Account[]
 }
 
 const TITLES: Record<StatKind, string> = {
@@ -27,7 +26,7 @@ const TITLES: Record<StatKind, string> = {
   saved: 'Saved'
 }
 
-export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete, onChanged, accounts = [] }: Props) {
+export default function TypedTransactions({ kind, categories, transactions, onBack, onSave, onDelete, onChanged }: Props) {
   useSwipeBack(onBack)
   const [sort, setSort] = useState<'recent' | 'price'>('recent')
   const [showZeroImpact, setShowZeroImpact] = useState(false)
@@ -35,6 +34,7 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
   const [editing, setEditing] = useState<Transaction | null>(null)
   const now = useMemo(() => new Date(), [])
 
+  const savingsIds = useMemo(() => savingsCategoryIds(categories), [categories])
   const thisPeriod = useMemo(() => transactions.filter((t) => isInSamePeriod(new Date(t.date), now)), [transactions, now])
 
   const scoped = useMemo(() => {
@@ -53,19 +53,12 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         // A plain uncategorized transaction like a salary deposit has
         // no category at all, doesn't affect any category's total, and
         // is correctly excluded by the same categoryId check.
-        return thisPeriod.filter((t) => (t.isExpense ? !!t.categoryId : !!t.categoryId && isUnlinkedIncome(t)))
+        return thisPeriod.filter((t) => !inSavingsCategory(t, savingsIds) && (t.isExpense ? !!t.categoryId : !!t.categoryId && isUnlinkedIncome(t)))
       case 'saved':
-        // A deposit into a goal account — the account-based equivalent
-        // of what used to be an expense-direction transaction in a
-        // savings category. A goal's withdrawal offset is never tied to
-        // an account at all (see fundedFromAccountId), and the real
-        // withdrawal itself reduces the goal rather than building it,
-        // so neither belongs here.
-        return thisPeriod.filter((t) => {
-          if (!t.isExpense || !t.accountId || t.reimbursesExpenseId) return false
-          const account = accounts.find((a) => a.id === t.accountId)
-          return !!account && isSavingsAccount(account)
-        })
+        // Money put into a savings category this period. A withdrawal
+        // (income-direction, carrying fundedFromCategoryId) reduces a
+        // category rather than building it, so it isn't listed here.
+        return thisPeriod.filter((t) => t.isExpense && !t.reimbursesExpenseId && inSavingsCategory(t, savingsIds))
       case 'income':
         // Also includes the EXCESS portion of an over-reimbursement (paid
         // back more than the expense cost) — confirmed via direct testing
@@ -73,11 +66,11 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         // previously invisible here, since the filter excluded every
         // reimbursement-linked transaction outright regardless of
         // whether part of it was genuine excess income.
-        return thisPeriod.filter((t) => !t.isExpense && (isUnlinkedIncome(t) || excessForReimbursement(t, transactions) > 0))
+        return thisPeriod.filter((t) => !t.isExpense && (isIncomeReceipt(t) || excessForReimbursement(t, transactions) > 0))
       case 'reimbursed':
         return thisPeriod.filter((t) => isGenuineReimbursement(t, transactions))
     }
-  }, [thisPeriod, kind, transactions, accounts])
+  }, [thisPeriod, kind, transactions, savingsIds])
 
   // Computed the SAME way as the dashboard stat this screen was opened
   // from — reusing netSpentForCategory's per-category clamp directly,
@@ -120,19 +113,19 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
 
   const total = useMemo(() => {
     if (kind === 'spent') {
-      const topLevel = categories.filter((c) => !c.parentId)
+      const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
       return topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
     }
     if (kind === 'saved') {
-      return accounts.filter((a) => isSavingsAccount(a)).reduce((sum, a) => sum + Math.max(0, goalAccountChangeInPeriod(a, transactions, now)), 0)
+      return netSavedThisPeriod(categories, transactions, now)
     }
     if (kind === 'income') {
-      const unlinkedIncome = thisPeriod.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
+      const unlinkedIncome = thisPeriod.filter((t) => isIncomeReceipt(t)).reduce((sum, t) => sum + t.amount, 0)
       const excessFromLinked = thisPeriod.filter((t) => isLinkedReimbursement(t)).reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
       return unlinkedIncome + excessFromLinked
     }
     return scoped.reduce((sum, t) => sum + memoizedAppliedReimbursement(t), 0)
-  }, [kind, categories, transactions, now, thisPeriod, scoped, memoizedAppliedReimbursement, accounts])
+  }, [kind, categories, transactions, now, thisPeriod, scoped, memoizedAppliedReimbursement])
 
   // For the Income list specifically, a reimbursement-linked transaction
   // only appears here because part of it was excess (see the scoped
@@ -154,8 +147,8 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
     if (kind === 'income' && t.reimbursesExpenseId) return excessForReimbursement(t, transactions)
     if (kind === 'reimbursed') return appliedReimbursement(t)
     // Exclusive (budget-relative) netAmount for spent/saved specifically
-    // — must match `total` above. Has no effect on a plain goal-account
-    // deposit either way (nothing to net for an unlinked transaction).
+    // — must match `total` above. Has no effect on a plain savings
+    // contribution either way (nothing to net for an unlinked transaction).
     return netAmount(t, transactions)
   }
 
@@ -198,7 +191,7 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
         <div className="tx-icon" style={{ background: (cat?.color ?? '#5C6167') + '33' }}>{cat?.icon ?? '❓'}</div>
         <div className="tx-info">
           <span className="tx-note">{t.note || cat?.name || 'Uncategorized'}</span>
-          <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, accounts) && ` · ${repaysNote(t, transactions, accounts)}`}</span>
+          <span className="tx-category">{new Date(t.date).toLocaleDateString('en-AU')}{repaysNote(t, transactions, categories) && ` · ${repaysNote(t, transactions, categories)}`}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0 }}>
           {!isExcessOnlyRow && rowAmount(t) !== t.amount && (

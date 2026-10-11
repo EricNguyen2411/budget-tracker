@@ -10,8 +10,8 @@
  * nothing left to guess once the person has tapped the specific thing
  * they mean.
  */
-import type { Category, Transaction, Account, RecurringTransaction } from './types'
-import { computeDashboardTotals, netSpentForCategory, effectiveBudget, reimbursementBreakdown, formatCurrency, netWorthTotal, topMerchantsThisMonth, isUnlinkedIncome, type MerchantTotal } from './calculations'
+import type { Category, Transaction, RecurringTransaction } from './types'
+import { computeDashboardTotals, netSpentForCategory, effectiveBudget, reimbursementBreakdown, formatCurrency, topMerchantsThisMonth, isIncomeReceipt, amountsCloseEnough, type MerchantTotal } from './calculations'
 import { referenceDateOffsetBy } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
 
@@ -20,8 +20,8 @@ export interface Answer {
   sentiment: 'positive' | 'warning' | 'neutral'
 }
 
-export function spentThisPeriod(categories: Category[], transactions: Transaction[], accounts: Account[], recurring: RecurringTransaction[], referenceDate: Date): Answer {
-  const dash = computeDashboardTotals(categories, transactions, referenceDate, recurring, accounts)
+export function spentThisPeriod(categories: Category[], transactions: Transaction[], recurring: RecurringTransaction[], referenceDate: Date): Answer {
+  const dash = computeDashboardTotals(categories, transactions, referenceDate, recurring)
   return { text: `You've spent ${formatCurrency(dash.spent)} this period.`, sentiment: 'neutral' }
 }
 
@@ -49,9 +49,9 @@ export function spentByTag(tag: string, transactions: Transaction[]): Answer {
   return { text: `"${tag}" cost ${formatCurrency(breakdown.totalCost)} in total${breakdownText}.`, sentiment: 'neutral' }
 }
 
-export function budgetComparison(categories: Category[], transactions: Transaction[], accounts: Account[], recurring: RecurringTransaction[], referenceDate: Date): Answer {
-  const thisDash = computeDashboardTotals(categories, transactions, referenceDate, recurring, accounts)
-  const lastDash = computeDashboardTotals(categories, transactions, referenceDateOffsetBy(-1, referenceDate), recurring, accounts)
+export function budgetComparison(categories: Category[], transactions: Transaction[], recurring: RecurringTransaction[], referenceDate: Date): Answer {
+  const thisDash = computeDashboardTotals(categories, transactions, referenceDate, recurring)
+  const lastDash = computeDashboardTotals(categories, transactions, referenceDateOffsetBy(-1, referenceDate), recurring)
   const delta = thisDash.spent - lastDash.spent
   const direction = delta > 0.01 ? 'more' : delta < -0.01 ? 'less' : 'about the same amount'
   const deltaPart = Math.abs(delta) > 0.01 ? ` — ${formatCurrency(Math.abs(delta))} ${direction} than last period` : ''
@@ -62,7 +62,7 @@ export function budgetComparison(categories: Category[], transactions: Transacti
 }
 
 export function biggestCategoryChange(categories: Category[], transactions: Transaction[], referenceDate: Date): Answer {
-  const topLevel = categories.filter((c) => !c.parentId)
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   let biggest: { category: Category; delta: number } | null = null
   for (const c of topLevel) {
     const thisSpent = Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate))
@@ -90,8 +90,8 @@ export interface MerchantInsight {
  * keeping Beem's payment-description notes ungrouped since they aren't
  * merchant names). Reusing it here rather than writing a second,
  * slightly-different version that could quietly drift from the first. */
-export function topMerchants(transactions: Transaction[], referenceDate: Date, limit = 5): MerchantInsight {
-  return { merchants: topMerchantsThisMonth(transactions, referenceDate, limit) }
+export function topMerchants(transactions: Transaction[], categories: Category[], referenceDate: Date, limit = 5): MerchantInsight {
+  return { merchants: topMerchantsThisMonth(transactions, categories, referenceDate, limit) }
 }
 
 /** Needs vs wants, as a share of what was actually SPENT this period
@@ -104,7 +104,7 @@ export function topMerchants(transactions: Transaction[], referenceDate: Date, l
  * which also pulls in a full recap's worth of goal/suggestion
  * computation this doesn't need. */
 export function needsWantsSplit(categories: Category[], transactions: Transaction[], referenceDate: Date): Answer {
-  const topLevel = categories.filter((c) => !c.parentId)
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   function splitFor(refDate: Date) {
     let needs = 0
     let wants = 0
@@ -139,20 +139,6 @@ export function needsWantsSplit(categories: Category[], transactions: Transactio
   }
 }
 
-/** All accounts combined into one figure — credit card balances
- * subtracted rather than added, since accountBalance deliberately
- * returns a credit card's balance as a positive "amount owed" (see its
- * own comments), which is correct for showing a card's own balance but
- * would be silently wrong here, inflating net worth by the exact
- * amount actually owed on it. */
-export function netWorth(accounts: Account[], transactions: Transaction[]): Answer {
-  const total = netWorthTotal(accounts, transactions)
-  return {
-    text: `Net worth across all accounts: ${formatCurrency(total)}.`,
-    sentiment: total >= 0 ? 'positive' : 'warning'
-  }
-}
-
 export interface CashFlowProjection {
   daysUntilPayday: number
   perDayAmount: number
@@ -173,8 +159,8 @@ export interface CashFlowProjection {
  * a guess when there's truly nothing to go on (fewer than 2 historical
  * income transactions and no recurring income item) — an estimate from
  * one data point isn't a pattern, it's a coincidence. */
-export function cashFlowProjection(categories: Category[], transactions: Transaction[], accounts: Account[], recurring: RecurringTransaction[], referenceDate: Date): CashFlowProjection | null {
-  const dash = computeDashboardTotals(categories, transactions, referenceDate, recurring, accounts)
+export function cashFlowProjection(categories: Category[], transactions: Transaction[], recurring: RecurringTransaction[], referenceDate: Date): CashFlowProjection | null {
+  const dash = computeDashboardTotals(categories, transactions, referenceDate, recurring)
   const safeToSpend = Math.max(0, dash.safeToSpend)
 
   const knownIncome = recurring.find((r) => r.isActive && !r.isExpense)
@@ -185,7 +171,7 @@ export function cashFlowProjection(categories: Category[], transactions: Transac
   }
 
   const incomeHistory = transactions
-    .filter((t) => isUnlinkedIncome(t) && t.amount > 0)
+    .filter((t) => isIncomeReceipt(t) && t.amount > 0)
     .sort((a, b) => a.date.localeCompare(b.date))
   if (incomeHistory.length < 2) return null
 
@@ -216,8 +202,8 @@ export function cashFlowProjection(categories: Category[], transactions: Transac
   return { daysUntilPayday: days, perDayAmount: safeToSpend / days, source: 'estimated', paydayDate: projectedPayday.toISOString() }
 }
 
-export function cashFlowAnswer(categories: Category[], transactions: Transaction[], accounts: Account[], recurring: RecurringTransaction[], referenceDate: Date): Answer | null {
-  const projection = cashFlowProjection(categories, transactions, accounts, recurring, referenceDate)
+export function cashFlowAnswer(categories: Category[], transactions: Transaction[], recurring: RecurringTransaction[], referenceDate: Date): Answer | null {
+  const projection = cashFlowProjection(categories, transactions, recurring, referenceDate)
   if (!projection) return null
   const dateLabel = new Date(projection.paydayDate).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })
   const sourceNote = projection.source === 'estimated' ? ' (estimated from your past income pattern)' : ''
@@ -254,8 +240,11 @@ export function subscriptionCreep(recurring: RecurringTransaction[], transaction
     const key = normalizeMerchantKey(r.note)
     if (!key) continue
     const matches = transactions
-      .filter((t) => t.isExpense === r.isExpense && normalizeMerchantKey(t.note) === key)
+      .filter((t) => t.isExpense === r.isExpense && normalizeMerchantKey(t.note) === key && amountsCloseEnough(t.amount, r.amount))
       .sort((a, b) => b.date.localeCompare(a.date))
+    // Only charges within the same ballpark count as "the last charge of
+    // this subscription" — an unrelated purchase from the same merchant
+    // (an Amazon order vs Amazon Prime) is not a price change.
     const mostRecent = matches[0]
     if (!mostRecent) continue
     if (Math.abs(mostRecent.amount - r.amount) < 0.01) continue

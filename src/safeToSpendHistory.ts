@@ -1,4 +1,4 @@
-import type { Category, Transaction, RecurringTransaction, Account } from './types'
+import type { Category, Transaction, RecurringTransaction } from './types'
 import { computeDashboardTotals, monthlyEquivalentRecurringExpenses, formatCurrency } from './calculations'
 import { periodContaining, isInSamePeriod } from './budgetPeriod'
 
@@ -30,8 +30,8 @@ function periodKeyFor(referenceDate: Date): string {
  * uncategorized transaction contributes to no category's total and has
  * zero effect on the figure. Excluding them here keeps the diff focused
  * on things that could actually explain a change. */
-export function computeSnapshot(categories: Category[], transactions: Transaction[], referenceDate: Date, recurring: RecurringTransaction[], accounts: Account[] = []): PeriodSnapshot {
-  const totals = computeDashboardTotals(categories, transactions, referenceDate, recurring, accounts)
+export function computeSnapshot(categories: Category[], transactions: Transaction[], referenceDate: Date, recurring: RecurringTransaction[]): PeriodSnapshot {
+  const totals = computeDashboardTotals(categories, transactions, referenceDate, recurring)
   const periodTx = transactions.filter((t) => t.categoryId && isInSamePeriod(new Date(t.date), referenceDate))
   const txMap: Record<string, SnapshotTransaction> = {}
   for (const t of periodTx) {
@@ -41,7 +41,7 @@ export function computeSnapshot(categories: Category[], transactions: Transactio
     periodKey: periodKeyFor(referenceDate),
     safeToSpend: totals.safeToSpend,
     totalBudget: totals.totalBudget,
-    recurringReserve: monthlyEquivalentRecurringExpenses(recurring, transactions, referenceDate),
+    recurringReserve: monthlyEquivalentRecurringExpenses(recurring, transactions, referenceDate, categories),
     transactions: txMap
   }
 }

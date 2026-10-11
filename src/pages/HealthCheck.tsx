@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import type { Category, RecurringTransaction, Transaction, Account } from '../types'
+import type { Category, RecurringTransaction, Transaction } from '../types'
 import { runHealthCheck, type HealthFinding } from '../healthCheck'
 import { formatCurrency, netAmount } from '../calculations'
-import { renewRecurringGoal, saveRecurring } from '../db'
+import { renewRecurringGoal } from '../db'
 import TransactionEditor from '../components/TransactionEditor'
 import { useModalClose } from '../useModalClose'
 import { useSwipeBack } from '../useSwipeBack'
@@ -16,20 +16,18 @@ interface Props {
   onOpenDuplicateCheck: () => void
   onCategoriesChanged: () => void
   onBack: () => void
-  accounts?: Account[]
 }
 
-export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onCategoriesChanged, onBack, accounts = [] }: Props) {
+export default function HealthCheck({ transactions, recurring, categories, onSave, onDelete, onOpenDuplicateCheck, onCategoriesChanged, onBack }: Props) {
   useSwipeBack(onBack)
   const [findings, setFindings] = useState<HealthFinding[] | null>(null)
   const [drillDown, setDrillDown] = useState<HealthFinding | null>(null)
   const drillDownClose = useModalClose(() => setDrillDown(null))
   const [editing, setEditing] = useState<Transaction | null>(null)
   const catById = new Map(categories.map((c) => [c.id, c]))
-  const accountById = new Map(accounts.map((a) => [a.id, a]))
 
   function run() {
-    setFindings(runHealthCheck(transactions, recurring, categories, new Date(), accounts))
+    setFindings(runHealthCheck(transactions, recurring, categories, new Date()))
   }
 
   async function handleFindingTap(f: HealthFinding) {
@@ -41,34 +39,15 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
 
     // Recurring annual goals ready to renew — a direct action, not a
     // list to drill into, since there's nothing to review per-item.
-    if (f.renewableAccountIds && f.renewableAccountIds.length > 0) {
-      const names = f.renewableAccountIds.map((id) => accountById.get(id)?.name).filter(Boolean).join(', ')
+    if (f.renewableCategoryIds && f.renewableCategoryIds.length > 0) {
+      const names = f.renewableCategoryIds.map((id) => catById.get(id)?.name).filter(Boolean).join(', ')
       if (!confirm(`Renew ${names} for next year? Each target date moves forward a year and progress tracking restarts fresh.`)) return
-      for (const id of f.renewableAccountIds) {
-        const account = accountById.get(id)
+      for (const id of f.renewableCategoryIds) {
+        const account = catById.get(id)
         if (account) await renewRecurringGoal(account)
       }
       onCategoriesChanged()
-      setFindings(runHealthCheck(transactions, recurring, categories, new Date(), accounts))
-      return
-    }
-
-    // A recurring item that looks set up backwards (Expense instead of
-    // Income into its own named savings account) — the fix is a single
-    // unambiguous field flip, so offered directly rather than routing
-    // through the full recurring-item editor for something this small.
-    // Still a real judgment call under the hood (a name-match heuristic,
-    // not certainty), so confirmed explicitly rather than applied
-    // silently — same reasoning as the renewal action just above.
-    if (f.fixableRecurringIds && f.fixableRecurringIds.length > 0) {
-      const items = f.fixableRecurringIds.map((id) => recurring.find((r) => r.id === id)).filter((r): r is RecurringTransaction => !!r)
-      const names = items.map((r) => `"${r.note}"`).join(', ')
-      if (!confirm(`Switch ${names} to Income? This is the fix if it's meant to be a monthly contribution — it'll then correctly add to the account's balance instead of withdrawing from it.`)) return
-      for (const item of items) {
-        await saveRecurring({ ...item, isExpense: false })
-      }
-      onCategoriesChanged()
-      setFindings(runHealthCheck(transactions, recurring, categories, new Date(), accounts))
+      setFindings(runHealthCheck(transactions, recurring, categories, new Date()))
       return
     }
 
@@ -105,7 +84,7 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
               <div style={{ fontWeight: 600, fontSize: 14, color: f.severity === 'warning' ? 'var(--amber)' : 'var(--blue)' }}>{f.title}</div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{f.detail}</div>
             </div>
-            {(f.transactions.length > 0 || f.icon === '📑' || (f.renewableAccountIds && f.renewableAccountIds.length > 0) || (f.fixableRecurringIds && f.fixableRecurringIds.length > 0)) && <span style={{ color: 'var(--text-faint)' }}>›</span>}
+            {(f.transactions.length > 0 || f.icon === '📑' || (f.renewableCategoryIds && f.renewableCategoryIds.length > 0)) && <span style={{ color: 'var(--text-faint)' }}>›</span>}
           </div>
         </button>
       ))}
@@ -156,14 +135,14 @@ export default function HealthCheck({ transactions, recurring, categories, onSav
             // a manual re-run — and keep the open drill-down modal (if
             // any) in sync too, since it otherwise holds a stale
             // snapshot from before the fix.
-            const refreshed = runHealthCheck(transactions.map((t) => t.id === editing.id ? { ...t, ...data } : t), recurring, categories, new Date(), accounts)
+            const refreshed = runHealthCheck(transactions.map((t) => t.id === editing.id ? { ...t, ...data } : t), recurring, categories, new Date())
             setFindings(refreshed)
             if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
           }}
           onDelete={() => {
             onDelete(editing.id)
             setEditing(null)
-            const refreshed = runHealthCheck(transactions.filter((t) => t.id !== editing.id), recurring, categories, new Date(), accounts)
+            const refreshed = runHealthCheck(transactions.filter((t) => t.id !== editing.id), recurring, categories, new Date())
             setFindings(refreshed)
             if (drillDown) setDrillDown(refreshed.find((f) => f.icon === drillDown.icon) ?? null)
           }}

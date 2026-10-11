@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
+import type { Category, Transaction } from '../types'
 import { buildMonthRecap, classify } from '../monthlyRecap'
 import { formatCurrency, localDateInputValue } from '../calculations'
 import { periodOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
@@ -10,7 +10,6 @@ import AnimatedProgressBar from '../components/AnimatedProgressBar'
 interface Props {
   categories: Category[]
   transactions: Transaction[]
-  accounts: Account[]
   onBack: () => void
   onSaveTransaction: (data: Omit<Transaction, 'id'>, existingId: string | null) => void
   onDeleteTransaction: (id: string) => void
@@ -19,7 +18,7 @@ interface Props {
   onChanged: () => void
 }
 
-export default function MonthlyRecapPage({ categories, transactions, accounts, onBack, onSaveTransaction, onDeleteTransaction, onOpenCategoryPeriod, initialMonthOffset = -1, onChanged }: Props) {
+export default function MonthlyRecapPage({ categories, transactions, onBack, onSaveTransaction, onDeleteTransaction, onOpenCategoryPeriod, initialMonthOffset = -1, onChanged }: Props) {
   useSwipeBack(onBack)
   const [monthOffset, setMonthOffset] = useState(initialMonthOffset) // last full month by default when opened standalone; the Dashboard widget passes 0 to stay on the month it already showed
   const [openBucket, setOpenBucket] = useState<RecapBucket | null>(null)
@@ -51,7 +50,7 @@ export default function MonthlyRecapPage({ categories, transactions, accounts, o
     ? `${periodStart.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} – ${periodEndInclusive.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
     : referenceDate.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
 
-  const recap = buildMonthRecap(categories, transactions, accounts, referenceDate)
+  const recap = buildMonthRecap(categories, transactions, referenceDate)
 
   if (openBucket) {
     return (
@@ -61,7 +60,6 @@ export default function MonthlyRecapPage({ categories, transactions, accounts, o
         referenceDate={referenceDate}
         categories={categories}
         transactions={transactions}
-        accounts={accounts}
         classify={classify}
         onBack={() => setOpenBucket(null)}
         onSave={onSaveTransaction}
@@ -141,7 +139,7 @@ export default function MonthlyRecapPage({ categories, transactions, accounts, o
             <div className="card" style={{ marginBottom: 16 }}>
               <span className="section-heading" style={{ margin: '0 0 10px' }}>🎯 Savings Goals</span>
               {recap.goals.map((g) => (
-                <div key={g.accountId} style={{ marginTop: 10 }}>
+                <div key={g.categoryId} style={{ marginTop: 10 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
                     <span>{g.icon} {g.name}</span>
                     <span style={{ color: g.fraction >= 1 ? 'var(--green)' : g.onTrack === false ? 'var(--red)' : 'var(--text-dim)' }}>

@@ -151,7 +151,6 @@ export function processDueInstallments(
         categoryId: plan.categoryId,
         reimbursesExpenseId: null,
         tags: [],
-        accountId: plan.accountId,
         installmentPlanId: plan.id
       })
       nextIndex++

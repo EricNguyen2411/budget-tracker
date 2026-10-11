@@ -14,7 +14,7 @@ export default function Budgets({ categories, transactions, onOpenCategory }: Pr
   const [sortMode, setSortMode] = useState<'default' | 'status'>('default')
 
   const withStatus = categories
-    .filter((c) => !c.parentId)
+    .filter((c) => !c.parentId && !c.isSavingsCategory)
     .map((category) => {
       const budget = effectiveBudget(category, categories)
       const spent = Math.max(0, netSpentForCategory(category, categories, transactions, now))

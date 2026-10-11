@@ -12,7 +12,6 @@ export interface RecurringSuggestion {
   suggestedNextDueDate: Date
   anchorDay: number
   categoryId: string | null
-  accountId: string | null
 }
 
 function merchantKey(note: string): string {
@@ -32,10 +31,6 @@ function classifyFrequency(averageGapDays: number, gaps: number[]): RecurrenceFr
 
 function mostCommonCategoryId(transactions: Transaction[]): string | null {
   return mostCommonValue(transactions.map((t) => t.categoryId))
-}
-
-function mostCommonAccountId(transactions: Transaction[]): string | null {
-  return mostCommonValue(transactions.map((t) => t.accountId))
 }
 
 function mostCommonValue(values: (string | null)[]): string | null {
@@ -140,8 +135,7 @@ export function detectRecurring(
       lastDate,
       suggestedNextDueDate: addInterval(lastDate, frequency),
       anchorDay: lastDate.getDate(),
-      categoryId: mostCommonCategoryId(sorted),
-      accountId: mostCommonAccountId(sorted)
+      categoryId: mostCommonCategoryId(sorted)
     })
   }
 
@@ -178,8 +172,7 @@ export function processDueRecurring(
         isExpense: item.isExpense,
         categoryId: item.categoryId,
         reimbursesExpenseId: null,
-        tags: [],
-        accountId: item.accountId ?? null
+        tags: []
       })
       nextDue = addInterval(nextDue, item.frequency, anchorDay)
       guardCount++

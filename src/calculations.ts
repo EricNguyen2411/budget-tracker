@@ -1,4 +1,4 @@
-import type { Category, Transaction, RecurringTransaction, Account } from './types'
+import type { Category, Transaction, RecurringTransaction } from './types'
 import { isInSamePeriod, periodContaining, daysRemainingInPeriod, periodOffsetBy } from './budgetPeriod'
 import { normalizeMerchantKey } from './merchantRules'
 import { normalizeTag } from './tags'
@@ -6,58 +6,61 @@ import { normalizeTag } from './tags'
 /** True if an income transaction is genuinely unlinked — not tied to
  * covering any specific expense, whether via the simple single-link
  * field (reimbursesExpenseId) or the multi-expense allocations array
- * (multiAllocations), and not an account balance reconciliation
- * either. A transaction using multiAllocations has reimbursesExpenseId
- * set to null by design, and a balance adjustment has neither field
- * set at all, so checking only reimbursesExpenseId was confirmed to
- * let both slip through as if they were ordinary, unlinked income —
- * real money already accounted for elsewhere, or not real new money at
- * all, getting double-counted as fresh income on top of it. Every
+ * (multiAllocations), and not money coming back out of a savings
+ * category (fundedFromCategoryId). A transaction using multiAllocations
+ * has reimbursesExpenseId set to null by design, and a plain savings
+ * withdrawal has neither link field set at all, so checking only
+ * reimbursesExpenseId was confirmed to let both slip through as if they
+ * were ordinary, unlinked income — real money already accounted for
+ * elsewhere getting double-counted as fresh income on top of it. Every
  * place in this file and the rest of the app that identifies "unlinked
  * income" reads through this one function so that distinction can't
  * drift out of sync between them again. */
 export function isUnlinkedIncome(t: Transaction): boolean {
-  return !t.isExpense && !t.reimbursesExpenseId && !(t.multiAllocations && t.multiAllocations.length > 0) && !t.isBalanceAdjustment
+  return !t.isExpense && !t.reimbursesExpenseId && !(t.multiAllocations && t.multiAllocations.length > 0) && !t.fundedFromCategoryId
+}
+
+/** Money that genuinely counts as Income: unlinked income with no category.
+ * An income-direction entry filed under a spending category is a refund or
+ * pay-back for that category — netSpentForCategory already subtracts it
+ * from that category's spending, so counting it as Income as well would
+ * count the same dollars twice (once as lower spending, once as extra
+ * income). Everything that totals Income reads through this one function. */
+export function isIncomeReceipt(t: Transaction): boolean {
+  return isUnlinkedIncome(t) && !t.categoryId
+}
+
+/** A plain "take money out of savings" withdrawal: an income-direction
+ * transaction that comes out of a savings category (fundedFromCategoryId)
+ * without covering any expense. Not income, not a reimbursement — just
+ * money moving back out of the envelope. */
+export function isPlainSavingsWithdrawal(t: Transaction): boolean {
+  return !t.isExpense && !!t.fundedFromCategoryId && !t.reimbursesExpenseId && !(t.multiAllocations && t.multiAllocations.length > 0)
 }
 
 /** The inverse of isUnlinkedIncome — true if an income transaction IS
- * linked to covering one or more expenses, however it's linked. */
+ * linked to covering one or more expenses, however it's linked. A plain
+ * savings withdrawal is neither unlinked income nor a reimbursement, so
+ * it is deliberately excluded from both. */
 export function isLinkedReimbursement(t: Transaction): boolean {
-  // A balance adjustment is neither: it's not "unlinked income" (salary,
-  // a refund, cashback) since isUnlinkedIncome already excludes it
-  // deliberately, but that same exclusion was silently making it look
-  // like a reimbursement instead by process of elimination — it has no
-  // reimbursesExpenseId or multiAllocations at all, so it was showing
-  // up as a $0 row on the Reimbursed screen rather than the correct
-  // outcome, which is not appearing in either stat. A correction to
-  // match the real bank isn't new income and isn't anyone paying
-  // anything back; it shouldn't read as either.
-  return !t.isExpense && !isUnlinkedIncome(t) && !t.isBalanceAdjustment
+  return !t.isExpense && !isUnlinkedIncome(t) && !isPlainSavingsWithdrawal(t)
 }
 
 /** The narrower, display-facing version of "is this a reimbursement" —
  * genuinely someone else paying you back, and only that. Confirmed
  * directly this needed splitting out from isLinkedReimbursement: that
- * broader check also matches two other income-direction, linked
- * transaction shapes that have nothing to do with anyone reimbursing
- * anyone — a Transfer's own income side (reimbursesExpenseId there
- * points at its own paired expense purely as the plumbing that keeps
- * the two halves connected, see createTransfer) and a "Fund from
- * Savings" offset (fundedFromAccountId set, your own money covering
- * your own expense). Both were showing up on the Reimbursed tile and
- * screen, inflating it with money that was never anyone else's in the
- * first place. Kept separate from isLinkedReimbursement itself rather
- * than changing what that means everywhere, since a couple of other
- * calculations (fundedFromSavingsThisPeriod, the excess-income figures
- * on Income/trend screens) specifically need the broader definition
- * and would silently break if it narrowed under them. */
-export function isGenuineReimbursement(t: Transaction, all: Transaction[]): boolean {
+ * broader check also matches a "Fund from Savings" offset
+ * (fundedFromCategoryId set, your own money covering your own expense),
+ * which was showing up on the Reimbursed tile and screen, inflating it
+ * with money that was never anyone else's in the first place. Kept
+ * separate from isLinkedReimbursement itself rather than changing what
+ * that means everywhere, since a couple of other calculations
+ * (fundedFromSavingsThisPeriod, the excess-income figures on
+ * Income/trend screens) specifically need the broader definition and
+ * would silently break if it narrowed under them. */
+export function isGenuineReimbursement(t: Transaction, _all?: Transaction[]): boolean {
   if (!isLinkedReimbursement(t)) return false
-  if (t.fundedFromAccountId) return false
-  for (const expenseId of coveredExpenseIds(t)) {
-    const expense = all.find((e) => e.id === expenseId)
-    if (expense && isAccountTransferLink(t, expense)) return false
-  }
+  if (t.fundedFromCategoryId) return false
   return true
 }
 
@@ -126,7 +129,7 @@ export function reimbursementsFor(expense: Transaction, all: Transaction[]): Tra
  * this one function, so the priority rule can't drift out of sync
  * between them the way five separate copies of the same sort would. */
 export function orderedReimbursements(expense: Transaction, all: Transaction[]): Transaction[] {
-  const priority = (t: Transaction): number => (t.fundedFromAccountId ? 1 : 0)
+  const priority = (t: Transaction): number => (t.fundedFromCategoryId ? 1 : 0)
   return reimbursementsFor(expense, all).sort((a, b) => {
     const byPriority = priority(a) - priority(b)
     return byPriority !== 0 ? byPriority : a.date.localeCompare(b.date)
@@ -140,41 +143,27 @@ export function totalReimbursed(expense: Transaction, all: Transaction[]): numbe
 /** What an expense actually cost after reimbursement — floored at 0.
  *
  * Only nets out reimbursement from OTHER people/sources. Money funded
- * from one of the person's own accounts is deliberately NOT netted
- * here, even though the underlying link (an income transaction
- * pointing at the expense) is identical to a genuine external
- * reimbursement — confirmed via a real screenshot this was wrong: a
- * trip expense fully covered by a savings draw-down was showing as
- * "-$0.00" on its own transaction row, reading as if it cost nothing.
- * It did cost something — the account balance really went down to pay
- * for it — it just wasn't new money someone else handed back. Only
- * genuine outside reimbursement (a friend paying their share) removes
- * something from what this expense cost the person overall.
+ * from the person's own savings is deliberately NOT netted here, even
+ * though the underlying link (an income transaction pointing at the
+ * expense) is identical to a genuine external reimbursement — confirmed
+ * via a real screenshot this was wrong: a trip expense fully covered by
+ * a savings draw-down was showing as "-$0.00" on its own transaction
+ * row, reading as if it cost nothing. It did cost something — the
+ * savings balance really went down to pay for it — it just wasn't new
+ * money someone else handed back. Only genuine outside reimbursement (a
+ * friend paying their share) removes something from what this expense
+ * cost the person overall.
  *
- * `fundedFromAccountId` is what distinguishes the two: a reimbursing
+ * `fundedFromCategoryId` is what distinguishes the two: a reimbursing
  * transaction that carries it is a self-funded draw-down and is
  * excluded from the netting; anything else nets as before.
- * `includeSelfFunded` defaults to false (the old fully-netted
- * behavior) for the few callers — goal-contribution accounting —
- * where a transaction being reimbursed at all isn't a real scenario,
- * so there was no reason to pass it through just for this. */
+ * `includeSelfFunded` defaults to false (the fully-netted behavior) for
+ * the few callers where a transaction being reimbursed at all isn't a
+ * real scenario. */
 export function netAmount(transaction: Transaction, all: Transaction[], includeSelfFunded: boolean = false): number {
   if (!transaction.isExpense) return transaction.amount
-  // A transfer's own "reimbursement" (its linked income landing in
-  // another of the person's own tracked accounts) is deliberately NOT
-  // netted out here — confirmed via a real screenshot this was showing
-  // a transfer's outbound side as "-$0.00" on the transaction list,
-  // which reads as if the expense cost nothing. It didn't cost nothing;
-  // the money genuinely moved, just to somewhere this person still owns
-  // and tracks. Netting to zero only makes sense for a genuine
-  // reimbursement, where the whole point IS that it didn't cost
-  // anything extra. Safe to exclude here specifically: a transfer
-  // always has categoryId null, so this change can't affect any
-  // category's spend or Safe to Spend either way — it only fixes what
-  // the transaction's own row displays.
   const reimbursed = reimbursementsFor(transaction, all)
-    .filter((t) => !isAccountTransferLink(t, transaction))
-    .filter((t) => includeSelfFunded || !t.fundedFromAccountId)
+    .filter((t) => includeSelfFunded || !t.fundedFromCategoryId)
     .reduce((sum, t) => sum + t.amount, 0)
   if (reimbursed === 0) return transaction.amount
   return Math.max(transaction.amount - reimbursed, 0)
@@ -269,13 +258,24 @@ export interface DashboardTotals {
  * since a category can hold several unrelated transactions and matching
  * on category alone could let some other purchase silently "cover" a
  * subscription it has nothing to do with. */
+/** Whether a real charge is plausibly the bill a recurring item stands for:
+ * same ballpark amount, not just the same merchant. Without this, one
+ * unrelated $25 Amazon purchase "paid" an $80 yearly Amazon Prime item and
+ * silently dropped its reserve. Loose enough (25%, at least $2) for price
+ * rises and variable bills; the failure mode of a miss is a slightly
+ * larger reserve, which is the safe direction. */
+export function amountsCloseEnough(actual: number, expected: number): boolean {
+  return Math.abs(actual - expected) <= Math.max(2, expected * 0.25)
+}
+
 export function paidOccurrencesThisPeriod(item: RecurringTransaction, transactions: Transaction[], referenceDate: Date): number {
   const itemKey = normalizeMerchantKey(item.note)
   if (!itemKey) return 0
   return transactions.filter((t) =>
     t.isExpense === item.isExpense &&
     isInSamePeriod(new Date(t.date), referenceDate) &&
-    normalizeMerchantKey(t.note) === itemKey
+    normalizeMerchantKey(t.note) === itemKey &&
+    amountsCloseEnough(t.amount, item.amount)
   ).length
 }
 
@@ -292,7 +292,9 @@ export function matchingRecurringItem(transaction: Transaction, recurring: Recur
   return recurring.find((r) =>
     r.isActive &&
     r.isExpense === transaction.isExpense &&
-    normalizeMerchantKey(r.note) === txKey
+    normalizeMerchantKey(r.note) === txKey &&
+    // amount not typed in yet (still entering a new one) — match on name alone
+    (!(transaction.amount > 0) || amountsCloseEnough(transaction.amount, r.amount))
   ) ?? null
 }
 
@@ -314,9 +316,13 @@ export function matchingRecurringItem(transaction: Transaction, recurring: Recur
  * reserved year-round for a once-a-year bill, not tied to whether this
  * exact month is the one it's due (see the in-app "How Safe to Spend
  * Works" explanation). */
-export function monthlyEquivalentRecurringExpenses(recurring: RecurringTransaction[], transactions: Transaction[] = [], referenceDate: Date = new Date()): number {
+export function monthlyEquivalentRecurringExpenses(recurring: RecurringTransaction[], transactions: Transaction[] = [], referenceDate: Date = new Date(), categories: Category[] = []): number {
+  const savingsIds = savingsCategoryIds(categories)
   return recurring
-    .filter((r) => r.isActive && r.isExpense)
+    // A recurring contribution into a savings category is reserved
+    // separately (monthlyEquivalentRecurringSavingsContributions) —
+    // counting it here too would reserve the same planned saving twice.
+    .filter((r) => r.isActive && r.isExpense && !(r.categoryId && savingsIds.has(r.categoryId)))
     .reduce((sum, r) => {
       if (r.frequency === 'monthly') {
         const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
@@ -347,68 +353,66 @@ export function monthlyEquivalentRecurringExpenses(recurring: RecurringTransacti
 }
 
 /** The savings-side counterpart to monthlyEquivalentRecurringExpenses —
- * confirmed directly this gap was real and asymmetric: a recurring
- * BILL that hasn't been paid yet already reduces Safe to Spend
- * pre-emptively (the whole point of that reserve), but a recurring
- * INCOME-direction item feeding a savings account got no such
- * treatment — Safe to Spend only reflected it once the real transfer
- * actually posted, making money someone had already committed to
- * moving look fully available to spend until the moment it moved.
- * Same exact structure and the same double-counting guard as the
- * expense version (paidOccurrencesThisPeriod is already direction-
- * agnostic, so it's reused as-is rather than duplicated): once the
- * real contribution posts this period, the reserve drops to 0 and the
- * real transaction's own effect on the account balance is what counts
- * instead, never both. Scoped to items actually pointed at a savings
- * account — a recurring income item aimed at an ordinary bank account
- * is just regular income, not a planned contribution to set aside. */
-export function monthlyEquivalentRecurringSavingsContributions(recurring: RecurringTransaction[], accounts: Account[], transactions: Transaction[] = [], referenceDate: Date = new Date()): number {
+ * a recurring contribution into a savings category that hasn't landed
+ * yet this period reduces Safe to Spend pre-emptively, the same way an
+ * unpaid recurring bill does: money someone has already committed to
+ * setting aside shouldn't look fully spendable right up until the
+ * moment it's actually added. Same structure and the same
+ * double-counting guard as the expense version (paidOccurrencesThisPeriod
+ * is reused as-is): once the real contribution posts this period, the
+ * reserve drops to 0 and the real transaction counts instead, never
+ * both. Scoped to items whose category is a savings category. */
+export function monthlyEquivalentRecurringSavingsContributions(recurring: RecurringTransaction[], categories: Category[], transactions: Transaction[] = [], referenceDate: Date = new Date()): number {
+  const savingsIds = savingsCategoryIds(categories)
+  // What has actually been put into each savings category this period,
+  // by ANY contribution — not only one whose note happens to match the
+  // recurring item. A contribution is fulfilled by money landing in the
+  // category, however it was entered, so a hand-typed "Added to Travel
+  // Savings" correctly covers a recurring "Travel Savings" reserve
+  // rather than the two being counted side by side. Each recurring item
+  // consumes from its category's pool, so two items feeding the same
+  // category can't both be satisfied by the same dollars.
+  const pool = new Map<string, number>()
+  for (const t of transactions) {
+    if (!t.isExpense || !t.categoryId || !savingsIds.has(t.categoryId)) continue
+    if (!isInSamePeriod(new Date(t.date), referenceDate)) continue
+    pool.set(t.categoryId, (pool.get(t.categoryId) ?? 0) + t.amount)
+  }
   return recurring
-    .filter((r) => {
-      if (!r.isActive || r.isExpense || !r.accountId) return false
-      const account = accounts.find((a) => a.id === r.accountId)
-      return !!account && isSavingsAccount(account)
-    })
+    .filter((r) => r.isActive && r.isExpense && !!r.categoryId && savingsIds.has(r.categoryId))
     .reduce((sum, r) => {
-      if (r.frequency === 'monthly') {
-        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
-        return paid > 0 ? sum : sum + r.amount
-      }
-      if (r.frequency === 'yearly') {
-        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
-        return paid > 0 ? sum : sum + r.amount / 12
-      }
-      if (r.frequency === 'weekly') {
-        const fullReserve = (r.amount * 52) / 12
-        const paid = paidOccurrencesThisPeriod(r, transactions, referenceDate)
-        const alreadyCovered = Math.min(fullReserve, paid * r.amount)
-        return sum + Math.max(0, fullReserve - alreadyCovered)
-      }
-      return sum
+      const available = pool.get(r.categoryId as string) ?? 0
+      let expected: number
+      if (r.frequency === 'monthly') expected = r.amount
+      else if (r.frequency === 'yearly') expected = r.amount / 12
+      else if (r.frequency === 'weekly') expected = (r.amount * 52) / 12
+      else return sum
+      const covered = Math.min(expected, available)
+      pool.set(r.categoryId as string, available - covered)
+      return sum + Math.max(0, expected - covered)
     }, 0)
 }
 
-export function computeDashboardTotals(categories: Category[], transactions: Transaction[], referenceDate: Date, recurring: RecurringTransaction[] = [], accounts: Account[] = []): DashboardTotals {
+export function computeDashboardTotals(categories: Category[], transactions: Transaction[], referenceDate: Date, recurring: RecurringTransaction[] = []): DashboardTotals {
   const topLevel = categories.filter((c) => !c.parentId)
   const thisMonth = transactions.filter((t) => isInSamePeriod(new Date(t.date), referenceDate))
 
-  // No more "exclude savings categories" filter here — a savings goal
-  // is an account now, not a category, so every top-level category is
-  // a genuine spending category and this is simply all of this
-  // period's category-based spend.
-  const spent = topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
+  // A savings category is money set aside, not money spent — it never
+  // counts toward Spent or the budget, and is accounted for separately
+  // below as `saved`.
+  const spendingCategories = topLevel.filter((c) => !c.isSavingsCategory)
+  const spent = spendingCategories.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
 
-  const goalAccounts = accounts.filter((a) => isSavingsAccount(a))
-  const actualSavedThisPeriod = goalAccounts.reduce((sum, a) => sum + Math.max(0, goalAccountChangeInPeriod(a, transactions, referenceDate)), 0)
+  const actualSavedThisPeriod = netSavedThisPeriod(categories, transactions, referenceDate)
   // Reserves for a committed contribution that hasn't actually landed
   // yet this period, the same way the bills reserve below reserves for
   // an unpaid bill — without this, money already earmarked via an
   // active recurring item looked fully spendable right up until the
   // moment it actually moved.
-  const committedSavingsReserve = monthlyEquivalentRecurringSavingsContributions(recurring, accounts, transactions, referenceDate)
+  const committedSavingsReserve = monthlyEquivalentRecurringSavingsContributions(recurring, categories, transactions, referenceDate)
   const saved = actualSavedThisPeriod + committedSavingsReserve
 
-  const unlinkedIncome = thisMonth.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
+  const unlinkedIncome = thisMonth.filter((t) => isIncomeReceipt(t)).reduce((sum, t) => sum + t.amount, 0)
   const excessFromLinked = thisMonth
     .filter((t) => isLinkedReimbursement(t))
     .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
@@ -431,22 +435,16 @@ export function computeDashboardTotals(categories: Category[], transactions: Tra
       }
       return sum + total
     }, 0)
-  const totalBudget = topLevel.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
-  const totalNetBudgetedSpent = topLevel.reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)), 0)
+  const totalBudget = spendingCategories.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
+  const totalNetBudgetedSpent = spent
   // Prorated recurring bills (yearly ones especially) reserve their
   // monthly-equivalent share year-round, not just in the month they're
   // actually due — otherwise an annual premium looks "free" for 11
   // months and then blows the budget the one month it lands.
-  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring, transactions, referenceDate)
-  // Money moved into a goal account this period is subtracted
-  // explicitly here now — under the old category-based goal, a
-  // contribution was itself a categorized expense transaction, so it
-  // was already folded into totalNetBudgetedSpent with no separate
-  // term needed. A real deposit into a goal account isn't necessarily
-  // categorized at all (a transfer's own transactions always have
-  // categoryId null), so nothing above would otherwise catch it: every
-  // dollar moved into savings still needs to reduce Safe to Spend,
-  // budgeted or not, exactly as it always has.
+  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring, transactions, referenceDate, categories)
+  // Money put into a savings category this period reduces Safe to Spend
+  // explicitly: set-aside money isn't available to spend on anything
+  // else, budgeted or not.
   const safeToSpend = totalBudget - totalNetBudgetedSpent - monthlyRecurringReserve - saved
 
   return { spent, income, reimbursed, saved, totalBudget, safeToSpend }
@@ -463,7 +461,7 @@ export function fundedFromSavingsThisPeriod(transactions: Transaction[], referen
   const thisMonth = transactions.filter((t) => isInSamePeriod(new Date(t.date), referenceDate))
   return thisMonth
     .filter((t) => isLinkedReimbursement(t))
-    .filter((t) => !!t.fundedFromAccountId)
+        .filter((t) => !!t.fundedFromCategoryId)
     .reduce((sum, t) => {
       let total = 0
       for (const expenseId of coveredExpenseIds(t)) {
@@ -529,7 +527,7 @@ export function reimbursementBreakdown(expenses: Transaction[], all: Transaction
       const applied = Math.min(r.amount, Math.max(0, remaining))
       if (applied > 0.01) {
         const entry: AppliedReimbursement = { transaction: r, expense, applied }
-        if (r.fundedFromAccountId) { fundedFromSavings += applied; savingsTransactions.push(entry) }
+        if (r.fundedFromCategoryId) { fundedFromSavings += applied; savingsTransactions.push(entry) }
         else { reimbursedByOthers += applied; otherTransactions.push(entry) }
       }
       remaining -= applied
@@ -605,7 +603,7 @@ export interface CategorySlice {
 }
 
 export function categoryBreakdown(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): CategorySlice[] {
-  const topLevel = categories.filter((c) => !c.parentId)
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
 
   return topLevel
     .map((c) => ({ categoryId: c.id, name: c.name, color: c.color, amount: Math.max(0, netSpentForCategory(c, categories, transactions, referenceDate)) }))
@@ -622,14 +620,15 @@ export interface DayPoint {
  * savings-excluded concept as netSpentForCategory, deliberately, so
  * this chart's numbers and the Dashboard's Spent tile / Safe to Spend
  * never disagree for the same day. See netSpentForCategory. */
-export function last14DaysSpend(transactions: Transaction[], referenceDate: Date = new Date()): DayPoint[] {
+export function last14DaysSpend(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date()): DayPoint[] {
+  const savingsIds = savingsCategoryIds(categories)
   const result: DayPoint[] = []
   for (let offset = 13; offset >= 0; offset--) {
     const day = new Date(referenceDate)
     day.setDate(day.getDate() - offset)
     const dayStr = day.toDateString()
     const total = transactions
-      .filter((t) => t.isExpense && new Date(t.date).toDateString() === dayStr)
+      .filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds) && new Date(t.date).toDateString() === dayStr)
       .reduce((sum, t) => sum + netAmount(t, transactions), 0)
     result.push({ date: day, amount: total })
   }
@@ -646,12 +645,13 @@ export interface PeriodPoint {
  * savings-excluded concept as netSpentForCategory (see there), and
  * specifically what PeriodDetail's own total must match when a bar
  * here gets tapped into. */
-export function last6PeriodsSpend(transactions: Transaction[], referenceDate: Date = new Date()): PeriodPoint[] {
+export function last6PeriodsSpend(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date()): PeriodPoint[] {
+  const savingsIds = savingsCategoryIds(categories)
   const result: PeriodPoint[] = []
   for (let offset = 5; offset >= 0; offset--) {
     const period = periodOffsetBy(-offset, referenceDate)
     const total = transactions
-      .filter((t) => t.isExpense && new Date(t.date) >= period.start && new Date(t.date) < period.end)
+      .filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds) && new Date(t.date) >= period.start && new Date(t.date) < period.end)
       .reduce((sum, t) => sum + netAmount(t, transactions), 0)
     result.push({ periodStart: period.start, amount: total })
   }
@@ -684,17 +684,23 @@ export function categoryTrend(category: Category, categories: Category[], transa
  * the "Net Savings Trend" chart, sitting directly under Monthly Trend —
  * uses the same savings-excluded spend concept as that chart (see
  * netSpentForCategory) so the two stay comparable month to month. */
-export function last6PeriodsNetSavings(transactions: Transaction[], referenceDate: Date = new Date()): PeriodPoint[] {
+export function last6PeriodsNetSavings(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date()): PeriodPoint[] {
+  const savingsIds = savingsCategoryIds(categories)
   const result: PeriodPoint[] = []
   for (let offset = 5; offset >= 0; offset--) {
     const period = periodOffsetBy(-offset, referenceDate)
     const periodTx = transactions.filter((t) => new Date(t.date) >= period.start && new Date(t.date) < period.end)
 
+    // Refunds filed under a spending category reduce spending rather than
+    // counting as income (see isIncomeReceipt), matching the dashboard.
+    const refunds = periodTx
+      .filter((t) => isUnlinkedIncome(t) && !!t.categoryId && !savingsIds.has(t.categoryId))
+      .reduce((sum, t) => sum + t.amount, 0)
     const spent = periodTx
-      .filter((t) => t.isExpense)
-      .reduce((sum, t) => sum + netAmount(t, transactions), 0)
+      .filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds))
+      .reduce((sum, t) => sum + netAmount(t, transactions), 0) - refunds
 
-    const unlinkedIncome = periodTx.filter((t) => isUnlinkedIncome(t)).reduce((sum, t) => sum + t.amount, 0)
+    const unlinkedIncome = periodTx.filter((t) => isIncomeReceipt(t)).reduce((sum, t) => sum + t.amount, 0)
     const excessFromLinked = periodTx
       .filter((t) => isLinkedReimbursement(t))
       .reduce((sum, t) => sum + excessForReimbursement(t, transactions), 0)
@@ -733,9 +739,10 @@ export interface MerchantTotal {
  * merchant total is "how much did I actually pay this merchant,"
  * matching what an individual transaction row shows, not a
  * budget-consumption figure. */
-export function topMerchantsThisMonth(transactions: Transaction[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
+export function topMerchantsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): MerchantTotal[] {
+  const savingsIds = savingsCategoryIds(categories)
   const thisMonth = transactions
-    .filter((t) => t.isExpense && !!t.note.trim() && isInSamePeriod(new Date(t.date), referenceDate))
+    .filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds) && !!t.note.trim() && isInSamePeriod(new Date(t.date), referenceDate))
     .sort((a, b) => b.date.localeCompare(a.date)) // most recent first, so each group's representative label below is its latest note, not an arbitrary one
 
   // Grouped by the same first-word "brand" heuristic merchant learning
@@ -788,8 +795,9 @@ export interface TagTotal {
  * monthly total here must match TagDetail's own header for that same
  * tag, which is a trip-cost concept (real money spent, savings-funded
  * included), not a budget-consumption one. */
-export function topTagsThisMonth(transactions: Transaction[], referenceDate: Date = new Date(), limit = 5): TagTotal[] {
-  const thisMonth = transactions.filter((t) => t.isExpense && t.tags.length > 0 && isInSamePeriod(new Date(t.date), referenceDate))
+export function topTagsThisMonth(transactions: Transaction[], categories: Category[], referenceDate: Date = new Date(), limit = 5): TagTotal[] {
+  const savingsIds = savingsCategoryIds(categories)
+  const thisMonth = transactions.filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds) && t.tags.length > 0 && isInSamePeriod(new Date(t.date), referenceDate))
 
   const map = new Map<string, { amount: number; count: number }>()
   for (const t of thisMonth) {
@@ -846,116 +854,23 @@ export function outstandingReimbursements(transactions: Transaction[]): Outstand
     .sort((a, b) => b.owed - a.owed)
 }
 
-/** A transfer between two of the person's own tracked accounts uses the
- * exact same linking mechanism as a reimbursement (an income
- * transaction pointing at the expense it offsets) — deliberately, so it
- * inherits the same safe-deletion handling and the same automatic
- * exclusion from the Income stat, without a new field or new
- * calculation path to keep in sync.
- *
- * Originally identified purely by both sides having a DIFFERENT account
- * set. Confirmed via a real screenshot that signal alone is too broad:
- * TagDetail's bulk "Fund from Savings" and bulk "Reimburse" flows both
- * legitimately set a real accountId (the savings account, or wherever
- * the friend's money landed) that's very often different from the
- * expense's own account — which made ordinary reimbursements of real,
- * categorized spending get misread as transfers, silently excluded from
- * netAmount's netting (so a fully-reimbursed expense still showed its
- * full original cost) and from the category/tag breakdowns that rely on
- * netAmount too.
- *
- * The expense side's categoryId is the reliable extra signal: createTransfer
- * always leaves it null on both creation and every subsequent edit (the
- * transfer editor has no category field at all), while a real expense
- * being funded or reimbursed — the whole reason reimbursementsFor exists
- * — is a categorized purchase in the overwhelming normal case. Requiring
- * categoryId === null keeps genuine transfers (old and new) recognized
- * exactly as before, while no longer catching a categorized expense's
- * reimbursement just because it happened to be recorded on a different
- * account. */
-export function isAccountTransferLink(reimbursingTx: Transaction, expenseTx: Transaction): boolean {
-  return !!reimbursingTx.accountId && !!expenseTx.accountId && reimbursingTx.accountId !== expenseTx.accountId && expenseTx.categoryId === null
-}
-
-/** Given either half of a transfer, finds the other half — used to edit
- * or delete a transfer as one thing instead of two separately-editable
- * transactions that could drift out of sync (a corrected amount on one
- * side without the matching correction on the other would leave the
- * two account balances reflecting different transfer amounts, silently
- * wrong on whichever side didn't get updated). Returns null for an
- * ordinary transaction, or for a genuine reimbursement/Fund From
- * Savings link — only an actual account-to-account transfer pairs up
- * here. */
-export function findTransferPair(transaction: Transaction, all: Transaction[]): Transaction | null {
-  if (transaction.isExpense) {
-    const income = all.find((t) => t.reimbursesExpenseId === transaction.id && isAccountTransferLink(t, transaction))
-    return income ?? null
-  }
-  if (!transaction.reimbursesExpenseId) return null
-  const expense = all.find((t) => t.id === transaction.reimbursesExpenseId)
-  if (!expense || !isAccountTransferLink(transaction, expense)) return null
-  return expense
-}
-
 /** Given a Fund From Savings withdrawal (an income transaction that
  * covers part or all of a real expense), finds the expense it funds —
  * used to show a compact, focused view instead of the full transaction
- * editor when someone taps this specific record. Unlike a transfer, the
- * expense side here still has real, independent meaning (a category, a
- * date, tags, whether it matches a recurring bill) that needs full
- * editing of its own — only this thin link record benefits from a
- * simpler view, so this deliberately doesn't merge the two the way
- * findTransferPair does. Returns null for an ordinary transaction, a
- * genuine friend reimbursement, or a transfer. */
+ * editor when someone taps this specific record. The expense side still
+ * has real, independent meaning (a category, a date, tags, whether it
+ * matches a recurring bill) that needs full editing of its own — only
+ * this thin link record benefits from a simpler view. Returns null for an
+ * ordinary transaction or a genuine friend reimbursement. */
 export function findFundedExpense(transaction: Transaction, all: Transaction[]): Transaction | null {
   if (transaction.isExpense || !transaction.reimbursesExpenseId) return null
   const expense = all.find((t) => t.id === transaction.reimbursesExpenseId)
   if (!expense) return null
-  if (isAccountTransferLink(transaction, expense)) return null
-  if (!transaction.fundedFromAccountId) return null
+  if (!transaction.fundedFromCategoryId) return null
   return expense
 }
 
-/** Given either half of a "Fund from Savings" pair — the real
- * withdrawal on the goal account, or the offset that links it to the
- * expense it covers — finds the other half. Unlike a Transfer, these
- * two aren't connected by any explicit id (see fundExpensesFromAccount);
- * matched here by the same shared characteristics a genuine pair
- * always has, so every caller that needs this finds it the same way
- * rather than each re-deriving a slightly different version. Confirmed
- * via direct testing this needed to exist and be used everywhere the
- * pair can be deleted: without it, removing just one side — reachable
- * through ordinary swipe-to-delete, not just the dedicated funding-link
- * view — leaves the other side behind. For the offset, that's a
- * harmless dangling link; for the real withdrawal, it's a permanent,
- * invisible drain on the account's balance, since it's left with no
- * category and (once its own account is later deleted) potentially no
- * account either, making it unfindable through any normal screen. */
-export function findFundingPair(transaction: Transaction, all: Transaction[]): Transaction | null {
-  if (!transaction.isExpense && transaction.fundedFromAccountId) {
-    return all.find((t) =>
-      t.id !== transaction.id &&
-      t.isExpense &&
-      t.accountId === transaction.fundedFromAccountId &&
-      t.categoryId === null &&
-      !t.reimbursesExpenseId &&
-      Math.abs(t.amount - transaction.amount) < 0.01 &&
-      t.date === transaction.date
-    ) ?? null
-  }
-  if (transaction.isExpense && transaction.categoryId === null && transaction.accountId) {
-    return all.find((t) =>
-      t.id !== transaction.id &&
-      !t.isExpense &&
-      t.fundedFromAccountId === transaction.accountId &&
-      Math.abs(t.amount - transaction.amount) < 0.01 &&
-      t.date === transaction.date
-    ) ?? null
-  }
-  return null
-}
-
-export function repaysNote(transaction: Transaction, all: Transaction[], accounts: Account[] = []): string | null {
+export function repaysNote(transaction: Transaction, all: Transaction[], categories: Category[] = []): string | null {
   if (transaction.isExpense) return null
 
   if (transaction.multiAllocations && transaction.multiAllocations.length > 0) {
@@ -963,31 +878,31 @@ export function repaysNote(transaction: Transaction, all: Transaction[], account
     // case below, just described once for the whole shared payment
     // rather than per expense — a person reading "covers 3 expenses"
     // still needs to know whether that money came from their own
-    // account or someone else, the same way the single-link case
-    // already makes that distinction.
+    // savings or someone else.
     const count = transaction.multiAllocations.length
-    if (transaction.fundedFromAccountId) {
-      const fundedFrom = accounts.find((a) => a.id === transaction.fundedFromAccountId)
+    if (transaction.fundedFromCategoryId) {
+      const fundedFrom = categories.find((c) => c.id === transaction.fundedFromCategoryId)
       return `funded from ${fundedFrom?.name ?? 'savings'} · covers ${count} expenses`
     }
     return `covers ${count} expenses`
   }
 
-  if (!transaction.reimbursesExpenseId) return null
+  if (!transaction.reimbursesExpenseId) {
+    if (transaction.fundedFromCategoryId) {
+      const fundedFrom = categories.find((c) => c.id === transaction.fundedFromCategoryId)
+      return `taken out of ${fundedFrom?.name ?? 'savings'}`
+    }
+    return null
+  }
   const expense = all.find((e) => e.id === transaction.reimbursesExpenseId)
   if (!expense) return null
-  // Distinguishes "I funded this from my own account" from "someone
+  // Distinguishes "I funded this from my own savings" from "someone
   // else paid me back" — same underlying mechanism (an income
   // transaction linked to the expense it covers), but conceptually
-  // different, and worth being explicit about rather than describing
-  // both the same way just because they share one field.
-  if (transaction.fundedFromAccountId) {
-    const fundedFrom = accounts.find((a) => a.id === transaction.fundedFromAccountId)
+  // different, and worth being explicit about.
+  if (transaction.fundedFromCategoryId) {
+    const fundedFrom = categories.find((c) => c.id === transaction.fundedFromCategoryId)
     return `funded from ${fundedFrom?.name ?? 'savings'}`
-  }
-  if (isAccountTransferLink(transaction, expense)) {
-    const fromAccount = accounts.find((a) => a.id === expense.accountId)
-    return `transferred from ${fromAccount?.name ?? 'another account'}`
   }
   return `repays ${expense.note || 'transaction'}`
 }
@@ -1022,7 +937,7 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[]):
   if (!transaction.isExpense) return null
   const reimbursed = totalReimbursed(transaction, all)
   if (reimbursed <= 0) return null
-  // Distinguishes "funded from savings" / "transferred out" from a
+  // Distinguishes "funded from savings" from a
   // genuine friend reimbursement — and, since paying on a card for a
   // shared cost you also part-fund from your own savings is a real,
   // normal combination (your own share from savings, everyone else's
@@ -1034,23 +949,20 @@ export function reimbursementNote(transaction: Transaction, all: Transaction[]):
   // Only the genuine-outside-reimbursement amount is ever phrased as
   // "− $Y reimbursed" — that's the only part netAmount actually
   // subtracts from what the row displays. Savings draw-downs and
-  // transfers are both still real money spent, just not money someone
+  // draw-downs are still real money spent, just not money someone
   // else gave back, so they're called out separately rather than
   // folded into that subtraction — confirmed via a real screenshot
   // this mattered: the old wording implied a fully savings-funded
   // expense net to $0, which no longer matches what the row shows.
   const linkedTransactions = reimbursementsFor(transaction, all)
-  const savingsLinked = linkedTransactions.filter((t) => !!t.fundedFromAccountId)
-  const transferLinked = linkedTransactions.filter((t) => isAccountTransferLink(t, transaction))
-  const otherLinked = linkedTransactions.filter((t) => !savingsLinked.includes(t) && !transferLinked.includes(t))
+  const savingsLinked = linkedTransactions.filter((t) => !!t.fundedFromCategoryId)
+  const otherLinked = linkedTransactions.filter((t) => !savingsLinked.includes(t))
 
   const savingsAmount = savingsLinked.reduce((sum, t) => sum + t.amount, 0)
-  const transferAmount = transferLinked.reduce((sum, t) => sum + t.amount, 0)
   const otherAmount = otherLinked.reduce((sum, t) => sum + t.amount, 0)
 
   const asides: string[] = []
   if (savingsAmount > 0.01) asides.push(`${formatCurrency(savingsAmount)} from savings`)
-  if (transferAmount > 0.01) asides.push(`${formatCurrency(transferAmount)} transferred out`)
 
   if (otherAmount > 0.01) {
     const suffix = asides.length > 0 ? ` (also ${asides.join(', ')})` : ''
@@ -1104,80 +1016,97 @@ export function splitBulkReimbursement(expenses: Transaction[], all: Transaction
   return { allocations, leftover: Math.max(0, remaining) }
 }
 
-/** Whether this account has an explicit numeric target — used for
+/** Ids of every savings category — the set spend-side aggregates use to
+ * leave contributions out of "what did I spend", since money set aside
+ * isn't money spent. */
+export function savingsCategoryIds(categories: Category[]): Set<string> {
+  return new Set(categories.filter((c) => c.isSavingsCategory).map((c) => c.id))
+}
+
+/** Whether a transaction sits in a savings category — a contribution, a
+ * withdrawal, or a savings-funded offset. None of these are ordinary
+ * spending. */
+export function inSavingsCategory(t: Transaction, savingsIds: Set<string>): boolean {
+  return !!t.categoryId && savingsIds.has(t.categoryId)
+}
+
+/** Whether this category has an explicit numeric target — used for
  * progress bars, pace projections, and off-pace/ready-to-renew
  * warnings, all of which need a real number to work with. Deliberately
- * NOT the test for whether money moving into an account should reduce
- * Safe to Spend — see isSavingsAccount for that, which was a real bug
- * fix: they're different questions, and this one used to incorrectly
- * stand in for both. */
-export function isGoal(account: Account): boolean {
-  return (account.goalTargetAmount ?? 0) > 0
+ * NOT the test for whether money going into a category counts as being
+ * set aside — that's category.isSavingsCategory, target or no target
+ * (an open-ended pool is completely legitimate). */
+export function isGoal(category: Category): boolean {
+  return !!category.isSavingsCategory && (category.goalTargetAmount ?? 0) > 0
 }
 
-/** Whether money moving into this account counts as being set aside —
- * type-based, not target-based. Confirmed via a real screenshot this
- * needed splitting from isGoal: a savings account created without a
- * specific dollar target (someone who just wants a general savings
- * pot, not a dated goal like a trip) is completely legitimate, but
- * isGoal alone would silently exclude it from Safe to Spend's
- * deduction entirely — a $2,000 transfer into it moved real money out
- * of what's available to spend, yet Safe to Spend didn't react at all.
- * Every savings-type account counts here, target or no target;
- * whether it ALSO has a specific numbered goal is a separate,
- * additional thing some of them have on top. */
-export function isSavingsAccount(account: Account): boolean {
-  return account.type === 'savings'
+function localMidnight(iso: string | Date): Date {
+  const d = new Date(iso)
+  d.setHours(0, 0, 0, 0)
+  return d
 }
 
-/** Cumulative progress toward a goal since goalStartDate (or the
- * account's entire history) — now just a read of the account's own
- * real balance, since a goal account's balance IS its progress. A
- * contribution is a real deposit, a draw-down (funding an expense) is
- * a real withdrawal, and accountBalanceAsOf already nets those
- * correctly with no separate bookkeeping needed here. */
-export function goalProgress(account: Account, transactions: Transaction[], referenceDate: Date = new Date()): number {
-  const current = accountBalanceAsOf(account, transactions, referenceDate)
-  if (!account.goalStartDate) return Math.max(0, current)
-  const goalStart = new Date(account.goalStartDate)
-  const accountOpening = new Date(account.openingDate)
-  // If the goal started at or before the account itself was opened,
-  // there's no earlier baseline to subtract — the whole balance,
-  // opening amount included, has accrued since the goal began.
-  // Confirmed this was a real bug, not just a theoretical edge case:
-  // it's the ordinary case whenever a goal account is created with its
-  // goal already active from day one (the common path, including every
-  // account the v9 migration creates from an old savings category) —
-  // accountBalanceAsOf at any date before the account's own opening
-  // trivially returns just the opening balance itself (no transactions
-  // exist yet to adjust it), so subtracting that as if it were a
-  // "starting point to exclude" silently zeroed out the entire opening
-  // balance's worth of real progress.
-  if (goalStart <= accountOpening) return Math.max(0, current)
-  const dayBeforeStart = new Date(goalStart)
-  dayBeforeStart.setDate(dayBeforeStart.getDate() - 1)
-  const atStart = accountBalanceAsOf(account, transactions, dayBeforeStart)
-  return Math.max(0, current - atStart)
+/** Net money put into a savings category over a date range: contributions
+ * (expense-direction transactions in the category) minus withdrawals
+ * (income-direction transactions carrying fundedFromCategoryId pointing
+ * at it). `from`/`to` are inclusive local calendar days; null = open
+ * ended. Raw transaction amounts, deliberately NOT netted against
+ * reimbursements — this is literally what moved in and out of the
+ * envelope. */
+function savingsFlow(category: Category, transactions: Transaction[], from: Date | null, to: Date | null): number {
+  const fromMidnight = from ? localMidnight(from) : null
+  const toEnd = to ? new Date(to) : null
+  if (toEnd) toEnd.setHours(23, 59, 59, 999)
+  let flow = 0
+  for (const t of transactions) {
+    const isContribution = t.isExpense && t.categoryId === category.id
+    const isWithdrawal = !t.isExpense && t.fundedFromCategoryId === category.id
+    if (!isContribution && !isWithdrawal) continue
+    const day = localMidnight(t.date)
+    if (fromMidnight && day < fromMidnight) continue
+    if (toEnd && day > toEnd) continue
+    flow += isContribution ? t.amount : -t.amount
+  }
+  return flow
 }
 
-export function goalProgressFraction(account: Account, transactions: Transaction[], referenceDate: Date = new Date()): number {
-  const target = account.goalTargetAmount ?? 0
+/** What's in the savings category as of the end of a given day (default
+ * today): the balance it started with plus everything put in minus
+ * everything taken out. Purely what the person has told the app — never
+ * reconciled against a bank. */
+export function savingsBalance(category: Category, transactions: Transaction[], asOf: Date = new Date()): number {
+  return (category.savingsOpeningBalance ?? 0) + savingsFlow(category, transactions, null, asOf)
+}
+
+/** Cumulative progress toward a goal. With a goalStartDate (a deliberate
+ * restart, e.g. a renewed annual bill) only money moved since then
+ * counts — the carried-over opening balance does not; without one it is
+ * simply the whole balance. Never negative. */
+export function goalProgress(category: Category, transactions: Transaction[], referenceDate: Date = new Date()): number {
+  if (category.goalStartDate) {
+    return Math.max(0, savingsFlow(category, transactions, new Date(category.goalStartDate), referenceDate))
+  }
+  return Math.max(0, savingsBalance(category, transactions, referenceDate))
+}
+
+export function goalProgressFraction(category: Category, transactions: Transaction[], referenceDate: Date = new Date()): number {
+  const target = category.goalTargetAmount ?? 0
   if (target <= 0) return 0
-  return Math.min(1, goalProgress(account, transactions, referenceDate) / target)
+  return Math.min(1, goalProgress(category, transactions, referenceDate) / target)
 }
 
 /** Projected completion date based on average monthly pace since the goal started. */
-export function projectedGoalCompletionDate(account: Account, transactions: Transaction[], referenceDate: Date = new Date()): Date | null {
-  const target = account.goalTargetAmount ?? 0
+export function projectedGoalCompletionDate(category: Category, transactions: Transaction[], referenceDate: Date = new Date()): Date | null {
+  const target = category.goalTargetAmount ?? 0
   if (target <= 0) return null
-  const own = transactions.filter((t) => t.accountId === account.id)
+  const own = transactions.filter((t) => t.categoryId === category.id || t.fundedFromCategoryId === category.id)
   const earliestTx = own.reduce<Date | null>((earliest, t) => {
     const d = new Date(t.date)
     return !earliest || d < earliest ? d : earliest
   }, null)
-  const start = account.goalStartDate ? new Date(account.goalStartDate) : (earliestTx ?? new Date(account.openingDate) ?? referenceDate)
+  const start = category.goalStartDate ? new Date(category.goalStartDate) : (earliestTx ?? referenceDate)
   const monthsElapsed = Math.max(1 / 30, (referenceDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 30.44))
-  const saved = goalProgress(account, transactions, referenceDate)
+  const saved = goalProgress(category, transactions, referenceDate)
   if (saved <= 0 || monthsElapsed < 1) return null
 
   const monthlyPace = saved / monthsElapsed
@@ -1189,191 +1118,39 @@ export function projectedGoalCompletionDate(account: Account, transactions: Tran
   return new Date(referenceDate.getTime() + monthsRemaining * 30.44 * 24 * 60 * 60 * 1000)
 }
 
-/** An account's balance is raw cash flow through it, deliberately NOT
- * netted against reimbursements the way category spending is. A $100
- * dinner paid from this account and a $60 refund into it later are both
- * real movements of money through the account — netting them the way
- * netSpentForCategory does for "what did this actually cost me" would
- * be wrong here, since the account's balance needs to reflect what
- * literally happened to the money, not the net cost after being paid
- * back.
- *
- * Credit cards are inverted on purpose: a real credit card's "balance"
- * means what you OWE, so an expense on it (borrowing) increases that
- * number and a payment/refund (income) decreases it — the opposite
- * sign convention from every other account type, where an expense
- * reduces what you have and income adds to it. */
-export function accountBalance(account: Account, transactions: Transaction[]): number {
-  // Both sides normalized to local midnight before comparing — confirmed
-  // via a real screenshot this matters: a freshly created account's
-  // openingDate captures the exact moment it was created (including
-  // time of day), while a transaction dated "today" is normalized to
-  // midnight. Without this, the single most common first action —
-  // creating an account and immediately logging today's spending —
-  // silently excluded that transaction from the balance, since
-  // midnight-today falls before later-today when the account was made.
-  const openingMidnight = new Date(account.openingDate)
-  openingMidnight.setHours(0, 0, 0, 0)
-  const relevant = transactions.filter((t) => {
-    if (t.accountId !== account.id) return false
-    const txMidnight = new Date(t.date)
-    txMidnight.setHours(0, 0, 0, 0)
-    return txMidnight >= openingMidnight
-  })
-  const netFlow = relevant.reduce((sum, t) => sum + (t.isExpense ? -t.amount : t.amount), 0)
-  const signedFlow = account.type === 'credit_card' ? -netFlow : netFlow
-  return account.openingBalance + signedFlow
+/** How much a savings category grew (or shrank) within the budget period
+ * containing referenceDate — contributions minus withdrawals dated in
+ * that period. Sums the period's own transactions directly rather than
+ * subtracting two balance snapshots, so a balance correction never reads
+ * as a period's worth of saving. */
+/** Net money moved into savings this period, across every savings
+ * category together: contributions minus withdrawals. Deliberately NOT
+ * floored per category, and allowed to go negative:
+ *  - moving money from one savings category to another nets to zero,
+ *    instead of the receiving side counting as new saving while the
+ *    giving side is silently floored away (which made a plain transfer
+ *    between pots cost Safe to Spend the full amount);
+ *  - an expense funded from savings that were set aside in an earlier
+ *    period lowers this, which cancels the expense's own gross entry in
+ *    Spent, so it never reduces Safe to Spend a second time.
+ * Dashboard, Month in Review and the Saved drill-downs all use this one
+ * function so they can't disagree. */
+export function netSavedThisPeriod(categories: Category[], transactions: Transaction[], referenceDate: Date): number {
+  return categories
+    .filter((c) => c.isSavingsCategory)
+    .reduce((sum, c) => sum + savingsChangeInPeriod(c, transactions, referenceDate), 0)
 }
 
-/** The account's balance as it stood at the end of a specific day —
- * used for interest calculation, which needs the actual daily closing
- * balance for every day in a period, not just the current balance.
- * Deliberately a separate function from accountBalance rather than
- * generalizing accountBalance to take an optional cutoff: accountBalance
- * is used everywhere else in the app and is already well-tested with no
- * upper date bound (it includes a future-dated transaction the moment
- * it's entered, which is arguably correct for "what does this account
- * currently show"); changing its semantics to cap at "today" to reuse
- * it here would be a behavior change to something that already works,
- * for the benefit of a feature that doesn't need that function touched
- * at all. Same underlying logic, applied with an inclusive upper bound
- * instead of none. */
-
-/** All accounts combined into one figure — credit card balances
- * subtracted rather than added, since accountBalance deliberately
- * returns a credit card's balance as a positive "amount owed" (see its
- * own comments), correct for that account's own page but silently
- * wrong here if just summed in directly. The single shared source for
- * this: Dashboard's own net-worth line and the Insights screen's net
- * worth answer both build on this rather than each computing it
- * themselves, after finding they'd drifted into two separately
- * hand-written copies of the same formula. */
-export function netWorthTotal(accounts: Account[], transactions: Transaction[]): number {
-  let total = 0
-  for (const a of accounts) {
-    const balance = accountBalance(a, transactions)
-    total += a.type === 'credit_card' ? -balance : balance
-  }
-  return total
-}
-
-export function accountBalanceAsOf(account: Account, transactions: Transaction[], asOfDate: Date): number {
-  const openingMidnight = new Date(account.openingDate)
-  openingMidnight.setHours(0, 0, 0, 0)
-  const cutoffEndOfDay = new Date(asOfDate)
-  cutoffEndOfDay.setHours(23, 59, 59, 999)
-  const relevant = transactions.filter((t) => {
-    if (t.accountId !== account.id) return false
-    const txMidnight = new Date(t.date)
-    txMidnight.setHours(0, 0, 0, 0)
-    return txMidnight >= openingMidnight && txMidnight <= cutoffEndOfDay
-  })
-  const netFlow = relevant.reduce((sum, t) => sum + (t.isExpense ? -t.amount : t.amount), 0)
-  const signedFlow = account.type === 'credit_card' ? -netFlow : netFlow
-  return account.openingBalance + signedFlow
-}
-
-/** How much a goal account's balance grew (or shrank) within the
- * budget period containing referenceDate — the account-based
- * replacement for what used to be a savings category's period spend.
- * Built entirely on accountBalanceAsOf's already-correct signed math
- * (deposits, withdrawals, and any transfer both count exactly as they
- * should there), so a real deposit, a real withdrawal to fund
- * something, and interest landing in the account all flow through
- * correctly with no extra special-casing needed here. */
-/** How much a goal account's balance grew (or shrank) within the
- * budget period containing referenceDate — the account-based
- * replacement for what used to be a savings category's period spend.
- * Sums the period's own real deposits and withdrawals directly, rather
- * than subtracting two account-balance snapshots — confirmed that
- * subtraction approach was a real bug: it couldn't tell a genuine
- * contribution apart from a balance correction (matching the tracked
- * number to what the real bank shows), so fixing a stale balance on a
- * savings account made it look like new money had been saved that
- * period, when nothing was actually added. A correction is real and
- * still fully reflected in the account's own balance (accountBalance
- * itself must include it, or the correction would never take effect at
- * all) — it just isn't a *period's* worth of saving, which is what this
- * specific figure is asking. */
-export function goalAccountChangeInPeriod(account: Account, transactions: Transaction[], referenceDate: Date): number {
+export function savingsChangeInPeriod(category: Category, transactions: Transaction[], referenceDate: Date): number {
   const period = periodContaining(referenceDate)
-  const relevant = transactions.filter((t) =>
-    t.accountId === account.id &&
-    !t.isBalanceAdjustment &&
-    new Date(t.date) >= period.start &&
-    new Date(t.date) < period.end
-  )
-  const netFlow = relevant.reduce((sum, t) => sum + (t.isExpense ? -t.amount : t.amount), 0)
-  return account.type === 'credit_card' ? -netFlow : netFlow
-}
-
-/** Interest earned over a period, calculated the way real savings
- * accounts actually do it: a daily rate (annual rate ÷ 365) applied to
- * the account's actual closing balance on EACH day in the period, then
- * summed — not a flat rate applied to the opening or average balance,
- * which would misstate it for any account whose balance changed
- * partway through the period (a deposit or withdrawal mid-month is
- * exactly the normal case, not an edge case, for a real savings
- * account). Confirmed the user's own understanding matches this: "the
- * interest is calculated daily."
- *
- * Rounds only the final total, not each day's contribution — real
- * banks accrue fractional cents internally through the month and only
- * round at the point of crediting it, and rounding every day first
- * would introduce a small but real cumulative error against that.
- * periodEnd is capped at "yesterday" if it would otherwise land in the
- * future — interest can't have accrued for days that haven't happened
- * yet, even if the person is calculating mid-month. */
-export function calculateInterestEarned(account: Account, transactions: Transaction[], periodStart: Date, periodEnd: Date): number {
-  const rate = account.interestRate
-  if (!rate) return 0
-  const dailyRate = rate / 100 / 365
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const yesterday = new Date(today)
-  yesterday.setDate(yesterday.getDate() - 1)
-  const cappedEnd = periodEnd > yesterday ? yesterday : periodEnd
-
-  let total = 0
-  const cursor = new Date(periodStart)
-  cursor.setHours(0, 0, 0, 0)
-  const end = new Date(cappedEnd)
-  end.setHours(0, 0, 0, 0)
-  while (cursor <= end) {
-    const dayBalance = accountBalanceAsOf(account, transactions, cursor)
-    // Interest accrues on a positive balance; a credit card's "balance"
-    // here represents debt owed, not savings, so it never earns
-    // interest through this calculation regardless of a rate being set.
-    if (dayBalance > 0 && account.type !== 'credit_card') {
-      total += dayBalance * dailyRate
-    }
-    cursor.setDate(cursor.getDate() + 1)
+  let flow = 0
+  for (const t of transactions) {
+    const isContribution = t.isExpense && t.categoryId === category.id
+    const isWithdrawal = !t.isExpense && t.fundedFromCategoryId === category.id
+    if (!isContribution && !isWithdrawal) continue
+    const d = new Date(t.date)
+    if (d < period.start || d >= period.end) continue
+    flow += isContribution ? t.amount : -t.amount
   }
-  return Math.round(total * 100) / 100
+  return flow
 }
-
-/** The single adjustment transaction needed to make accountBalance
- * match a real-world figure the person just read off their bank app —
- * the "reconcile" half of the hybrid approach: automatic day to day,
- * with an easy correction whenever it drifts (a bank fee, interest, a
- * transaction that never made it into the app).
- *
- * Returns the actual expense/income split to create, not just a raw
- * signed number — a credit card's inverted sign convention means "the
- * real balance came in higher than calculated" is an EXPENSE for a
- * credit card (more debt than expected, e.g. an unrecorded fee) but
- * INCOME for every other account type (more money than expected, e.g.
- * interest). Deriving that here once, rather than leaving the caller to
- * re-apply the same inversion rule accountBalance already encodes, is
- * exactly the kind of logic that's already drifted apart into silently
- * wrong duplicates elsewhere in this codebase when left to more than
- * one place. Null return means already matches, nothing to create. */
-export function accountReconciliationDelta(account: Account, transactions: Transaction[], realBalance: number): { amount: number; isExpense: boolean } | null {
-  const calculated = accountBalance(account, transactions)
-  const delta = realBalance - calculated
-  if (Math.abs(delta) < 0.005) return null
-  const higherThanExpected = delta > 0
-  const isExpense = account.type === 'credit_card' ? higherThanExpected : !higherThanExpected
-  return { amount: Math.abs(delta), isExpense }
-}
-

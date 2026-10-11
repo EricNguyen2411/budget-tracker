@@ -1,17 +1,20 @@
 import { useState } from 'react'
-import type { Category } from '../types'
+import type { Category, Transaction } from '../types'
 import { createCategory, saveCategory, deleteCategory, mergeCategoryInto } from '../db'
-import { effectiveBudget, formatCurrency } from '../calculations'
+import { effectiveBudget, formatCurrency, localDateInputValue, savingsBalance } from '../calculations'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 
 interface Props {
   categories: Category[]
+  transactions?: Transaction[]
   onBack: () => void
   onChanged: () => void
 }
 
 function needWantBadge(c: Category) {
+  // A savings category has no Need/Want — it isn't spending.
+  if (c.isSavingsCategory) return null
   if (c.needWantType === 'need') {
     return <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--blue)', marginLeft: 8, verticalAlign: 1 }}>Need</span>
   }
@@ -25,7 +28,7 @@ function needWantBadge(c: Category) {
   return <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--amber)', marginLeft: 8, verticalAlign: 1 }}>⚠️ Not set</span>
 }
 
-export default function CategoriesScreen({ categories, onBack, onChanged }: Props) {
+export default function CategoriesScreen({ categories, transactions = [], onBack, onChanged }: Props) {
   useSwipeBack(onBack)
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null)
 
@@ -70,6 +73,9 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
                   <div className="tx-icon" style={{ background: c.color + '33' }}>{c.icon}</div>
                   <div className="tx-info">
                     <span className="tx-note">{c.name}{needWantBadge(c)}</span>
+                    {c.isSavingsCategory && (
+                      <span className="tx-category">Savings · {formatCurrency(savingsBalance(c, transactions))}{(c.goalTargetAmount ?? 0) > 0 ? ` of ${formatCurrency(c.goalTargetAmount ?? 0)}` : ''}</span>
+                    )}
                     {overridden && (
                       <span className="tx-category" style={{ color: 'var(--amber)' }}>
                         ⚠️ {formatCurrency(c.monthlyBudget)} set here, but ignored — subcategories total {formatCurrency(subsTotal)}
@@ -100,6 +106,7 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
         <CategoryEditor
           category={editingCategory === 'new' ? null : editingCategory}
           allCategories={categories}
+          transactions={transactions ?? []}
           onClose={() => setEditingCategory(null)}
           onChanged={onChanged}
         />
@@ -108,9 +115,10 @@ export default function CategoriesScreen({ categories, onBack, onChanged }: Prop
   )
 }
 
-function CategoryEditor({ category, allCategories, onClose, onChanged }: {
+function CategoryEditor({ category, allCategories, transactions, onClose, onChanged }: {
   category: Category | null
   allCategories: Category[]
+  transactions: Transaction[]
   onClose: () => void
   onChanged: () => void
 }) {
@@ -121,6 +129,12 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   const [parentId, setParentId] = useState<string | null>(category?.parentId ?? null)
   const [needWantType, setNeedWantType] = useState<'need' | 'want' | null>(category?.needWantType ?? null)
   const [needWantError, setNeedWantError] = useState(false)
+  const [isSavings, setIsSavings] = useState(category?.isSavingsCategory ?? false)
+  const [isGoalToggle, setIsGoalToggle] = useState((category?.goalTargetAmount ?? 0) > 0)
+  const [goalAmount, setGoalAmount] = useState(category?.goalTargetAmount ? String(category.goalTargetAmount) : '')
+  const [hasGoalDate, setHasGoalDate] = useState(!!category?.goalTargetDate)
+  const [goalRecurring, setGoalRecurring] = useState(category?.goalRecurring ?? false)
+  const [goalDate, setGoalDate] = useState(category?.goalTargetDate ? localDateInputValue(new Date(category.goalTargetDate)) : '')
   const [showDeleteOptions, setShowDeleteOptions] = useState(false)
   const { closing, requestClose } = useModalClose(onClose)
   const deleteOptionsClose = useModalClose(() => setShowDeleteOptions(false))
@@ -129,9 +143,12 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
   // situation this is for — surfaced as the suggested merge target,
   // though any category can be picked instead.
   const likelyDuplicate = category
-    ? allCategories.find((c) => c.id !== category.id && c.parentId === category.parentId && c.name.trim().toLowerCase() === category.name.trim().toLowerCase())
+    ? allCategories.find((c) => c.id !== category.id && c.parentId === category.parentId && !!c.isSavingsCategory === !!category.isSavingsCategory && c.name.trim().toLowerCase() === category.name.trim().toLowerCase())
     : null
-  const mergeCandidates = category ? allCategories.filter((c) => c.id !== category.id && c.parentId === category.parentId) : []
+  // Savings categories only merge with savings categories, spending with
+  // spending — merging across would turn contributions into spending (or
+  // take-outs into nothing) without anyone choosing that.
+  const mergeCandidates = category ? allCategories.filter((c) => c.id !== category.id && c.parentId === category.parentId && !!c.isSavingsCategory === !!category.isSavingsCategory) : []
 
   const eligibleParents = allCategories.filter((c) =>
     !c.parentId &&
@@ -144,11 +161,17 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
     // Every category must have an explicit Need/Want choice — enforced
     // at save time rather than silently defaulting to something, since
     // a wrong silent guess would quietly skew Month in Review's 50/30/20
-    // numbers in a way that's hard to notice. Savings goals are set up
-    // on the account itself now, so every category reaching this form
-    // is a genuine spending category that needs one.
-    if (!needWantType) {
+    // numbers in a way that's hard to notice. A savings category isn't
+    // spending, so it has no Need/Want.
+    if (!isSavings && !needWantType) {
       setNeedWantError(true)
+      return
+    }
+    // Turning savings off while take-outs or funded expenses still point at
+    // this category would orphan them (they'd vanish from every total), so
+    // it has to stay a savings category until those are removed.
+    if (category?.isSavingsCategory && !isSavings && transactions.some((t) => t.fundedFromCategoryId === category.id)) {
+      alert(`"${category.name}" has money taken out of it, or expenses funded from it. Remove those first, or leave it as a savings category.`)
       return
     }
     const data = {
@@ -157,8 +180,16 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
       color,
       monthlyBudget: parseFloat(budget) || 0,
       sortOrder: category?.sortOrder ?? allCategories.length,
-      parentId,
-      needWantType
+      parentId: isSavings ? null : parentId,
+      needWantType: isSavings ? null : needWantType,
+      isSavingsCategory: isSavings,
+      goalTargetAmount: isSavings && isGoalToggle ? (parseFloat(goalAmount) || 0) : 0,
+      goalTargetDate: isSavings && isGoalToggle && hasGoalDate && goalDate ? (() => { const [y, m, d] = goalDate.split('-').map(Number); return new Date(y, m - 1, d).toISOString() })() : null,
+      goalStartDate: isSavings && isGoalToggle ? (category?.goalStartDate ?? null) : null,
+      goalRecurring: isSavings && isGoalToggle && hasGoalDate ? goalRecurring : false,
+      // Kept as-is for an existing savings category; turning savings off
+      // drops it, since a spending category has no balance to carry.
+      savingsOpeningBalance: isSavings ? category?.savingsOpeningBalance : undefined
     }
     if (category) {
       await saveCategory({ ...category, ...data })
@@ -192,7 +223,8 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
 
   async function handlePlainDelete() {
     if (!category) return
-    if (!confirm(`Delete "${category.name}"? Any transactions using it will become uncategorized rather than being reassigned.`)) return
+    const warn = category.isSavingsCategory ? ' Its balance goes away, and money added to it will no longer be tracked as savings.' : ''
+    if (!confirm(`Delete "${category.name}"? Any transactions using it will become uncategorized rather than being reassigned.${warn}`)) return
     await deleteCategory(category.id)
     onChanged()
     requestClose()
@@ -221,7 +253,7 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
             </div>
           </div>
 
-          {eligibleParents.length > 0 && (
+          {!isSavings && eligibleParents.length > 0 && (
             <>
               <label className="field-label">Parent Category (optional)</label>
               <select value={parentId ?? ''} onChange={(e) => setParentId(e.target.value || null)}>
@@ -233,19 +265,69 @@ function CategoryEditor({ category, allCategories, onClose, onChanged }: {
             </>
           )}
 
-          <label className="field-label">{parentId ? "Monthly Budget (rolls up into parent's total)" : 'Monthly Budget'}</label>
+          <label className="field-label">{isSavings ? 'Planned monthly contribution' : parentId ? "Monthly Budget (rolls up into parent's total)" : 'Monthly Budget'}</label>
           <input type="number" inputMode="decimal" placeholder="0.00" value={budget} onChange={(e) => setBudget(e.target.value)} />
           <p className="hint" style={{ marginTop: -8, marginBottom: 12 }}>For setting budgets across all categories at once against your income, use More → Total Budget Planner instead.</p>
 
-          <label className="field-label">Need or Want</label>
-          <div className="segmented" style={{ marginBottom: needWantError ? 4 : 12 }}>
-            <button className={needWantType === 'need' ? 'segmented-active' : ''} onClick={() => { setNeedWantType('need'); setNeedWantError(false) }}>Need</button>
-            <button className={needWantType === 'want' ? 'segmented-active' : ''} onClick={() => { setNeedWantType('want'); setNeedWantError(false) }}>Want</button>
-          </div>
-          {needWantError && (
-            <p className="hint hint-warning" style={{ marginTop: 0, marginBottom: 12 }}>Pick one before saving — every spending category needs a Need/Want setting now, so Month in Review's 50/30/20 split is never left guessing.</p>
+          {!isSavings && (
+            <>
+            <label className="field-label">Need or Want</label>
+            <div className="segmented" style={{ marginBottom: needWantError ? 4 : 12 }}>
+              <button className={needWantType === 'need' ? 'segmented-active' : ''} onClick={() => { setNeedWantType('need'); setNeedWantError(false) }}>Need</button>
+              <button className={needWantType === 'want' ? 'segmented-active' : ''} onClick={() => { setNeedWantType('want'); setNeedWantError(false) }}>Want</button>
+            </div>
+            {needWantError && (
+              <p className="hint hint-warning" style={{ marginTop: 0, marginBottom: 12 }}>Pick one before saving — every spending category needs a Need/Want setting now, so Month in Review's 50/30/20 split is never left guessing.</p>
+            )}
+            <p className="hint" style={{ marginTop: needWantError ? 0 : -8, marginBottom: 12 }}>Used by Month in Review to check spending against the 50/30/20 guideline.</p>
+
+            </>
           )}
-          <p className="hint" style={{ marginTop: needWantError ? 0 : -8, marginBottom: 12 }}>Used by Month in Review to check spending against the 50/30/20 guideline.</p>
+
+          {(!category || !allCategories.some((c) => c.parentId === category.id)) && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 16 }}>
+                <input type="checkbox" switch checked={isSavings} onChange={(e) => setIsSavings(e.target.checked)} />
+                <span>Savings category</span>
+              </div>
+              <p className="hint" style={{ marginTop: 4 }}>
+                Money you set aside. Adding to it isn't spending, and taking money out isn't income — the balance is just what you tell the app.
+                {category && !category.isSavingsCategory ? ' Anything already logged in this category will count as money added to it.' : ''}
+              </p>
+            </>
+          )}
+
+          {isSavings && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                <input type="checkbox" switch checked={isGoalToggle} onChange={(e) => setIsGoalToggle(e.target.checked)} />
+                <span>This is a savings goal</span>
+              </div>
+              {isGoalToggle && (
+                <>
+                  <label className="field-label">Target Amount</label>
+                  <input type="number" inputMode="decimal" placeholder="0.00" value={goalAmount} onChange={(e) => setGoalAmount(e.target.value)} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+                    <input type="checkbox" switch checked={hasGoalDate} onChange={(e) => setHasGoalDate(e.target.checked)} />
+                    <span>Target date</span>
+                  </div>
+                  {hasGoalDate && (
+                    <input type="date" value={goalDate} onChange={(e) => setGoalDate(e.target.value)} style={{ marginTop: 8 }} />
+                  )}
+                  {hasGoalDate && (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                        <input type="checkbox" switch checked={goalRecurring} onChange={(e) => setGoalRecurring(e.target.checked)} />
+                        <span>Renews every year</span>
+                      </div>
+                      <p className="hint" style={{ marginTop: 4 }}>For annual bills like insurance or registration — once the target date passes, you'll get a one-tap prompt to renew for next year.</p>
+                    </>
+                  )}
+                  <p className="hint" style={{ marginTop: 8 }}>Tracked cumulatively toward the target, not a monthly amount that resets.</p>
+                </>
+              )}
+            </>
+          )}
 
           {category && (
             <button onClick={handleDelete} style={{ color: 'var(--red)', fontSize: 15, textAlign: 'center', width: '100%', padding: '14px 0', marginTop: 20, borderTop: '1px solid var(--border)' }}>

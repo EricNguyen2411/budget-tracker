@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { Category, Transaction, Account, RecurringTransaction, NetWorthSnapshot } from '../types'
-import { spentThisPeriod, spentByCategory, spentByTag, budgetComparison, biggestCategoryChange, topMerchants, needsWantsSplit, netWorth, subscriptionCreep, cashFlowAnswer, weekdayWeekendSplit, merchantSpendingCreep, type Answer } from '../insightQueries'
-import { getNetWorthSnapshots } from '../db'
+import { useMemo, useState } from 'react'
+import type { Category, Transaction, RecurringTransaction } from '../types'
+import { spentThisPeriod, spentByCategory, spentByTag, budgetComparison, biggestCategoryChange, topMerchants, needsWantsSplit, subscriptionCreep, cashFlowAnswer, weekdayWeekendSplit, merchantSpendingCreep, type Answer } from '../insightQueries'
 import { getHiddenInsights, setInsightHidden, ALL_INSIGHTS, INSIGHT_LABELS, type InsightId } from '../insightPreferences'
 import { normalizeTag } from '../tags'
 import { useSwipeBack } from '../useSwipeBack'
@@ -9,7 +8,6 @@ import { useSwipeBack } from '../useSwipeBack'
 interface Props {
   categories: Category[]
   transactions: Transaction[]
-  accounts: Account[]
   recurring: RecurringTransaction[]
   onBack: () => void
 }
@@ -23,12 +21,11 @@ function AnswerCard({ answer }: { answer: Answer }) {
   )
 }
 
-export default function Insights({ categories, transactions, accounts, recurring, onBack }: Props) {
+export default function Insights({ categories, transactions, recurring, onBack }: Props) {
   useSwipeBack(onBack)
   const now = new Date()
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
-  const [netWorthHistory, setNetWorthHistory] = useState<NetWorthSnapshot[]>([])
   const [hidden, setHidden] = useState<Set<InsightId>>(() => getHiddenInsights())
   const [customizing, setCustomizing] = useState(false)
 
@@ -38,11 +35,7 @@ export default function Insights({ categories, transactions, accounts, recurring
     setHidden(getHiddenInsights())
   }
 
-  useEffect(() => {
-    getNetWorthSnapshots().then((snapshots) => setNetWorthHistory(snapshots.slice(-30)))
-  }, [])
-
-  const topLevel = categories.filter((c) => !c.parentId)
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const allTags = useMemo(() => {
     const seen = new Set<string>()
     for (const t of transactions) for (const raw of t.tags) { const tag = normalizeTag(raw); if (tag) seen.add(tag) }
@@ -52,13 +45,12 @@ export default function Insights({ categories, transactions, accounts, recurring
   // These three don't need a tap at all — cheap to compute, always
   // relevant, no ambiguity to resolve, so there's no reason to make
   // them wait for a question to be asked first.
-  const periodAnswer = spentThisPeriod(categories, transactions, accounts, recurring, now)
-  const comparisonAnswer = budgetComparison(categories, transactions, accounts, recurring, now)
+  const periodAnswer = spentThisPeriod(categories, transactions, recurring, now)
+  const comparisonAnswer = budgetComparison(categories, transactions, recurring, now)
   const changeAnswer = biggestCategoryChange(categories, transactions, now)
   const needsWantsAnswer = needsWantsSplit(categories, transactions, now)
-  const netWorthAnswer = netWorth(accounts, transactions)
-  const cashFlow = cashFlowAnswer(categories, transactions, accounts, recurring, now)
-  const merchants = topMerchants(transactions, now, 5).merchants
+  const cashFlow = cashFlowAnswer(categories, transactions, recurring, now)
+  const merchants = topMerchants(transactions, categories, now, 5).merchants
   const weekdayAnswer = weekdayWeekendSplit(transactions, now)
   const creepItems = useMemo(() => subscriptionCreep(recurring, transactions), [recurring, transactions])
   const merchantCreepItems = merchantSpendingCreep(transactions, now)
@@ -93,32 +85,6 @@ export default function Insights({ categories, transactions, accounts, recurring
       {!hidden.has('biggestChange') && <AnswerCard answer={changeAnswer} />}
       {!hidden.has('needsWants') && <AnswerCard answer={needsWantsAnswer} />}
       {!hidden.has('weekday') && <AnswerCard answer={weekdayAnswer} />}
-      {!hidden.has('netWorth') && <AnswerCard answer={netWorthAnswer} />}
-
-      {!hidden.has('netWorth') && netWorthHistory.length >= 2 && (() => {
-        const values = netWorthHistory.map((s) => s.netWorth)
-        const min = Math.min(...values, 0)
-        const max = Math.max(...values, 0)
-        const range = Math.max(1, max - min)
-        return (
-          <div className="card" style={{ marginBottom: 10, padding: 12 }}>
-            <span className="section-heading" style={{ display: 'block', marginBottom: 8 }}>Net worth — last {netWorthHistory.length} days tracked</span>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 2, height: 60 }}>
-              {netWorthHistory.map((s) => {
-                const heightPct = Math.max(2, ((s.netWorth - min) / range) * 100)
-                return <div key={s.date} style={{ flex: 1, height: `${heightPct}%`, background: 'var(--blue)', borderRadius: 2, minHeight: 2 }} title={`${s.date}: ${s.netWorth}`} />
-              })}
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{netWorthHistory[0].date}</span>
-              <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{netWorthHistory[netWorthHistory.length - 1].date}</span>
-            </div>
-          </div>
-        )
-      })()}
-      {!hidden.has('netWorth') && netWorthHistory.length < 2 && (
-        <p className="hint" style={{ marginBottom: 10 }}>Net worth is now tracked once a day — a trend will build up here as more days pass.</p>
-      )}
 
       {!hidden.has('subscriptionCreep') && creepItems.length > 0 && (
         <div className="card" style={{ marginBottom: 10, padding: 12, borderLeft: '3px solid var(--amber)' }}>

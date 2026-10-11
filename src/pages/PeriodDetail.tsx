@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Category, Transaction } from '../types'
-import { formatCurrency, netAmount, categoryAndDescendantIds } from '../calculations'
+import { formatCurrency, netAmount, categoryAndDescendantIds, savingsCategoryIds, inSavingsCategory } from '../calculations'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
@@ -55,7 +55,8 @@ export default function PeriodDetail({ title, start, end, categories, transactio
   const filtered = filterIds ? periodTransactions.filter((t) => t.categoryId && filterIds.has(t.categoryId)) : periodTransactions
   // Deliberately the exclusive (budget-relative) netAmount, matching
   // this screen's own header total — see netSpentForCategory.
-  const totalSpent = filtered.filter((t) => t.isExpense).reduce((s, t) => s + netAmount(t, transactions), 0)
+  const savingsIds = savingsCategoryIds(categories)
+  const totalSpent = filtered.filter((t) => t.isExpense && !inSavingsCategory(t, savingsIds)).reduce((s, t) => s + netAmount(t, transactions), 0)
   const filteredCategoryName = filterCategory?.name ?? null
   const sorted = [...filtered].sort((a, b) =>
     sort === 'recent' ? b.date.localeCompare(a.date) : netAmount(b, transactions) - netAmount(a, transactions)

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Category, Transaction, RecurringTransaction, Account, InstallmentPlan } from '../types'
-import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements, accountBalance, netWorthTotal } from '../calculations'
+import type { Category, Transaction, RecurringTransaction, InstallmentPlan } from '../types'
+import { computeDashboardTotals, formatCurrency, daysRemainingInMonth, netSpentForCategory, effectiveBudget, isGoal, savingsBalance, goalProgress, goalProgressFraction, projectedGoalCompletionDate, categoryBreakdown, last14DaysSpend, last6PeriodsSpend, last6PeriodsNetSavings, localDateInputValue, topMerchantsThisMonth, monthlyEquivalentRecurringExpenses, fundedFromSavingsThisPeriod, topTagsThisMonth, outstandingReimbursements } from '../calculations'
 import { biggestCategoryChange } from '../insightQueries'
 import { installmentProgress } from '../installments'
 import { computeSnapshot, loadSnapshot, saveSnapshot, diffSnapshots, type ChangeLine } from '../safeToSpendHistory'
-import { periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
+import { isInSamePeriod, periodContaining, referenceDateOffsetBy, getSettings, getCycleConfig, isCustomCycle } from '../budgetPeriod'
 import { generateInsights } from '../insights'
 import { DonutChart, BarChart } from '../components/Charts'
 import { getHiddenWidgets, getWidgetOrder, type WidgetId } from '../dashboardWidgets'
@@ -26,8 +26,6 @@ interface Props {
   onOpenImport: (files: FileList) => void
   onOpenRecurring: () => void
   onOpenTags: () => void
-  accounts?: Account[]
-  onOpenAccounts?: () => void
   installmentPlans?: InstallmentPlan[]
   onOpenInstallments?: () => void
 }
@@ -72,9 +70,15 @@ function trendSummary(periods: { periodStart: Date; amount: number }[], noun: st
   )
 }
 
-export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags, accounts = [], onOpenAccounts, installmentPlans = [], onOpenInstallments }: Props) {
+export default function Dashboard({ categories, transactions, recurring, onOpenCategory, onOpenStat, onOpenDateRange, onOpenMonthRecap, onOpenCategoryBreakdown, onOpenImport, onOpenRecurring, onOpenTags, installmentPlans = [], onOpenInstallments }: Props) {
   const now = new Date()
-  const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring, accounts), [categories, transactions, recurring, accounts, now.toDateString()])
+  const totals = useMemo(() => computeDashboardTotals(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
+  // Expenses with no category sit outside every budget, so Spent and Safe to
+  // Spend silently leave them out — surfaced here so that never goes unseen.
+  const uncategorizedSpend = useMemo(() => {
+    const rows = transactions.filter((t) => t.isExpense && !t.categoryId && isInSamePeriod(new Date(t.date), now))
+    return { count: rows.length, total: rows.reduce((sum, t) => sum + t.amount, 0) }
+  }, [transactions, now.toDateString()])
   const days = daysRemainingInMonth(now)
   const perDay = Math.max(0, totals.safeToSpend) / days
   const [showBreakdown, setShowBreakdown] = useState(false)
@@ -90,7 +94,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const [showChanges, setShowChanges] = useState(false)
   const changesClose = useModalClose(() => setShowChanges(false))
   useEffect(() => {
-    const current = computeSnapshot(categories, transactions, now, recurring, accounts)
+    const current = computeSnapshot(categories, transactions, now, recurring)
     const prev = loadSnapshot()
     if (prev) {
       const lines = diffSnapshots(prev, current, categories)
@@ -103,7 +107,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const topLevelForBudget = categories.filter((c) => !c.parentId)
+  const topLevelForBudget = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const totalBudget = topLevelForBudget.reduce((sum, c) => sum + effectiveBudget(c, categories), 0)
   const netSpentSoFar = topLevelForBudget
     .reduce((sum, c) => sum + Math.max(0, netSpentForCategory(c, categories, transactions, now)), 0)
@@ -115,9 +119,9 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   // be due this exact month — an annual premium due in October still
   // needs a share set aside in March, otherwise it looks "free" for 11
   // months and blows the budget the one month it actually lands.
-  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring, transactions, now)
+  const monthlyRecurringReserve = monthlyEquivalentRecurringExpenses(recurring, transactions, now, categories)
 
-  const topLevel = categories.filter((c) => !c.parentId)
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
   const budgetRows = topLevel
     .map((c) => ({ category: c, spent: netSpentForCategory(c, categories, transactions, now), budget: effectiveBudget(c, categories) }))
     .filter((r) => r.budget > 0)
@@ -161,17 +165,17 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
     .sort((a, b) => (a.progress.nextDueDate!.getTime() - b.progress.nextDueDate!.getTime()))
     .slice(0, 5)
 
-  const insights = useMemo(() => generateInsights(categories, transactions, accounts, now), [categories, transactions, accounts, now.toDateString()])
+  const insights = useMemo(() => generateInsights(categories, transactions, now), [categories, transactions, now.toDateString()])
   // isGoal (and so the widget above) explicitly requires a target > 0.
-  // An open-ended savings account — an ongoing pool like "Travel
+  // An open-ended savings category — an ongoing pool like "Travel
   // Savings" rather than a goal with an end point — still has a real
   // balance worth showing somewhere on the dashboard even without one.
-  const goalAccounts = accounts.filter((a) => isGoal(a))
-  const openEndedSavingsAccounts = accounts.filter((a) => (a.goalTargetAmount ?? 0) <= 0 && goalProgress(a, transactions) > 0)
+  const goalAccounts = categories.filter((c) => isGoal(c))
+  const openEndedSavingsAccounts = categories.filter((c) => c.isSavingsCategory && (c.goalTargetAmount ?? 0) <= 0 && savingsBalance(c, transactions) > 0)
 
   const pieSlices = useMemo(() => categoryBreakdown(categories, transactions, now), [categories, transactions, now.toDateString()])
-  const dailySpend = useMemo(() => last14DaysSpend(transactions, now), [transactions, now.toDateString()])
-  const monthRecap = useMemo(() => buildMonthRecap(categories, transactions, accounts, now), [categories, transactions, accounts, now.toDateString()])
+  const dailySpend = useMemo(() => last14DaysSpend(transactions, categories, now), [transactions, categories, now.toDateString()])
+  const monthRecap = useMemo(() => buildMonthRecap(categories, transactions, now), [categories, transactions, now.toDateString()])
   const needsWantsPct = useMemo(() => {
     if (monthRecap.income <= 0) return { needs: 0, wants: 0, saved: 0 }
     return {
@@ -203,11 +207,11 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const monthRecapLabel = isCustomCycle(cycleSettings)
     ? `${currentPeriodForLabel.start.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} – ${new Date(currentPeriodForLabel.end.getTime() - 86400000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
     : now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
-  const monthlyTrend = useMemo(() => last6PeriodsSpend(transactions, now), [transactions, now.toDateString()])
-  const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(transactions, now), [transactions, now.toDateString()])
+  const monthlyTrend = useMemo(() => last6PeriodsSpend(transactions, categories, now), [transactions, categories, now.toDateString()])
+  const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(transactions, categories, now), [transactions, categories, now.toDateString()])
   const hidden = getHiddenWidgets()
-  const topMerchants = useMemo(() => topMerchantsThisMonth(transactions, now), [transactions, now.toDateString()])
-  const topTags = useMemo(() => topTagsThisMonth(transactions, now), [transactions, now.toDateString()])
+  const topMerchants = useMemo(() => topMerchantsThisMonth(transactions, categories, now), [transactions, categories, now.toDateString()])
+  const topTags = useMemo(() => topTagsThisMonth(transactions, categories, now), [transactions, categories, now.toDateString()])
   const owedToYou = useMemo(() => outstandingReimbursements(transactions), [transactions])
   const totalOwed = owedToYou.reduce((sum, o) => sum + o.owed, 0)
 
@@ -297,7 +301,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
               )}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                 <span style={{ fontSize: 14 }}>Savings & Investments This Month</span>
-                <span className="amount" style={{ color: 'var(--indigo)' }}>{formatCurrency(totals.saved)}</span>
+                <span className="amount" style={{ color: 'var(--indigo)' }}>{totals.saved < 0 ? `+${formatCurrency(-totals.saved)}` : `−${formatCurrency(totals.saved)}`}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 0' }}>
                 <span style={{ fontSize: 14, minWidth: 0 }}>Recurring & Subscriptions (Monthly Reserve)</span>
@@ -355,13 +359,18 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
           <span className="stat-label">Reimbursed</span>
           <span className="stat-value amount" style={{ color: 'var(--teal)' }}><AnimatedNumber value={totals.reimbursed} format={formatCurrency} /></span>
         </button>
-        {totals.saved > 0 && (
+        {Math.abs(totals.saved) > 0.004 && (
           <button className="card stat-card" style={{ textAlign: 'left', background: 'rgba(94, 92, 230, 0.08)', borderColor: 'rgba(94, 92, 230, 0.18)' }} onClick={() => onOpenStat('saved')}>
-            <span className="stat-label">Saved</span>
-            <span className="stat-value amount" style={{ color: 'var(--indigo)' }}><AnimatedNumber value={totals.saved} format={formatCurrency} /></span>
+            <span className="stat-label">{totals.saved > 0 ? 'Saved' : 'Drawn from savings'}</span>
+            <span className="stat-value amount" style={{ color: 'var(--indigo)' }}><AnimatedNumber value={Math.abs(totals.saved)} format={formatCurrency} /></span>
           </button>
         )}
       </div>
+      {uncategorizedSpend.count > 0 && (
+        <p className="hint" style={{ margin: '-4px 0 12px', color: 'var(--amber)' }}>
+          ⚠️ {uncategorizedSpend.count} uncategorized expense{uncategorizedSpend.count === 1 ? '' : 's'} ({formatCurrency(uncategorizedSpend.total)}) aren't counted in Spent or Safe to Spend until they have a category.
+        </p>
+      )}
 
       {(() => {
         const widgetElements: Partial<Record<WidgetId, React.ReactNode>> = {
@@ -385,7 +394,7 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 const progress = goalProgress(a, transactions)
                 const projected = fraction < 1 ? projectedGoalCompletionDate(a, transactions, now) : null
                 return (
-                  <button key={a.id} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenAccounts?.()}>
+                  <button key={a.id} style={{ display: 'block', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(a.id)}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
                       <span>{a.icon} {a.name}</span>
                       <span style={{ color: fraction >= 1 ? 'var(--green)' : 'var(--text-dim)' }}>
@@ -401,9 +410,9 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 )
               })}
               {openEndedSavingsAccounts.map((a) => {
-                const balance = goalProgress(a, transactions)
+                const balance = savingsBalance(a, transactions)
                 return (
-                  <button key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenAccounts?.()}>
+                  <button key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', textAlign: 'left', marginTop: 12 }} onClick={() => onOpenCategory(a.id)}>
                     <span style={{ fontSize: 13 }}>{a.icon} {a.name}</span>
                     <span className="amount" style={{ fontSize: 15, fontWeight: 600 }}>{formatCurrency(balance)} saved</span>
                   </button>
@@ -676,34 +685,6 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
                 </div>
               ))}
             </div>
-          ),
-
-          accounts: accounts.length > 0 && (
-            <button className="card" style={{ marginTop: 16, display: 'block', width: '100%', textAlign: 'left' }} onClick={onOpenAccounts}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
-                <span className="section-heading" style={{ margin: 0 }}>Accounts</span>
-                <span className="chevron">›</span>
-              </div>
-              {accounts.map((a) => {
-                const balance = accountBalance(a, transactions)
-                const isDebt = a.type === 'credit_card'
-                return (
-                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0' }}>
-                    <span style={{ fontSize: 14 }}>{a.icon} {a.name}</span>
-                    <span style={{ flex: 1 }} />
-                    <span className="amount" style={{ fontSize: 14, color: isDebt && balance > 0 ? 'var(--red)' : 'var(--text)' }}>
-                      {isDebt && balance > 0 ? `Owing ${formatCurrency(balance)}` : formatCurrency(balance)}
-                    </span>
-                  </div>
-                )
-              })}
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>Net Worth</span>
-                <span className="amount" style={{ fontSize: 14, fontWeight: 700 }}>
-                  {formatCurrency(netWorthTotal(accounts, transactions))}
-                </span>
-              </div>
-            </button>
           ),
 
           biggestChange: (() => {

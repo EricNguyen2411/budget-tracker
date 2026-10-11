@@ -1,4 +1,4 @@
-import type { Category, Transaction, Account } from './types'
+import type { Category, Transaction } from './types'
 import {
   netSpentForCategory, effectiveBudget, computeDashboardTotals, formatCurrency,
   goalProgress, goalProgressFraction, projectedGoalCompletionDate, netAmount, totalExcessReimbursement, isUnlinkedIncome, isGoal
@@ -65,7 +65,7 @@ export interface CategoryRecapRow {
 }
 
 export interface GoalRecapRow {
-  accountId: string
+  categoryId: string
   name: string
   icon: string
   progress: number
@@ -88,10 +88,12 @@ export interface MonthRecap {
   suggestions: string[]
 }
 
-export function buildMonthRecap(categories: Category[], transactions: Transaction[], accounts: Account[] = [], referenceDate: Date = new Date()): MonthRecap {
-  const totals = computeDashboardTotals(categories, transactions, referenceDate, [], accounts)
-  const topLevel = categories.filter((c) => !c.parentId)
-  const goalAccounts = accounts.filter((a) => isGoal(a))
+export function buildMonthRecap(categories: Category[], transactions: Transaction[], referenceDate: Date = new Date()): MonthRecap {
+  const totals = computeDashboardTotals(categories, transactions, referenceDate, [])
+  // Savings categories are where money was set aside, not spent — they
+  // show up as goals below, never as spending or in the needs/wants split.
+  const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
+  const goalAccounts = categories.filter((a) => isGoal(a))
 
   const categoryRows: CategoryRecapRow[] = topLevel
     .map((c) => ({
@@ -115,15 +117,14 @@ export function buildMonthRecap(categories: Category[], transactions: Transactio
   // belongs to exactly one category) and is what makes a subcategory's
   // own Need/Want setting actually matter instead of being silently
   // governed by its parent. No more savings-category exclusion needed
-  // here — a savings goal is an account now, and a goal account's
-  // contributions/withdrawals are never categorized at all (see
-  // fundExpensesFromAccount), so they were never going to show up in
-  // this category-based sum regardless.
+  // here beyond skipping savings categories themselves: their
+  // contributions are expense-direction and would otherwise count as
+  // spending.
   const needsSpent = categories
-    .filter((c) => classify(c, categories) === 'need')
+    .filter((c) => !c.isSavingsCategory && classify(c, categories) === 'need')
     .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate)), 0)
   const wantsSpent = categories
-    .filter((c) => classify(c, categories) === 'want')
+    .filter((c) => !c.isSavingsCategory && classify(c, categories) === 'want')
     .reduce((s, c) => s + Math.max(0, directSpentForCategory(c, transactions, referenceDate)), 0)
   // Unclassified categories aren't forced into either bucket — better to
   // leave the split honestly incomplete than silently miscategorize
@@ -143,7 +144,7 @@ export function buildMonthRecap(categories: Category[], transactions: Transactio
         const projected = projectedGoalCompletionDate(a, transactions, referenceDate)
         onTrack = projected ? projected <= new Date(a.goalTargetDate) : null
       }
-      return { accountId: a.id, name: a.name, icon: a.icon, progress, target: a.goalTargetAmount ?? 0, fraction, onTrack }
+      return { categoryId: a.id, name: a.name, icon: a.icon, progress, target: a.goalTargetAmount ?? 0, fraction, onTrack }
     })
 
   const suggestions = buildSuggestions({ needsPct, wantsPct, savedPct, categoryRows, goalRows, income })

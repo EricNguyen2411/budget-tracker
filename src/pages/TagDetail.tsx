@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
-import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, goalProgress, reimbursementBreakdown, planSavingsGiveback, type SavingsGivebackPlan, isUnlinkedIncome, isSavingsAccount } from '../calculations'
+import type { Category, Transaction } from '../types'
+import { formatCurrency, netAmount, totalReimbursed, splitBulkReimbursement, savingsBalance, reimbursementBreakdown, planSavingsGiveback, type SavingsGivebackPlan, isUnlinkedIncome } from '../calculations'
 import { normalizeTag } from '../tags'
 import { useSwipeBack } from '../useSwipeBack'
 import { useModalClose } from '../useModalClose'
 import { DonutChart } from '../components/Charts'
 import TransactionEditor from '../components/TransactionEditor'
-import { createTransaction, deleteTransaction, applySavingsGiveback, fundExpensesFromAccount } from '../db'
+import { createTransaction, deleteTransaction, applySavingsGiveback, fundExpensesFromSavings } from '../db'
 
 /** Simulates what the ledger looks like immediately after a giveback
  * plan is applied, without actually writing anything — used purely so
@@ -56,10 +56,9 @@ interface Props {
   onDelete: (id: string) => void
   onViewInTransactions: () => void
   onChanged: () => void
-  accounts?: Account[]
 }
 
-export default function TagDetail({ tag, categories, transactions, onBack, onSave, onDelete, onViewInTransactions, onChanged, accounts = [] }: Props) {
+export default function TagDetail({ tag, categories, transactions, onBack, onSave, onDelete, onViewInTransactions, onChanged }: Props) {
   useSwipeBack(onBack)
   const [editing, setEditing] = useState<Transaction | null>(null)
   const [showBulkReimburse, setShowBulkReimburse] = useState(false)
@@ -104,7 +103,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
   )
   const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
 
-  // Every savings account with an actual balance to draw from — not
+  // Every savings category with an actual balance to draw from — not
   // just ones with a specific numeric target set. Confirmed a real
   // gap: an open-ended savings pool (no target date, just "money set
   // aside") is exactly as valid a funding source for a trip as a
@@ -112,8 +111,8 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
   // hide it from the picker for no real reason. A balance sitting at
   // $0 isn't a useful funding source either way, so still excluded.
   const availableGoalAccounts = useMemo(
-    () => accounts.filter((a) => isSavingsAccount(a) && goalProgress(a, transactions) > 0.01),
-    [accounts, transactions]
+    () => categories.filter((c) => c.isSavingsCategory && savingsBalance(c, transactions) > 0.01),
+    [categories, transactions]
   )
 
   // Deliberately all-time / not period-scoped, unlike category
@@ -277,7 +276,6 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
           outstandingExpenses={outstandingExpenses}
           allTaggedExpenses={tagged.filter((t) => t.isExpense)}
           transactions={transactions}
-          accounts={accounts}
           onClose={() => setShowBulkReimburse(false)}
           onDone={() => { setShowBulkReimburse(false); onChanged() }}
         />
@@ -298,7 +296,7 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
         <BreakdownSourceModal
           source={viewingBreakdownSource}
           entries={viewingBreakdownSource === 'savings' ? breakdown.savingsTransactions : breakdown.otherTransactions}
-          accounts={accounts}
+          categories={categories}
           onClose={() => setViewingBreakdownSource(null)}
           onOpenTransaction={(t) => { setViewingBreakdownSource(null); setEditing(t) }}
         />
@@ -307,10 +305,10 @@ export default function TagDetail({ tag, categories, transactions, onBack, onSav
   )
 }
 
-function BreakdownSourceModal({ source, entries, accounts, onClose, onOpenTransaction }: {
+function BreakdownSourceModal({ source, entries, categories, onClose, onOpenTransaction }: {
   source: 'savings' | 'others'
   entries: { transaction: Transaction; expense: Transaction; applied: number }[]
-  accounts: Account[]
+  categories: Category[]
   onClose: () => void
   onOpenTransaction: (t: Transaction) => void
 }) {
@@ -326,7 +324,7 @@ function BreakdownSourceModal({ source, entries, accounts, onClose, onOpenTransa
         <div className="modal-body">
           <p className="hint" style={{ marginBottom: 12 }}>Tap any of these to open it directly.</p>
           {entries.map((entry, i) => {
-            const account = entry.transaction.accountId ? accounts.find((a) => a.id === entry.transaction.accountId) : null
+            const account = entry.transaction.fundedFromCategoryId ? categories.find((c) => c.id === entry.transaction.fundedFromCategoryId) : null
             return (
               <button
                 key={entry.transaction.id + i}
@@ -355,7 +353,7 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, goalAccoun
   tagLabel: string
   outstandingExpenses: Transaction[]
   transactions: Transaction[]
-  goalAccounts: Account[]
+  goalAccounts: Category[]
   onClose: () => void
   onDone: () => void
 }) {
@@ -364,7 +362,7 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, goalAccoun
   const [showAccountPicker, setShowAccountPicker] = useState(false)
   const account = goalAccounts.find((a) => a.id === accountId)
 
-  const available = account ? goalProgress(account, transactions) : 0
+  const available = account ? Math.max(0, savingsBalance(account, transactions)) : 0
   const totalOwed = outstandingExpenses.reduce((sum, t) => sum + (t.amount - totalReimbursed(t, transactions)), 0)
   const amountToUse = Math.min(available, totalOwed)
   const { allocations } = amountToUse > 0
@@ -375,15 +373,11 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, goalAccoun
   async function handleConfirm() {
     if (allocations.length === 0 || !accountId) return
     const today = new Date().toISOString()
-    // A real, two-sided funding event (see fundExpensesFromAccount) —
-    // a genuine withdrawal on the goal account, correctly reducing its
-    // real balance, paired with the offset link that makes every
-    // covered expense show as funded. One call for the whole action,
-    // not one per expense it happens to touch — confirmed directly
-    // this was the actual source of the transaction list filling up
-    // with reimbursement entries.
-    await fundExpensesFromAccount({
-      fromAccountId: accountId,
+    // One income-direction record in the savings category covering every
+    // expense in the action — a single line in the transaction list, not
+    // one per expense, and deleting it gives the money straight back.
+    await fundExpensesFromSavings({
+      categoryId: accountId,
       allocations,
       date: today,
       note: allocations.length === 1
@@ -403,14 +397,14 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, goalAccoun
         </div>
         <div className="modal-body">
           <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 12 }}>
-            Covers as much of "{tagLabel}" as {account ? `${account.icon} ${account.name}` : 'this account'}'s balance allows, oldest expense first — whatever's left over stays as genuine spending from wherever you actually paid.
+            Covers as much of "{tagLabel}" as {account ? `${account.icon} ${account.name}` : 'this savings category'}'s balance allows, oldest expense first — whatever's left over stays as genuine spending from wherever you actually paid.
           </p>
 
           {goalAccounts.length > 1 && (
             <>
               <label className="field-label">From</label>
               <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
-                <span>{account ? `${account.icon} ${account.name}` : 'Choose an account'}</span>
+                <span>{account ? `${account.icon} ${account.name}` : 'Choose a savings category'}</span>
                 <span className="chevron">›</span>
               </button>
             </>
@@ -480,22 +474,18 @@ function BulkFundModal({ tagLabel, outstandingExpenses, transactions, goalAccoun
   )
 }
 
-function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, transactions, accounts, onClose, onDone }: {
+function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, transactions, onClose, onDone }: {
   tagLabel: string
   outstandingExpenses: Transaction[]
   allTaggedExpenses: Transaction[]
   transactions: Transaction[]
-  accounts: Account[]
   onClose: () => void
   onDone: () => void
 }) {
   const { closing, requestClose } = useModalClose(onClose)
   const [amount, setAmount] = useState('')
-  const [accountId, setAccountId] = useState<string | null>(null)
-  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const [showExistingPicker, setShowExistingPicker] = useState(false)
   const [existingTxId, setExistingTxId] = useState<string | null>(null)
-  const account = accounts.find((a) => a.id === accountId)
   const existingTx = transactions.find((t) => t.id === existingTxId)
 
   // Real income already sitting in the ledger — a bank transfer someone
@@ -538,12 +528,10 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
 
   async function handleConfirm() {
     if (allocations.length === 0) return
-    // Reuses the existing transaction's own date and account when
-    // applying one already received, rather than "today" and whatever
-    // account happens to be picked here — the payment already happened
-    // on its own real date, through its own real account.
+    // Reuses the existing transaction's own date when applying one already
+    // received, rather than "today" — the payment already happened on its
+    // own real date.
     const date = existingTx ? existingTx.date : new Date().toISOString()
-    const linkAccountId = existingTx ? existingTx.accountId : accountId
 
     // Applied BEFORE creating the new allocations, so the reduced/
     // deleted savings transactions are already out of the way — giving
@@ -569,8 +557,7 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
       categoryId: null,
       reimbursesExpenseId: allocations.length === 1 ? allocations[0].expenseId : null,
       multiAllocations: allocations.length > 1 ? allocations : null,
-      tags: [],
-      accountId: linkAccountId
+      tags: []
     })
     if (leftover > 0.01) {
       await createTransaction({
@@ -580,8 +567,7 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
         isExpense: false,
         categoryId: null,
         reimbursesExpenseId: null,
-        tags: [tagLabel],
-        accountId: linkAccountId
+        tags: [tagLabel]
       })
     }
     // The original transaction's amount has now been fully accounted
@@ -616,16 +602,6 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
                   Already received this? Use an existing transaction instead
                 </button>
               )}
-            </>
-          )}
-
-          {accounts.length > 0 && !existingTx && (
-            <>
-              <label className="field-label" style={{ marginTop: 16 }}>Account</label>
-              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
-                <span>{account ? `${account.icon} ${account.name}` : 'None (optional)'}</span>
-                <span className="chevron">›</span>
-              </button>
             </>
           )}
 
@@ -678,7 +654,7 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
                 <button onClick={() => setShowExistingPicker(false)} className="text-button text-button-primary">Cancel</button>
               </div>
               <div className="modal-body">
-                <p className="hint" style={{ marginBottom: 12 }}>Its own date and account carry over — it'll be replaced with the split amounts below rather than counted twice.</p>
+                <p className="hint" style={{ marginBottom: 12 }}>Its own date carries over — it'll be replaced with the split amounts below rather than counted twice.</p>
                 {candidateTransactions.map((t) => (
                   <button key={t.id} className="picker-row" onClick={() => { setExistingTxId(t.id); setShowExistingPicker(false) }}>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>{t.note || 'Income'} · {new Date(t.date).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
@@ -690,28 +666,6 @@ function BulkReimburseModal({ tagLabel, outstandingExpenses, allTaggedExpenses, 
           </div>
         )}
 
-        {showAccountPicker && (
-          <div className="modal-backdrop" onClick={() => setShowAccountPicker(false)}>
-            <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <span className="modal-title">Account</span>
-                <button onClick={() => setShowAccountPicker(false)} className="text-button text-button-primary">Done</button>
-              </div>
-              <div className="modal-body">
-                <button className="picker-row" onClick={() => { setAccountId(null); setShowAccountPicker(false) }}>
-                  <span>None (optional)</span>
-                  {!accountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                </button>
-                {accounts.map((a) => (
-                  <button key={a.id} className="picker-row" onClick={() => { setAccountId(a.id); setShowAccountPicker(false) }}>
-                    <span>{a.icon} {a.name}</span>
-                    {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

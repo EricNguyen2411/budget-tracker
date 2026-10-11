@@ -1,4 +1,4 @@
-import type { Category, Transaction, RecurringTransaction, ShoppingList, RecurrenceFrequency, Account } from './types'
+import type { Category, Transaction, RecurringTransaction, ShoppingList, RecurrenceFrequency } from './types'
 
 /**
  * The native Swift app's backup format — structurally very different
@@ -140,7 +140,6 @@ const FREQUENCY_VALUES = new Set(['weekly', 'monthly', 'yearly'])
 
 export interface TranslatedBackup {
   categories: Category[]
-  accounts: Account[]
   transactions: Transaction[]
   recurring: RecurringTransaction[]
   shoppingLists: ShoppingList[]
@@ -149,44 +148,17 @@ export interface TranslatedBackup {
 
 export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup {
   const idByCategoryName = new Map<string, string>()
-  // A native savings category becomes a goal account here, not a
-  // category — matching the same account-based goal model the rest of
-  // this app now uses. Tracked separately from idByCategoryName so a
-  // transaction that referenced one by name can be re-pointed
-  // correctly below (a real account transaction for the contribution
-  // side, fundedFromAccountId for the withdrawal/offset side) rather
-  // than resolved as an ordinary category that no longer exists.
-  const accountIdBySavingsCategoryName = new Map<string, string>()
+  const savingsCategoryIds = new Set<string>()
   const categories: Category[] = []
-  const accounts: Account[] = []
 
   // Pass 1: top-level categories, so subcategories always have a parent
-  // id to resolve against.
+  // id to resolve against. A native savings category stays a savings
+  // category here, with its goal fields carried across.
   const topLevelDefs = data.categories.filter((c) => !c.parentName)
   for (const def of topLevelDefs) {
-    if (def.isSavingsCategory) {
-      const id = crypto.randomUUID()
-      accountIdBySavingsCategoryName.set(def.name.toLowerCase(), id)
-      accounts.push({
-        id,
-        name: def.name,
-        icon: sfSymbolToEmoji(def.icon),
-        color: normalizeHex(def.colorHex),
-        type: 'savings',
-        openingBalance: 0, // the native format has no account-balance concept for these — real balance builds from the transactions re-pointed below, same as any other account
-        openingDate: new Date(0).toISOString(),
-        sortOrder: def.sortOrder,
-        isArchived: false,
-        goalTargetAmount: def.goalTargetAmount ?? 0,
-        goalTargetDate: def.goalTargetDate ?? null,
-        goalStartDate: def.goalStartDate ?? null,
-        goalRecurring: false
-      })
-      continue
-    }
     const id = crypto.randomUUID()
     idByCategoryName.set(def.name.toLowerCase(), id)
-    categories.push({
+    const category: Category = {
       id,
       name: def.name,
       icon: sfSymbolToEmoji(def.icon),
@@ -195,17 +167,27 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       sortOrder: def.sortOrder,
       parentId: null,
       needWantType: null
-    })
+    }
+    if (def.isSavingsCategory) {
+      category.isSavingsCategory = true
+      category.goalTargetAmount = def.goalTargetAmount ?? 0
+      category.goalTargetDate = def.goalTargetDate ?? null
+      category.goalStartDate = def.goalStartDate ?? null
+      category.goalRecurring = false
+      savingsCategoryIds.add(id)
+    }
+    categories.push(category)
   }
 
-  // Pass 2: subcategories. A subcategory of a former savings category
-  // has no equivalent in the new model (accounts don't nest) — treated
-  // as an ordinary top-level category instead of dropping it entirely.
+  // Pass 2: subcategories. A subcategory of a savings category has no
+  // meaning here (savings categories don't nest) — treated as an
+  // ordinary top-level category instead of dropping it entirely.
   const subDefs = data.categories.filter((c) => c.parentName)
   for (const def of subDefs) {
     const id = crypto.randomUUID()
     idByCategoryName.set(def.name.toLowerCase(), id)
     const parentId = def.parentName ? (idByCategoryName.get(def.parentName.toLowerCase()) ?? null) : null
+    const parentIsSavings = parentId !== null && savingsCategoryIds.has(parentId)
     categories.push({
       id,
       name: def.name,
@@ -213,7 +195,7 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       color: normalizeHex(def.colorHex),
       monthlyBudget: def.monthlyBudget,
       sortOrder: def.sortOrder,
-      parentId,
+      parentId: parentIsSavings ? null : parentId,
       needWantType: null
     })
   }
@@ -221,11 +203,6 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
   function resolveCategory(name: string | null | undefined): string | null {
     if (!name) return null
     return idByCategoryName.get(name.toLowerCase()) ?? null
-  }
-
-  function resolveSavingsAccount(name: string | null | undefined): string | null {
-    if (!name) return null
-    return accountIdBySavingsCategoryName.get(name.toLowerCase()) ?? null
   }
 
   // Transactions: create all first with real ids, tracking each by its
@@ -236,24 +213,6 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
   const transactions: Transaction[] = data.transactions.map((def) => {
     const id = crypto.randomUUID()
     if (def.localID) idByLocalId.set(def.localID, id)
-    const savingsAccountId = resolveSavingsAccount(def.categoryName)
-    if (savingsAccountId) {
-      // A contribution (real deposit into the goal) or a withdrawal
-      // (funding some other expense) — either way this is now a real
-      // transaction ON that account, not a categorized one.
-      return {
-        id,
-        amount: def.amount,
-        note: def.note,
-        date: def.date,
-        isExpense: def.isExpense,
-        categoryId: null,
-        reimbursesExpenseId: null, // resolved below
-        tags: [],
-        accountId: savingsAccountId,
-        fundedFromAccountId: null // resolved below, only for the withdrawal/offset side
-      }
-    }
     return {
       id,
       amount: def.amount,
@@ -262,27 +221,19 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
       isExpense: def.isExpense,
       categoryId: resolveCategory(def.categoryName),
       reimbursesExpenseId: null, // resolved below
-      tags: [],
-      accountId: null
+      tags: []
     }
   })
   data.transactions.forEach((def, i) => {
     if (def.reimbursesLocalID) {
       transactions[i].reimbursesExpenseId = idByLocalId.get(def.reimbursesLocalID) ?? null
     }
-    // The withdrawal/offset side of a savings-funded expense: an
-    // income-direction transaction that was tied to a (now-converted)
-    // savings category AND covers another expense. Its own accountId
-    // was just set to the goal account above, which — now that this
-    // is income-direction — would wrongly read as a deposit rather
-    // than the withdrawal it actually is (the exact bug already fixed
-    // for the live app's own bulk-funding flow). Correcting it to the
-    // real two-sided shape: accountId cleared, fundedFromAccountId set
-    // instead, exactly matching what fundExpensesFromAccount produces.
+    // Income-direction money in a savings category is money coming back
+    // OUT of savings (funding another expense, or a plain withdrawal) —
+    // marked so it reads as a withdrawal rather than ordinary income.
     const t = transactions[i]
-    if (!t.isExpense && t.reimbursesExpenseId && t.accountId && accounts.some((a) => a.id === t.accountId)) {
-      t.fundedFromAccountId = t.accountId
-      t.accountId = null
+    if (!t.isExpense && t.categoryId && savingsCategoryIds.has(t.categoryId)) {
+      t.fundedFromCategoryId = t.categoryId
     }
   })
 
@@ -316,5 +267,5 @@ export function translateNativeBackup(data: NativeBackupFile): TranslatedBackup 
     .map((def) => ({ key: def.key, categoryId: resolveCategory(def.categoryName) }))
     .filter((r): r is { key: string; categoryId: string } => r.categoryId !== null)
 
-  return { categories, accounts, transactions, recurring, shoppingLists, merchantRules }
+  return { categories, transactions, recurring, shoppingLists, merchantRules }
 }

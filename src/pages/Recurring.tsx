@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Category, RecurringTransaction, RecurrenceFrequency, Transaction, Account } from '../types'
+import type { Category, RecurringTransaction, RecurrenceFrequency, Transaction } from '../types'
 import { detectRecurring, frequencyLabel } from '../recurring'
 import { formatCurrency, localDateInputValue, paidOccurrencesThisPeriod } from '../calculations'
 import { getSettings, updateSettings } from '../budgetPeriod'
@@ -14,10 +14,9 @@ interface Props {
   recurring: RecurringTransaction[]
   onChanged: () => void
   onBack: () => void
-  accounts?: Account[]
 }
 
-export default function RecurringPage({ categories, transactions, recurring, onChanged, onBack, accounts = [] }: Props) {
+export default function RecurringPage({ categories, transactions, recurring, onChanged, onBack }: Props) {
   useSwipeBack(onBack)
   const [dismissed, setDismissed] = useState(getSettings().dismissedRecurringSuggestions)
   const [editingItem, setEditingItem] = useState<RecurringTransaction | null>(null)
@@ -38,7 +37,6 @@ export default function RecurringPage({ categories, transactions, recurring, onC
       nextDueDate: s.suggestedNextDueDate.toISOString(),
       anchorDay: s.anchorDay,
       categoryId: s.categoryId,
-      accountId: s.accountId,
       isActive: true
     })
     onChanged()
@@ -142,7 +140,6 @@ export default function RecurringPage({ categories, transactions, recurring, onC
         <RecurringEditor
           item={editingItem}
           categories={categories}
-          accounts={accounts}
           onSave={async (data) => {
             if (editingItem) {
               await saveRecurring({ ...editingItem, ...data })
@@ -153,7 +150,6 @@ export default function RecurringPage({ categories, transactions, recurring, onC
                 frequency: data.frequency ?? 'monthly',
                 nextDueDate: data.nextDueDate ?? new Date().toISOString(),
                 categoryId: data.categoryId ?? null,
-                accountId: data.accountId ?? null,
                 isExpense: data.isExpense ?? true,
                 isActive: true
               })
@@ -167,10 +163,9 @@ export default function RecurringPage({ categories, transactions, recurring, onC
   )
 }
 
-function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
+function RecurringEditor({ item, categories, onSave, onClose }: {
   item: RecurringTransaction | null
   categories: Category[]
-  accounts: Account[]
   onSave: (data: Partial<RecurringTransaction>) => void
   onClose: () => void
 }) {
@@ -181,13 +176,9 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
   const [nextDueDate, setNextDueDate] = useState(localDateInputValue(item ? new Date(item.nextDueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)))
   const [categoryId, setCategoryId] = useState<string | null>(item?.categoryId ?? null)
   const [showCategoryPicker, setShowCategoryPicker] = useState(false)
-  const [accountId, setAccountId] = useState<string | null>(item?.accountId ?? null)
-  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const category = categories.find((c) => c.id === categoryId)
-  const account = accounts.find((a) => a.id === accountId)
   const { closing, requestClose } = useModalClose(onClose)
   const categoryPickerClose = useModalClose(() => setShowCategoryPicker(false))
-  const accountPickerClose = useModalClose(() => setShowAccountPicker(false))
 
   function handleSave() {
     const parsed = parseFloat(amount)
@@ -209,8 +200,7 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
       // this cost go toward," which a paycheck doesn't have an answer
       // to) — cleared rather than left stale if the toggle was
       // switched to Income after a category had already been picked.
-      categoryId: isExpense ? categoryId : null,
-      accountId
+      categoryId: isExpense ? categoryId : null
     })
     requestClose()
   }
@@ -261,47 +251,8 @@ function RecurringEditor({ item, categories, accounts, onSave, onClose }: {
             </p>
           )}
 
-          {accounts.length > 0 && (
-            <>
-              <label className="field-label">Account</label>
-              <button className="picker-row" onClick={() => setShowAccountPicker(true)}>
-                <span>{account ? `${account.icon} ${account.name}` : 'None (optional)'}</span>
-                <span className="chevron">›</span>
-              </button>
-              <p className="hint" style={{ marginTop: 6 }}>
-                Applied automatically to each bill this generates — so rent, subscriptions, and the like keep your account balance accurate without editing every occurrence by hand.
-              </p>
-            </>
-          )}
         </div>
       </div>
-
-      {showAccountPicker && (() => {
-        const { closing: ac, requestClose: rac } = accountPickerClose
-        function pick(id: string | null) { rac(() => { setAccountId(id); setShowAccountPicker(false) }) }
-        return (
-          <div className={`modal-backdrop${ac ? ' modal-closing' : ''}`} onClick={() => rac(() => setShowAccountPicker(false))}>
-            <div className={`modal-sheet${ac ? ' modal-sheet-closing' : ''}`} onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <span className="modal-title">Account</span>
-                <button onClick={() => rac(() => setShowAccountPicker(false))} className="text-button text-button-primary">Done</button>
-              </div>
-              <div className="modal-body">
-                <button className="picker-row" onClick={() => pick(null)}>
-                  <span>None (optional)</span>
-                  {!accountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                </button>
-                {accounts.map((a) => (
-                  <button key={a.id} className="picker-row" onClick={() => pick(a.id)}>
-                    <span>{a.icon} {a.name}</span>
-                    {accountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {showCategoryPicker && (() => { const { closing: cc, requestClose: rcc } = categoryPickerClose
         function pick(id: string | null) { rcc(() => { setCategoryId(id); setShowCategoryPicker(false) }) }

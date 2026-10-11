@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Category, Transaction, Account } from '../types'
+import type { Category, Transaction } from '../types'
 import { recognizeTextItems } from '../ocr'
 import { parseScreenshot, type ParsedTransaction, type DetectedFormat } from '../receiptParser'
 import { isLikelyDuplicate, isLikelyInstallmentDuplicate, significantTokens, genericTokens, isLikelyTransitFare, findPendingFareMatch } from '../duplicates'
@@ -11,7 +11,6 @@ import { createTransaction, saveTransaction } from '../db'
 import { useSwipeBack } from '../useSwipeBack'
 import SortMenuButton from '../components/SortMenuButton'
 import { useModalClose } from '../useModalClose'
-import { getImportAccountMapping, guessImportSource } from '../importSettings'
 
 interface Props {
   categories: Category[]
@@ -19,7 +18,6 @@ interface Props {
   onBack: () => void
   onImported: () => void
   initialFiles?: FileList | null
-  accounts?: Account[]
 }
 
 const FORMAT_LABELS: Record<DetectedFormat, string> = {
@@ -29,7 +27,7 @@ const FORMAT_LABELS: Record<DetectedFormat, string> = {
   unknown: 'Unrecognized format'
 }
 
-export default function StatementImport({ categories, existingTransactions, onBack, onImported, initialFiles, accounts = [] }: Props) {
+export default function StatementImport({ categories, existingTransactions, onBack, onImported, initialFiles }: Props) {
   useSwipeBack(onBack)
   const [status, setStatus] = useState<'idle' | 'scanning' | 'done'>('idle')
   const [scanProgress, setScanProgress] = useState('')
@@ -48,8 +46,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
   // alternative of a wrong result with no hint anything was missed.
   const [sparseScanWarning, setSparseScanWarning] = useState<string | null>(null)
   const [formatsSeen, setFormatsSeen] = useState<Set<DetectedFormat>>(new Set())
-  const [importAccountId, setImportAccountId] = useState<string | null>(null)
-  const [showAccountPicker, setShowAccountPicker] = useState(false)
   const [included, setIncluded] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -112,7 +108,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
   const [importSummary, setImportSummary] = useState<{ count: number } | null>(null)
 
   const importGeneric = useMemo(
-    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null, tags: [], accountId: null } as Transaction))]),
+    () => genericTokens([...existingTransactions, ...results.map((res) => ({ ...res, categoryId: null, reimbursesExpenseId: null, tags: [] } as Transaction))]),
     [existingTransactions, results]
   )
 
@@ -211,7 +207,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
     setResults([])
     setSkippedRows([])
     setScanProgress('Reading PDF\u2026')
-    setImportAccountId(null)
     try {
       const { parsePdfStatement } = await import('../pdfParser')
       const { transactions, skipped } = await parsePdfStatement(files[0], categories)
@@ -268,13 +263,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
       setSparseScanWarning(`${sparsePhotoCount} photo${sparsePhotoCount === 1 ? '' : 's'} returned surprisingly little text for ${sparsePhotoCount === 1 ? 'a' : ''} recognized screenshot${sparsePhotoCount === 1 ? '' : 's'} — if you can see more transactions in ${sparsePhotoCount === 1 ? 'it' : 'them'} than showed up below, try rescanning in better light or at a higher resolution.`)
     }
     setIncluded(new Set(allResults.filter((r) => matchingExisting(r).length === 0 && matchingWithinBatch(r, allResults).length === 0).map((r) => r.id)))
-    // A best-effort starting point, not a silent decision — confirmed
-    // this stays fully editable via the account picker shown on the
-    // review screen below, since guessing wrong here would mean money
-    // landing against the wrong account's balance.
-    const guessedSource = firstFormat ? guessImportSource(firstFormat, combinedText) : null
-    const mapping = getImportAccountMapping()
-    setImportAccountId(guessedSource ? mapping[guessedSource] : null)
     setStatus('done')
   }
 
@@ -447,8 +435,7 @@ export default function StatementImport({ categories, existingTransactions, onBa
         isExpense: r.isExpense,
         categoryId: categoryFor(r),
         reimbursesExpenseId: null,
-        tags: tagsFor(r),
-        accountId: importAccountId
+        tags: tagsFor(r)
       })
       createdByParsedId.set(r.id, created)
     }
@@ -567,15 +554,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
                 Detected as: {[...formatsSeen].map((f) => FORMAT_LABELS[f]).join(', ')}
               </span>
             </div>
-          )}
-
-          {accounts.length > 0 && (
-            <button className="card" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', textAlign: 'left' }} onClick={() => setShowAccountPicker(true)}>
-              <span style={{ fontSize: 13 }}>
-                Import to: <b>{accounts.find((a) => a.id === importAccountId)?.name ?? 'No account'}</b>
-              </span>
-              <span className="chevron">›</span>
-            </button>
           )}
 
           {(() => {
@@ -967,28 +945,6 @@ export default function StatementImport({ categories, existingTransactions, onBa
         )
       })()}
 
-      {showAccountPicker && (
-        <div className="modal-backdrop" onClick={() => setShowAccountPicker(false)}>
-          <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">Import To Account</span>
-              <button onClick={() => setShowAccountPicker(false)} className="text-button text-button-primary">Done</button>
-            </div>
-            <div className="modal-body">
-              <button className="picker-row" onClick={() => { setImportAccountId(null); setShowAccountPicker(false) }}>
-                <span>No account</span>
-                {!importAccountId && <span style={{ color: 'var(--blue)' }}>✓</span>}
-              </button>
-              {accounts.map((a) => (
-                <button key={a.id} className="picker-row" onClick={() => { setImportAccountId(a.id); setShowAccountPicker(false) }}>
-                  <span>{a.icon} {a.name}</span>
-                  {importAccountId === a.id && <span style={{ color: 'var(--blue)' }}>✓</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

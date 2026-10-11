@@ -243,7 +243,10 @@ export function suggestCategoryId(note: string, categories: Category[] = []): st
   const exact = rules.find((r) => r.key === key)
   if (exact) return exact.categoryId
 
-  const partial = rules.find((r) => key.includes(r.key) || r.key.includes(key))
+  // A very short key (a stray single letter learned from a garbled note)
+  // is a substring of nearly every merchant name, so it must never act as
+  // a partial match — it would file almost everything under one category.
+  const partial = rules.find((r) => (r.key.length >= 4 && key.includes(r.key)) || (key.length >= 4 && r.key.length >= 3 && r.key.includes(key)))
   if (partial) return partial.categoryId
 
   // Different branches of the same chain (confirmed a real gap: e.g.
