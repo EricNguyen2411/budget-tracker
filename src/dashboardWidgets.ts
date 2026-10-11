@@ -1,6 +1,6 @@
 const WIDGETS_KEY = 'budget-tracker-dashboard-widgets'
 
-export type WidgetId = 'safeToSpend' | 'stats' | 'insights' | 'goals' | 'budgetVsActual' | 'categoryPie' | 'last14Days' | 'monthlyTrend' | 'netSavingsTrend' | 'topMerchants' | 'monthRecap' | 'unallocatedFunds' | 'upcomingBills' | 'needsWantsRatio' | 'topTags' | 'outstandingReimbursements' | 'upcomingInstallments' | 'biggestChange'
+export type WidgetId = 'safeToSpend' | 'stats' | 'insights' | 'goals' | 'budgetVsActual' | 'categoryPie' | 'last14Days' | 'monthlyTrend' | 'netSavingsTrend' | 'topMerchants' | 'monthRecap' | 'unallocatedFunds' | 'upcomingBills' | 'needsWantsRatio' | 'topTags' | 'outstandingReimbursements' | 'upcomingInstallments' | 'biggestChange' | 'spendingPace' | 'forecast'
 
 export const WIDGET_LABELS: Record<WidgetId, string> = {
   safeToSpend: 'Safe to Spend',
@@ -20,10 +20,12 @@ export const WIDGET_LABELS: Record<WidgetId, string> = {
   topTags: 'Top Tags This Month',
   outstandingReimbursements: 'Money Owed to You',
   upcomingInstallments: 'Upcoming Installments',
-  biggestChange: 'Biggest Category Change'
+  biggestChange: 'Biggest Category Change',
+  spendingPace: 'Spending Pace',
+  forecast: 'End of Period Forecast'
 }
 
-const ALL_WIDGETS: WidgetId[] = ['safeToSpend', 'stats', 'insights', 'goals', 'budgetVsActual', 'categoryPie', 'last14Days', 'monthlyTrend', 'netSavingsTrend', 'topMerchants', 'monthRecap', 'unallocatedFunds', 'upcomingBills', 'needsWantsRatio', 'topTags', 'outstandingReimbursements', 'upcomingInstallments', 'biggestChange']
+const ALL_WIDGETS: WidgetId[] = ['safeToSpend', 'stats', 'insights', 'spendingPace', 'forecast', 'goals', 'budgetVsActual', 'categoryPie', 'last14Days', 'monthlyTrend', 'netSavingsTrend', 'topMerchants', 'monthRecap', 'unallocatedFunds', 'upcomingBills', 'needsWantsRatio', 'topTags', 'outstandingReimbursements', 'upcomingInstallments', 'biggestChange']
 
 // safeToSpend and stats are core to the dashboard and always shown —
 // not offered as hideable, same as the native app treats them.
@@ -36,9 +38,19 @@ export function getWidgetOrder(): WidgetId[] {
     const raw = localStorage.getItem(ORDER_KEY)
     const stored = raw ? (JSON.parse(raw) as WidgetId[]) : []
     // Any widget not in the stored order (e.g. added in an update) goes
-    // at the end, in its default position, rather than disappearing.
-    const missing = ALL_WIDGETS.filter((w) => !stored.includes(w))
-    return [...stored.filter((w) => ALL_WIDGETS.includes(w)), ...missing]
+    // right after whichever widget precedes it by default, rather than
+    // being buried at the very bottom where nobody would find it.
+    const result = stored.filter((w) => ALL_WIDGETS.includes(w))
+    for (const w of ALL_WIDGETS) {
+      if (result.includes(w)) continue
+      let at = 0
+      for (let i = ALL_WIDGETS.indexOf(w) - 1; i >= 0; i--) {
+        const found = result.indexOf(ALL_WIDGETS[i])
+        if (found >= 0) { at = found + 1; break }
+      }
+      result.splice(at, 0, w)
+    }
+    return result
   } catch {
     return ALL_WIDGETS
   }

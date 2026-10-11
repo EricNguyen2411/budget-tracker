@@ -34,11 +34,12 @@ import TotalBudgetPlanner from './pages/TotalBudgetPlanner'
 import AutoBackups from './pages/AutoBackups'
 import CategoryBreakdownByMonth from './pages/CategoryBreakdownByMonth'
 import MonthlyRecapPage from './pages/MonthlyRecapPage'
+import YearInReview from './pages/YearInReview'
 import TagsScreen from './pages/TagsScreen'
 import TagDetail from './pages/TagDetail'
 import { DashboardIcon, ListIcon, TargetIcon, MoreIcon } from './icons'
 
-type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'accounts' | 'installments' | 'insights'
+type Tab = 'dashboard' | 'transactions' | 'budgets' | 'more' | 'recurring' | 'shopping' | 'duplicates' | 'health' | 'report' | 'merchants' | 'categories' | 'import' | 'budgetplanner' | 'autobackups' | 'categorybreakdown' | 'monthlyrecap' | 'tags' | 'installments' | 'insights' | 'yearreview'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -344,6 +345,7 @@ export default function App() {
           onOpenPeriod={(title, start, end, categoryId) => setDateRangeNav({ title, start, end, categoryId })}
         />
       )}
+      {tab === 'yearreview' && <YearInReview categories={categories} transactions={transactions} onBack={() => setTab(returnTab)} />}
       {tab === 'monthlyrecap' && (
         <MonthlyRecapPage
           categories={categories}
@@ -379,7 +381,7 @@ export default function App() {
           Budgets
         </button>
         <button className={`tab-button ${['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags'].includes(tab) && !anyOverlay ? 'active' : ''}`} onClick={() => { setCategoryDetailId(null); setStatDetail(null); setDateRangeNav(null); setViewingTagDetail(null); setTab('more') }}>
-          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags', 'accounts', 'installments'].includes(tab) && !anyOverlay} />
+          <MoreIcon active={['more', 'recurring', 'shopping', 'duplicates', 'health', 'report', 'merchants', 'categories', 'import', 'budgetplanner', 'autobackups', 'categorybreakdown', 'monthlyrecap', 'tags', 'installments', 'insights', 'yearreview'].includes(tab) && !anyOverlay} />
           More
         </button>
       </nav>

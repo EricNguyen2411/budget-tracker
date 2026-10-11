@@ -187,6 +187,7 @@ export default function More({ categories, transactions, onCategoriesChanged, on
           { tab: 'insights', icon: '💡', label: 'Insights' },
           { tab: 'import', icon: '📷', label: 'Import Statement (Photo)' },
           { tab: 'monthlyrecap', icon: '📅', label: 'Month in Review' },
+          { tab: 'yearreview', icon: '🎉', label: 'Year in Review' },
           { tab: 'budgetplanner', icon: '🧮', label: 'Total Budget Planner' },
           { tab: 'categorybreakdown', icon: '🥧', label: 'Spending by Category (by Month)' },
           { tab: 'tags', icon: '🏷️', label: 'Tags' },

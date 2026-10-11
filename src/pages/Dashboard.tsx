@@ -13,6 +13,9 @@ import { useModalClose } from '../useModalClose'
 import { buildMonthRecap } from '../monthlyRecap'
 import AnimatedProgressBar from '../components/AnimatedProgressBar'
 import AnimatedNumber from '../components/AnimatedNumber'
+import PaceChart from '../components/PaceChart'
+import ForecastCard from '../components/ForecastCard'
+import { spendingPace, periodForecast } from '../forecast'
 
 interface Props {
   categories: Category[]
@@ -207,6 +210,8 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
   const monthRecapLabel = isCustomCycle(cycleSettings)
     ? `${currentPeriodForLabel.start.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })} – ${new Date(currentPeriodForLabel.end.getTime() - 86400000).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`
     : now.toLocaleDateString('en-AU', { month: 'long', year: 'numeric' })
+  const pace = useMemo(() => spendingPace(categories, transactions, now, recurring), [categories, transactions, recurring, now.toDateString()])
+  const forecast = useMemo(() => periodForecast(categories, transactions, recurring, installmentPlans ?? [], now), [categories, transactions, recurring, installmentPlans, now.toDateString()])
   const monthlyTrend = useMemo(() => last6PeriodsSpend(transactions, categories, now), [transactions, categories, now.toDateString()])
   const netSavingsTrend = useMemo(() => last6PeriodsNetSavings(transactions, categories, now), [transactions, categories, now.toDateString()])
   const hidden = getHiddenWidgets()
@@ -583,6 +588,30 @@ export default function Dashboard({ categories, transactions, recurring, onOpenC
               </p>
             </div>
           ),
+
+          spendingPace: (pace.spentToDate > 0 || pace.previousAtSameDay !== null) && (
+            <div className="card" style={{ marginTop: 16 }} data-testid="pace-card">
+              <span className="section-heading" style={{ margin: '0 0 6px' }}>Spending Pace</span>
+              <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10, lineHeight: 1.5 }}>
+                <span style={{ color: 'var(--text)', fontWeight: 600 }}>{formatCurrency(pace.spentToDate)}</span> spent · day {pace.elapsedDays} of {pace.totalDays}
+                {pace.deltaVsPace !== null && (
+                  <div data-testid="pace-vs-even" style={{ color: pace.deltaVsPace <= 0 ? 'var(--green)' : 'var(--red)' }}>
+                    {formatCurrency(Math.abs(pace.deltaVsPace))} {pace.deltaVsPace <= 0 ? 'under' : 'over'} an even pace for your {formatCurrency(pace.budget)} budget
+                  </div>
+                )}
+                {pace.deltaVsPrevious !== null && (
+                  <div data-testid="pace-vs-last">
+                    {Math.abs(pace.deltaVsPrevious) < 0.005
+                      ? 'The same as at this point last period'
+                      : `${formatCurrency(Math.abs(pace.deltaVsPrevious))} ${pace.deltaVsPrevious < 0 ? 'less' : 'more'} than at this point last period`}
+                  </div>
+                )}
+              </div>
+              <PaceChart pace={pace} />
+            </div>
+          ),
+
+          forecast: forecast.available && <ForecastCard forecast={forecast} />,
 
           last14Days: dailySpend.some((d) => d.amount > 0) && (
             <div className="card" style={{ marginTop: 16 }}>
