@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import type { Category, Transaction, RecurringTransaction, ShoppingList, InstallmentPlan } from './types'
 import {
   ensureDefaultCategories, getCategories, getTransactions, createTransaction, saveTransaction, deleteTransaction,
@@ -190,6 +190,25 @@ export default function App() {
     await deleteTransaction(id)
     await reload()
   }
+
+  // Scroll memory per screen: going forward into a page starts at its top
+  // (previously it inherited the previous screen's scroll offset, so a page
+  // opened after scrolling Transactions appeared already scrolled halfway
+  // down), while coming back to a screen restores where it was left.
+  const viewKey = [tab, categoryDetailId, viewingTagDetail, statDetail, dateRangeNav?.title, viewingCategoryTrend?.id].join('|')
+  const viewKeyRef = useRef(viewKey)
+  const scrollMemory = useRef(new Map<string, number>())
+  useEffect(() => {
+    const onScroll = () => { scrollMemory.current.set(viewKeyRef.current, window.scrollY) }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  useLayoutEffect(() => {
+    viewKeyRef.current = viewKey
+    const target = scrollMemory.current.get(viewKey) ?? 0
+    window.scrollTo(0, target)
+    scrollMemory.current.set(viewKey, target)
+  }, [viewKey])
 
   if (!loaded) return null
 

@@ -12,7 +12,8 @@
  */
 import type { Category, Transaction, RecurringTransaction } from './types'
 import { computeDashboardTotals, netSpentForCategory, effectiveBudget, reimbursementBreakdown, formatCurrency, topMerchantsThisMonth, isIncomeReceipt, amountsCloseEnough, type MerchantTotal } from './calculations'
-import { referenceDateOffsetBy } from './budgetPeriod'
+import { referenceDateOffsetBy, periodContaining, periodOffsetBy } from './budgetPeriod'
+import { dayDiff } from './forecast'
 import { normalizeMerchantKey } from './merchantRules'
 
 export interface Answer {
@@ -105,11 +106,17 @@ export function topMerchants(transactions: Transaction[], categories: Category[]
  * computation this doesn't need. */
 export function needsWantsSplit(categories: Category[], transactions: Transaction[], referenceDate: Date): Answer {
   const topLevel = categories.filter((c) => !c.parentId && !c.isSavingsCategory)
-  function splitFor(refDate: Date) {
+  // `asOf` limits the picture to what had been recorded by a cut-off, so the
+  // comparison with last period is like-for-like: the split now against the
+  // split at the same day of last period, not against last period's
+  // finished total (rent and other big needs land late in a cycle, so a
+  // half-finished period always looks "wantier" than a completed one).
+  function splitFor(refDate: Date, asOf?: Date) {
+    const txs = asOf ? transactions.filter((t) => new Date(t.date) < asOf) : transactions
     let needs = 0
     let wants = 0
     for (const c of topLevel) {
-      const spent = Math.max(0, netSpentForCategory(c, categories, transactions, refDate))
+      const spent = Math.max(0, netSpentForCategory(c, categories, txs, refDate))
       if (c.needWantType === 'need') needs += spent
       else if (c.needWantType === 'want') wants += spent
     }
@@ -122,20 +129,46 @@ export function needsWantsSplit(categories: Category[], transactions: Transactio
   const needsPct = Math.round((thisPeriod.needs / total) * 100)
   const wantsPct = 100 - needsPct
 
-  const lastPeriod = splitFor(referenceDateOffsetBy(-1, referenceDate))
-  const lastTotal = lastPeriod.needs + lastPeriod.wants
+  const period = periodContaining(referenceDate)
+  const totalDays = Math.max(1, dayDiff(period.start, period.end))
+  const elapsedDays = Math.min(totalDays, Math.max(1, dayDiff(period.start, referenceDate) + 1))
+  const earlyInPeriod = elapsedDays / totalDays < 0.6
+
+  const prev = periodOffsetBy(-1, referenceDate)
+  const prevRef = new Date(prev.start.getTime() + 36 * 3600 * 1000)
+  // Same share of the way through, since paydays move and periods differ in length.
+  const prevDays = Math.max(1, dayDiff(prev.start, prev.end))
+  const prevElapsed = Math.min(prevDays, Math.max(1, Math.round((elapsedDays / totalDays) * prevDays)))
+  const cutoff = new Date(prev.start.getFullYear(), prev.start.getMonth(), prev.start.getDate() + prevElapsed)
+  const lastSoFar = splitFor(prevRef, cutoff)
+  const lastFinal = splitFor(prevRef)
+  const pct = (x: { needs: number; wants: number }) => {
+    const t = x.needs + x.wants
+    return t > 0.01 ? Math.round((x.wants / t) * 100) : null
+  }
+  const lastSoFarWants = pct(lastSoFar)
+  const lastFinalWants = pct(lastFinal)
+
   let trendPart = ''
-  if (lastTotal > 0.01) {
-    const lastWantsPct = Math.round((lastPeriod.wants / lastTotal) * 100)
-    const diff = wantsPct - lastWantsPct
+  if (lastSoFarWants !== null) {
+    const diff = wantsPct - lastSoFarWants
     if (Math.abs(diff) >= 3) {
-      trendPart = diff > 0 ? ` — wants are up ${diff} points from last period` : ` — wants are down ${Math.abs(diff)} points from last period`
+      trendPart = diff > 0
+        ? ` — wants are up ${diff} points from the same point last period`
+        : ` — wants are down ${Math.abs(diff)} points from the same point last period`
+    } else {
+      trendPart = ' — in line with the same point last period'
     }
   }
+  let tail = ''
+  if (earlyInPeriod && lastFinalWants !== null) tail = ` Last period finished at ${lastFinalWants}% wants; the split shifts as bills land.`
 
+  // Only raise the alarm when it isn't just an early-cycle artefact: late in
+  // the period, or clearly wantier than last period was by its end.
+  const warn = wantsPct > 60 && (!earlyInPeriod || (lastFinalWants !== null && wantsPct > lastFinalWants + 10))
   return {
-    text: `${needsPct}% needs / ${wantsPct}% wants this period${trendPart}.`,
-    sentiment: wantsPct > 60 ? 'warning' : 'neutral'
+    text: `${needsPct}% needs / ${wantsPct}% wants ${earlyInPeriod ? 'so far' : 'this period'}${trendPart}.${tail}`,
+    sentiment: warn ? 'warning' : 'neutral'
   }
 }
 

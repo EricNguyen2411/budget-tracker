@@ -1,3 +1,4 @@
+import { spendingPace } from '../forecast'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isIncomeReceipt, isLinkedReimbursement, isGenuineReimbursement, coveredExpenseIds, orderedReimbursements, savingsCategoryIds, inSavingsCategory, netSavedThisPeriod } from '../calculations'
@@ -255,6 +256,20 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
     return Math.round(sum * 100) / 100
   }, [kind, scoped, transactions])
 
+  // How this period's Spent compares with the period before it, at the
+  // same point (day of the cycle). For a finished period the "same point" is
+  // simply its whole length, so it reads as a period-over-period change.
+  const comparison = useMemo(() => {
+    if (kind !== 'spent') return null
+    const ref = offset === 0 ? today : new Date(period.end.getTime() - 12 * 3600 * 1000)
+    const pace = spendingPace(categories, transactions, ref)
+    if (pace.previousAtSameDay === null) return null
+    // A finished period is compared with the WHOLE period before it (the two
+    // can differ in length, so "same day number" would cut the longer one short).
+    const before = offset !== 0 ? pace.previous[pace.previous.length - 1] : pace.previousAtSameDay
+    return { spentToDate: pace.spentToDate, previousAtSameDay: before, delta: pace.spentToDate - before, day: pace.previousComparedDay, ofDays: pace.previousDays, finished: offset !== 0 }
+  }, [kind, offset, today, period, categories, transactions])
+
   const sorted = [...scoped].sort((a, b) =>
     sort === 'recent' ? b.date.localeCompare(a.date) : rowAmount(b) - rowAmount(a)
   )
@@ -341,6 +356,13 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
           <button aria-label="Next period" data-testid="period-next" disabled={offset >= 0} onClick={() => goTo(offset + 1)} style={{ fontSize: 26, padding: '0 10px', color: 'var(--blue)', opacity: offset >= 0 ? 0.25 : 1 }}>›</button>
         </div>
         <div className="hero-amount amount" data-testid="period-total" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
+        {comparison && (
+          <div data-testid="period-vs-last" style={{ fontSize: 13, marginTop: 4, color: Math.abs(comparison.delta) < 0.005 ? 'var(--text-dim)' : comparison.delta > 0 ? 'var(--red)' : 'var(--green)' }}>
+            {Math.abs(comparison.delta) < 0.005
+              ? (comparison.finished ? 'Same as the period before' : `Same as this point last period (day ${comparison.day} of ${comparison.ofDays})`)
+              : <><span className="amount">{formatCurrency(Math.abs(comparison.delta))}</span> {comparison.delta > 0 ? 'more' : 'less'} than {comparison.finished ? 'the period before' : `this point last period (day ${comparison.day} of ${comparison.ofDays})`}</>}
+          </div>
+        )}
         {kind === 'spent' && fromSavings > 0 && (
           <div data-testid="period-from-savings" style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 4 }}>
             of which <span className="amount">{formatCurrency(fromSavings)}</span> paid from savings

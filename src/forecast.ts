@@ -120,6 +120,8 @@ export interface SpendingPace {
   previousDays: number
   spentToDate: number
   previousAtSameDay: number | null
+  /** Which day of the previous period that comparison point is — scaled by how far through the period we are, since periods differ in length. */
+  previousComparedDay: number
   budget: number
   /** Where an even drip of the budget would be by today. */
   expectedToDate: number
@@ -147,8 +149,12 @@ export function spendingPace(categories: Category[], transactions: Transaction[]
     const d = new Date(t.date)
     return d >= prevPeriod.start && d < prevPeriod.end
   })
+  // Periods differ in length (paydays move), so "same point" means the same
+  // share of the way through, not the same day number: day 21 of 32 lines up
+  // with about day 19 of a 29-day period.
+  const previousComparedDay = Math.min(previousDays, Math.max(1, Math.round((elapsedDays / totalDays) * previousDays)))
   const previousAtSameDay = hasPreviousData && previous.length > 0
-    ? previous[Math.min(elapsedDays, previous.length) - 1]
+    ? previous[Math.min(previousComparedDay, previous.length) - 1]
     : null
 
   const budget = dash.totalBudget
@@ -164,6 +170,7 @@ export function spendingPace(categories: Category[], transactions: Transaction[]
     previousDays,
     spentToDate,
     previousAtSameDay,
+    previousComparedDay,
     budget,
     expectedToDate,
     deltaVsPace: budget > 0 ? spentToDate - expectedToDate : null,
