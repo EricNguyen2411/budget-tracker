@@ -238,6 +238,23 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
     return netAmount(t, transactions)
   }
 
+  // Part of this period's Spent that came out of the person's own savings
+  // (expenses linked to a "fund from savings" take-out). It stays inside
+  // the Spent total — the Saved figure drops by the same amount — so this
+  // is only an explanatory split, never subtracted from `total`.
+  const fromSavings = useMemo(() => {
+    if (kind !== 'spent') return 0
+    let sum = 0
+    for (const t of scoped) {
+      if (!t.isExpense) continue
+      const funded = orderedReimbursements(t, transactions)
+        .filter((r) => !!r.fundedFromCategoryId)
+        .reduce((s, r) => s + r.amount, 0)
+      if (funded > 0) sum += Math.min(funded, netAmount(t, transactions))
+    }
+    return Math.round(sum * 100) / 100
+  }, [kind, scoped, transactions])
+
   const sorted = [...scoped].sort((a, b) =>
     sort === 'recent' ? b.date.localeCompare(a.date) : rowAmount(b) - rowAmount(a)
   )
@@ -324,6 +341,11 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
           <button aria-label="Next period" data-testid="period-next" disabled={offset >= 0} onClick={() => goTo(offset + 1)} style={{ fontSize: 26, padding: '0 10px', color: 'var(--blue)', opacity: offset >= 0 ? 0.25 : 1 }}>›</button>
         </div>
         <div className="hero-amount amount" data-testid="period-total" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
+        {kind === 'spent' && fromSavings > 0 && (
+          <div data-testid="period-from-savings" style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 4 }}>
+            of which <span className="amount">{formatCurrency(fromSavings)}</span> paid from savings
+          </div>
+        )}
       </div>
 
       <div ref={swipeRef} style={{ touchAction: 'pan-y', minHeight: '50vh' }}>
