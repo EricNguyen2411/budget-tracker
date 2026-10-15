@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Category, Transaction } from '../types'
 import { formatCurrency, netAmount, repaysNote, excessForReimbursement, netSpentForCategory, isUnlinkedIncome, isIncomeReceipt, isLinkedReimbursement, isGenuineReimbursement, coveredExpenseIds, orderedReimbursements, savingsCategoryIds, inSavingsCategory, netSavedThisPeriod } from '../calculations'
-import { isInSamePeriod } from '../budgetPeriod'
+import { isInSamePeriod, periodOffsetBy } from '../budgetPeriod'
 import { normalizeTag } from '../tags'
 import TransactionEditor from '../components/TransactionEditor'
 import { useSwipeBack } from '../useSwipeBack'
@@ -32,7 +32,93 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
   const [showZeroImpact, setShowZeroImpact] = useState(false)
   const [expandedTags, setExpandedTags] = useState<Set<string>>(new Set())
   const [editing, setEditing] = useState<Transaction | null>(null)
-  const now = useMemo(() => new Date(), [])
+  const today = useMemo(() => new Date(), [])
+  // 0 = the current period, -1 = the one before it, and so on. There's
+  // nothing to browse forward into, and nothing before the first
+  // transaction, so both ends are bounded.
+  const [offset, setOffset] = useState(0)
+  const [slide, setSlide] = useState<'left' | 'right' | null>(null)
+  const period = useMemo(() => periodOffsetBy(offset, today), [offset, today])
+  // The period itself is what matters; any date safely inside it works as
+  // the reference the calculations take. For the current period that's
+  // today, exactly as before.
+  const now = useMemo(() => (offset === 0 ? today : new Date(period.start.getTime() + 24 * 60 * 60 * 1000)), [offset, today, period])
+  const minOffset = useMemo(() => {
+    if (transactions.length === 0) return 0
+    const earliest = transactions.reduce((min, t) => (t.date < min ? t.date : min), transactions[0].date)
+    const earliestDate = new Date(earliest)
+    let o = 0
+    while (o > -240 && periodOffsetBy(o, today).start > earliestDate) o--
+    return o
+  }, [transactions, today])
+
+  function goTo(next: number) {
+    const clamped = Math.min(0, Math.max(minOffset, next))
+    if (clamped === offset) return
+    setSlide(clamped < offset ? 'right' : 'left')
+    setOffset(clamped)
+    setExpandedTags(new Set())
+    setShowZeroImpact(false)
+  }
+
+  // Horizontal swipe on the list moves between periods: dragging right
+  // goes back in time, left comes forward. The content follows the
+  // finger, and a gesture that begins in the thin left-edge zone is left
+  // alone for the swipe-back-to-dashboard gesture.
+  const swipeRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = swipeRef.current
+    if (!el) return
+    let startX = 0, startY = 0, active = false, dragging = false, swiped = false
+    function down(e: PointerEvent) {
+      if (e.clientX <= 28) { active = false; return }
+      startX = e.clientX; startY = e.clientY; active = true; dragging = false
+    }
+    function move(e: PointerEvent) {
+      if (!active || !el) return
+      const dx = e.clientX - startX, dy = e.clientY - startY
+      if (!dragging) {
+        if (Math.abs(dx) < 10 || Math.abs(dy) > Math.abs(dx)) return
+        dragging = true
+        el.style.transition = 'none'
+      }
+      el.style.transform = `translateX(${dx * 0.5}px)`
+      el.style.opacity = String(Math.max(0.5, 1 - Math.abs(dx) / 500))
+    }
+    function end(e: PointerEvent) {
+      if (!active || !el) return
+      active = false
+      const dx = e.clientX - startX
+      el.style.transition = 'transform 0.2s ease, opacity 0.2s ease'
+      el.style.transform = ''
+      el.style.opacity = ''
+      if (dragging && Math.abs(dx) > 70) goToRef.current(dx > 0 ? offsetRef.current - 1 : offsetRef.current + 1)
+      // A drag that began and ended on the same row would otherwise also
+      // register as a click on it (mouse and some browsers do this) and
+      // pop the editor open as the page slides.
+      if (dragging) { swiped = true; setTimeout(() => { swiped = false }, 0) }
+      dragging = false
+    }
+    function click(e: MouseEvent) {
+      if (swiped) { e.stopPropagation(); e.preventDefault(); swiped = false }
+    }
+    el.addEventListener('pointerdown', down)
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', end)
+    el.addEventListener('pointercancel', end)
+    el.addEventListener('click', click, true)
+    return () => {
+      el.removeEventListener('click', click, true)
+      el.removeEventListener('pointerdown', down)
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', end)
+      el.removeEventListener('pointercancel', end)
+    }
+  }, [])
+  const goToRef = useRef(goTo)
+  const offsetRef = useRef(offset)
+  goToRef.current = goTo
+  offsetRef.current = offset
 
   const savingsIds = useMemo(() => savingsCategoryIds(categories), [categories])
   const thisPeriod = useMemo(() => transactions.filter((t) => isInSamePeriod(new Date(t.date), now)), [transactions, now])
@@ -183,6 +269,12 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
 
   const catById = new Map(categories.map((c) => [c.id, c]))
 
+  const periodLabel = useMemo(() => {
+    const last = new Date(period.end.getFullYear(), period.end.getMonth(), period.end.getDate() - 1)
+    const fmt = (d: Date, withYear: boolean) => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' } : {}) })
+    return `${fmt(period.start, period.start.getFullYear() !== last.getFullYear())} – ${fmt(last, true)}`
+  }, [period])
+
   function TransactionRow({ t, isLast }: { t: Transaction; isLast: boolean }) {
     const cat = t.categoryId ? catById.get(t.categoryId) : undefined
     const isExcessOnlyRow = kind === 'income' && !!t.reimbursesExpenseId
@@ -223,9 +315,19 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
       </div>
 
       <div className="card" style={{ marginBottom: 16, textAlign: 'center' }}>
-        <span className="hero-label">{TITLES[kind]} this period</span>
-        <div className="hero-amount amount" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <button aria-label="Previous period" data-testid="period-prev" disabled={offset <= minOffset} onClick={() => goTo(offset - 1)} style={{ fontSize: 26, padding: '0 10px', color: 'var(--blue)', opacity: offset <= minOffset ? 0.25 : 1 }}>‹</button>
+          <div style={{ minWidth: 0 }}>
+            <span className="hero-label" data-testid="period-label">{TITLES[kind]} {offset === 0 ? 'this period' : offset === -1 ? 'last period' : ''}</span>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)' }} data-testid="period-range">{periodLabel}</div>
+          </div>
+          <button aria-label="Next period" data-testid="period-next" disabled={offset >= 0} onClick={() => goTo(offset + 1)} style={{ fontSize: 26, padding: '0 10px', color: 'var(--blue)', opacity: offset >= 0 ? 0.25 : 1 }}>›</button>
+        </div>
+        <div className="hero-amount amount" data-testid="period-total" style={{ fontSize: 32 }}>{formatCurrency(total)}</div>
       </div>
+
+      <div ref={swipeRef} style={{ touchAction: 'pan-y', minHeight: '50vh' }}>
+      <div key={offset} className={slide ? `period-slide-${slide}` : undefined}>
 
       {mainRows.length === 0 && zeroImpactRows.length === 0 && tagGroups.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginTop: 20 }}>Nothing here this period.</p>}
       {mainRows.length === 0 && zeroImpactRows.length > 0 && tagGroups.length === 0 && (
@@ -289,6 +391,9 @@ export default function TypedTransactions({ kind, categories, transactions, onBa
           ))}
         </div>
       )}
+
+      </div>
+      </div>
 
       {editing && (
         <TransactionEditor

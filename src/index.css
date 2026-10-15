@@ -628,3 +628,10 @@ a {
 .pace-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: paceDraw 0.9s ease-out 0.1s forwards; }
 @keyframes paceDraw { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .pace-line { animation: none; stroke-dashoffset: 0; } }
+
+/* ---- Period browsing on the Spent/Income/Reimbursed/Saved pages ---- */
+.period-slide-left { animation: periodInLeft 0.22s ease-out; }
+.period-slide-right { animation: periodInRight 0.22s ease-out; }
+@keyframes periodInLeft { from { transform: translateX(40px); opacity: 0.2; } to { transform: none; opacity: 1; } }
+@keyframes periodInRight { from { transform: translateX(-40px); opacity: 0.2; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .period-slide-left, .period-slide-right { animation: none; } }
